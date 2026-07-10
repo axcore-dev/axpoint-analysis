@@ -1,9 +1,147 @@
+"use client";
+
 import type { CSSProperties } from "react";
+import { Icons } from "./icons";
 
 export interface StepperStep {
   label: string;
   /** 보조 라벨 (선택) */
   sub?: string;
+}
+
+export interface FlowStep {
+  label: string;
+  description?: string;
+}
+
+/**
+ * 플로우 스텝퍼 (수정요청v3) — 참고 코드(circle variant)를 디자인 시스템 문법으로 개선.
+ * 원형 스텝 버튼(완료=브랜드 채움+체크 / 현재=브랜드 링 / 미도달=회색) + 연결선.
+ * 가운데 정렬 가로 배치. 자료 정리 등 페이지 내부 단계 표시에 사용.
+ */
+export function FlowStepper({
+  steps,
+  active,
+  completed,
+  onStepClick,
+  style,
+}: {
+  steps: FlowStep[];
+  /** 현재 단계 (0-base) */
+  active: number;
+  /** 단계별 완료 여부 — 생략 시 active 이전 단계를 완료로 간주 */
+  completed?: boolean[];
+  /** 클릭 이동 (완료·현재 단계만 허용) */
+  onStepClick?: (index: number) => void;
+  style?: CSSProperties;
+}) {
+  const isDone = (i: number) => completed?.[i] ?? i < active;
+  return (
+    <div
+      role="list"
+      aria-label="진행 단계"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 10,
+        ...style,
+      }}
+    >
+      {steps.map((step, i) => {
+        const done = isDone(i);
+        const current = i === active;
+        const clickable = Boolean(onStepClick) && (done || current);
+        return (
+          <div key={step.label} role="listitem" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {i > 0 && (
+              <span
+                aria-hidden
+                style={{
+                  width: 44,
+                  height: 2,
+                  borderRadius: 1,
+                  background: done || current ? "var(--blue-500)" : "var(--grey-200)",
+                  transition: "background-color var(--dur-base) var(--ease)",
+                }}
+              />
+            )}
+            <button
+              type="button"
+              disabled={!clickable}
+              onClick={() => clickable && onStepClick?.(i)}
+              aria-current={current ? "step" : undefined}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 9,
+                border: "none",
+                background: "transparent",
+                padding: 4,
+                cursor: clickable ? "pointer" : "default",
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  boxSizing: "border-box",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  background: done
+                    ? "var(--bg-brand)"
+                    : current
+                      ? "var(--bg-brand-weak)"
+                      : "var(--bg-tertiary)",
+                  border: current ? "2px solid var(--blue-500)" : "2px solid transparent",
+                  color: done
+                    ? "var(--fg-inverse)"
+                    : current
+                      ? "var(--fg-brand)"
+                      : "var(--fg-quaternary)",
+                  transition:
+                    "background-color var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease), color var(--dur-base) var(--ease)",
+                }}
+              >
+                {done ? <Icons.check size={15} /> : i + 1}
+              </span>
+              <span style={{ textAlign: "left" }}>
+                <span
+                  style={{
+                    display: "block",
+                    font: "var(--text-label-m)",
+                    letterSpacing: "var(--track-body)",
+                    color: current ? "var(--fg-brand)" : done ? "var(--fg-primary)" : "var(--fg-quaternary)",
+                    transition: "color var(--dur-base) var(--ease)",
+                  }}
+                >
+                  {step.label}
+                </span>
+                {step.description && (
+                  <span
+                    style={{
+                      display: "block",
+                      marginTop: 1,
+                      font: "var(--text-caption)",
+                      color: "var(--fg-quaternary)",
+                    }}
+                  >
+                    {step.description}
+                  </span>
+                )}
+              </span>
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 /**

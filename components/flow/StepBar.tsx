@@ -58,9 +58,10 @@ export function StepBar() {
                   : done
                     ? "var(--fg-secondary)"
                     : "var(--fg-quaternary)",
-                background: current ? "var(--bg-brand-weak)" : "transparent",
+                /* 선택 단계 배경 컬러 없음 (수정요청v2) — 강조는 텍스트·번호 배지로만 */
+                background: "transparent",
                 whiteSpace: "nowrap",
-                transition: "background-color var(--dur-base) var(--ease)",
+                transition: "color var(--dur-base) var(--ease)",
               }}
             >
               <span

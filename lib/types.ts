@@ -253,12 +253,17 @@ export interface ValueChainAnalysis {
 export interface ImprovementTask {
   id: string;
   title: string;
-  /** 영문 보조 태그 (예: "PREDICTIVE MAINTENANCE") — 참고 UI 문법 */
-  subtitle?: string;
   /** Before → After 정량 한 줄 (예: "검사 3시간 → 10분") */
   beforeAfter?: string;
   summary: string;
   areaId: FunctionAreaId;
+  /**
+   * AX 7단계 방법론 배치 (2~7단계 — 1단계 '경영문제 정의'는 진단이 수행)
+   * 근거: docs/참고자료/중소 제조기업 AX 7단계 방법론.xlsx
+   */
+  methodStep: 2 | 3 | 4 | 5 | 6 | 7;
+  /** 이 시스템을 이미 사용 중이면 과제가 이미 갖춰진 것 — 선택 불가 처리 */
+  coveredBySystems?: string[];
   /** 기반과제 여부 (시각 구분 + 자동 삽입 대상, F-TSK-04/F-RMP-02) */
   isFoundation: boolean;
   /** 분석 기준 추천 여부 — 기본 뷰 노출 (F-TSK-02) */
@@ -293,7 +298,13 @@ export interface ImprovementTask {
 
 export interface RoadmapStage {
   order: number;
+  /** 방법론 단계 번호 (1~7) */
+  methodStepNo: number;
   title: string;
+  /** 단계 목적 한 줄 (방법론 xlsx) */
+  purpose: string;
+  /** 이미 완료된 단계 (1단계 경영문제 정의 = 이번 진단으로 완료) */
+  done?: boolean;
   /** 단계에 배치된 과제 */
   taskIds: string[];
   /** 자동 삽입된 기반과제 (배지+사유, REQ-F-16) */
@@ -301,16 +312,10 @@ export interface RoadmapStage {
   /** 기간 (개월, 시작 오프셋 포함 — 간트형 병렬 표시는 P2 제외) */
   startMonth: number;
   durationMonths: number;
-  /** go/no-go 게이트 (F-RMP-03) */
-  gate?: {
-    criteria: string[];
-    threshold: string;
-    onFail: string;
-  };
   /** 비용 밴드 (F-RMP-04) */
   costBand: { selfPay: [number, number]; note: string };
-  /** 역할 분담 (F-RMP-05) */
-  roles: { company: string[]; axpoint: string[] };
+  /** 할 일 리스트 — 귀사/AXpoint 통합 (F-RMP-05) */
+  todos: { owner: "귀사" | "AXpoint"; text: string }[];
 }
 
 export interface Roadmap {

@@ -260,9 +260,6 @@ export function ReportDocument({
         >
           {overall.level.label}
         </div>
-        <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.55, color: SECONDARY, maxWidth: 520 }}>
-          {overall.level.description}
-        </div>
         <div style={{ marginTop: 18 }}>
           <span
             style={{
@@ -607,7 +604,6 @@ export function ReportDocument({
                     <span style={{ fontWeight: 600 }}>{task.title}</span>
                     <div style={{ fontSize: 11, color: MUTED, marginTop: 2 }}>
                       {areaName(task.areaId)} · 난이도 {task.difficulty}
-                      {task.isFoundation && " · 기반 과제"}
                     </div>
                   </td>
                   <td style={{ ...td, fontSize: 12 }}>
@@ -662,18 +658,26 @@ export function ReportDocument({
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: INK }}>
                 <span style={{ fontFamily: MONO, fontSize: 12, color: BLUE }}>
-                  {stage.order}단계
+                  {stage.methodStepNo}단계
                 </span>{" "}
                 {stage.title}
               </div>
               <div style={{ fontFamily: MONO, fontSize: 12, color: SECONDARY, whiteSpace: "nowrap" }}>
-                {stage.startMonth + 1}~{stage.startMonth + stage.durationMonths}개월차 · 자부담{" "}
-                {fmt(stage.costBand.selfPay[0])}~{fmt(stage.costBand.selfPay[1])}만원
+                {stage.done
+                  ? "완료 — 이번 진단"
+                  : `약 ${stage.durationMonths}개월 · 금액 ${fmt(stage.costBand.selfPay[0])}~${fmt(
+                      stage.costBand.selfPay[1],
+                    )}만원`}
               </div>
             </div>
-            <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.55, color: INK }}>
-              {stage.taskIds.map((id) => getTask(id).title).join(" · ")}
+            <div style={{ marginTop: 6, fontSize: 11.5, lineHeight: 1.55, color: MUTED }}>
+              {stage.purpose}
             </div>
+            {stage.taskIds.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, lineHeight: 1.55, color: INK }}>
+                {stage.taskIds.map((id) => getTask(id).title).join(" · ")}
+              </div>
+            )}
             {stage.autoInserted.length > 0 && (
               <div style={{ marginTop: 4, fontSize: 11, color: MUTED }}>
                 자동 추가:{" "}
@@ -681,40 +685,16 @@ export function ReportDocument({
                 과제)
               </div>
             )}
-            {stage.gate && (
-              <div
-                style={{
-                  marginTop: 10,
-                  background: MIST,
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                  fontSize: 11.5,
-                  lineHeight: 1.55,
-                  color: SECONDARY,
-                }}
-              >
-                <span style={{ fontWeight: 600, color: INK }}>진행 게이트</span> —{" "}
-                {stage.gate.criteria.join(" / ")}. {stage.gate.threshold}.{" "}
-                <span style={{ color: MUTED }}>{stage.gate.onFail}</span>
+            {stage.todos.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: SECONDARY, marginBottom: 3 }}>
+                  할 일
+                </div>
+                <div style={{ fontSize: 11.5, lineHeight: 1.55, color: SECONDARY }}>
+                  {stage.todos.map((t) => `[${t.owner}] ${t.text}`).join(" · ")}
+                </div>
               </div>
             )}
-            <div style={{ marginTop: 10, display: "flex", gap: 12 }}>
-              {(
-                [
-                  { label: "귀사가 할 일", items: stage.roles.company },
-                  { label: "AXpoint가 할 일", items: stage.roles.axpoint },
-                ] as const
-              ).map((col) => (
-                <div key={col.label} style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: SECONDARY, marginBottom: 3 }}>
-                    {col.label}
-                  </div>
-                  <div style={{ fontSize: 11.5, lineHeight: 1.55, color: SECONDARY }}>
-                    {col.items.join(" · ")}
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         ))
       )}

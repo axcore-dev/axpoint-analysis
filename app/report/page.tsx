@@ -239,21 +239,17 @@ export default function ReportPage() {
               marginTop: "var(--space-8)",
             }}
           >
-            {/* ① 현재 단계 — Lv 라벨 + 단계 서술만 (점수 보조 표기 없음) */}
+            {/* ① 현재 단계 — Lv 라벨만 (서술 문구 제거, v3) */}
             <Card>
               <SummaryLabel>현재 단계</SummaryLabel>
               <SummaryValue>{overall.level.label}</SummaryValue>
-              <SummaryCaption>{overall.level.description}</SummaryCaption>
             </Card>
 
             {/* ② 포지션 — 업종 평균 대비 (런타임 계산) */}
             <Card>
               <SummaryLabel>포지션</SummaryLabel>
               <SummaryValue>
-                업종 평균보다{" "}
-                <span style={{ ...mono, color: diffAhead ? "var(--fg-brand)" : "var(--fg-primary)" }}>
-                  {diffLabel}
-                </span>
+                업종 평균보다 <span style={mono}>{diffLabel}</span>
               </SummaryValue>
               <SummaryCaption>
                 중소 금속가공 표본 평균 <span style={mono}>{Math.round(industryMean)}</span>점
@@ -446,10 +442,10 @@ export default function ReportPage() {
                           style={{
                             ...mono,
                             fontSize: 15,
-                            fontWeight: 600,
+                            fontWeight: 700,
                             textAlign: "right",
                             whiteSpace: "nowrap",
-                            color: "var(--fg-brand)",
+                            color: "var(--fg-primary)",
                             padding: "12px 10px",
                           }}
                         >
@@ -490,9 +486,7 @@ export default function ReportPage() {
                   >
                     총 자부담 {fmt(roi.totalSelfPay)}만원 ÷ 월 효과 {fmt(monthlySaving)}만원
                     (연 {fmt(roi.totalAnnualSaving)}만원 ÷ 12) ≈{" "}
-                    <span style={{ color: "var(--fg-brand)", fontWeight: 600 }}>
-                      약 {roi.paybackMonths}개월
-                    </span>
+                    <span style={{ fontWeight: 700 }}>약 {roi.paybackMonths}개월</span>
                   </div>
                   <p style={{ margin: "12px 0 0", fontSize: 13, lineHeight: 1.55, color: "var(--fg-secondary)" }}>
                     총 자부담은 담으신 과제의 자부담 밴드 중간값 합산이며, 정부 지원사업
@@ -516,11 +510,12 @@ export default function ReportPage() {
               flexWrap: "wrap",
             }}
           >
-            <Button variant="primary" size="xl" onClick={() => setModalOpen(true)}>
+            {/* v3: 보고서 받기 ↔ 문의하기 컬러 교체 */}
+            <Button variant="secondary" size="xl" onClick={() => setModalOpen(true)}>
               보고서 받기
               <Icons.arrow size={18} />
             </Button>
-            <Button variant="secondary" size="xl" href={CONTACT_URL} target="_blank" rel="noreferrer">
+            <Button variant="primary" size="xl" href={CONTACT_URL} target="_blank" rel="noreferrer">
               문의하기
               <Icons.arrow size={18} />
             </Button>
@@ -540,7 +535,7 @@ export default function ReportPage() {
             }}
           >
             <div>
-              <Eyebrow>AXPOINT 워크스페이스</Eyebrow>
+              <Eyebrow>AI기반 통합 워크스페이스</Eyebrow>
               <h2
                 style={{
                   margin: "14px 0 0",
@@ -549,11 +544,11 @@ export default function ReportPage() {
                   color: "var(--fg-primary)",
                 }}
               >
-                도입 후에는 이런 현황판을 보게 돼요
+                생산·재고·품질 데이터를 한 곳에서
               </h2>
               <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                생산·재고·품질 데이터가 한 번만 입력되고, 대표님 화면에는 실시간 현황판이
-                올라와요.
+                분절된 제조 데이터를 하나로 연결하고, .<br></br> AI가 실시간으로 판단·최적화하는 지능형 자율제조 통합운영 솔루션
+
               </p>
               <div style={{ marginTop: 20 }}>
                 <Button variant="secondary" size="lg" href={WORKSPACE_URL} target="_blank" rel="noreferrer">

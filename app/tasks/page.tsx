@@ -1,28 +1,20 @@
 "use client";
 
-import {
-  Suspense,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type KeyboardEvent,
-} from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import type { FunctionAreaId, ImprovementTask } from "@/lib/types";
-import { getTask, recommendedTasks, taskCatalog } from "@/data/catalog/tasks";
-import { FUNCTION_AREAS, areaName } from "@/data/rubric/meta";
+import { useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
+import type { ImprovementTask } from "@/lib/types";
+import { getTask, taskCatalog } from "@/data/catalog/tasks";
+import { METHOD_STEPS, getMethodStep } from "@/data/catalog/method";
 import { areaAssessments } from "@/data/scenario/areas";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { Badge, Button, Card, Icons, Tag } from "@/components/ui";
 
 /**
- * S3 개선 과제 후보 — F-TSK-01~07 (2026-07-09 수정요청v1)
- * 참고 UI: docs/참고자료/개선과제.png
- * 헤더 카드(큰 숫자 요약 3개) + 필터 칩 행 + 3열 카드 그리드(20종 전부 노출)
- * + 하단 고정 바(grey-800) + 기반과제 연관 제안 토스트.
- * 진입 시 추천 5종 미리 담아두기(1회).
+ * S3 개선 과제 후보 — F-TSK-01~07 (2026-07-10 수정요청v3)
+ * - 카테고리 = AX 7단계 방법론 단계, 맨 앞에 ★추천 (기본 선택)
+ * - 뱃지는 카테고리(단계)·추천만. 기본 담기 없음. 기대효과는 추천 과제만.
+ * - 사용 중인 프로그램으로 이미 갖춰진 과제는 선택 불가.
+ * - 하단 고정 바: 밝은 서피스 + 그림자 구분.
  */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)", letterSpacing: "0" };
@@ -51,19 +43,17 @@ function ClockIcon({ size = 13 }: { size?: number }) {
   );
 }
 
-/* ---------- 헤더 요약 수치 (taskCatalog·8영역 평가에서 계산) ---------- */
+/* ---------- 헤더 요약 수치 ---------- */
 
-const TOTAL_COUNT = taskCatalog.length; // 20
-const PRIORITY_AREA_COUNT = areaAssessments.filter((a) => a.grade === "critical").length; // 3
-const FEASIBLE_COUNT = taskCatalog.filter((t) => t.feasibility).length; // 즉시 착수
+const TOTAL_COUNT = taskCatalog.length;
+const PRIORITY_AREA_COUNT = areaAssessments.filter((a) => a.grade === "critical").length;
+const RECOMMENDED_COUNT = taskCatalog.filter((t) => t.recommended).length;
 
-const AREA_IDS = FUNCTION_AREAS.map((a) => a.id);
-const AREA_COUNTS: Record<FunctionAreaId, number> = FUNCTION_AREAS.reduce(
-  (acc, a) => {
-    acc[a.id] = taskCatalog.filter((t) => t.areaId === a.id).length;
-    return acc;
-  },
-  {} as Record<FunctionAreaId, number>,
+/** 카테고리 칩 — ★추천 맨 앞 + 방법론 2~7단계 (v3) */
+type Filter = "recommended" | "all" | number;
+
+const STEP_FILTERS = METHOD_STEPS.filter(
+  (s) => s.no !== 1 && taskCatalog.some((t) => t.methodStep === s.no),
 );
 
 /* 추천순 정렬: 추천 먼저, 이후 구축 우선순위 */
@@ -71,18 +61,23 @@ const SORTED_TASKS = [...taskCatalog].sort((a, b) =>
   a.recommended === b.recommended ? a.buildOrder - b.buildOrder : a.recommended ? -1 : 1,
 );
 
-/* ---------- 과제 카드 (참고 이미지 문법) ---------- */
+/* ---------- 과제 카드 ---------- */
 
 function TaskCard({
   task,
   selected,
+  equippedBy,
   onToggle,
 }: {
   task: ImprovementTask;
   selected: boolean;
+  /** 사용 중인 프로그램으로 이미 갖춰짐 — 선택 불가 (v3) */
+  equippedBy: string | null;
   onToggle: () => void;
 }) {
+  const disabled = equippedBy !== null;
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (disabled) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onToggle();
@@ -92,25 +87,28 @@ function TaskCard({
   return (
     <Card
       radius="2xl"
-      interactive
+      interactive={!disabled}
       role="button"
-      tabIndex={0}
+      tabIndex={disabled ? -1 : 0}
       aria-pressed={selected}
-      onClick={onToggle}
+      aria-disabled={disabled || undefined}
+      onClick={disabled ? undefined : onToggle}
       onKeyDown={onKeyDown}
       style={{
         display: "flex",
         flexDirection: "column",
         gap: 10,
-        ...(selected
-          ? {
-              background: "var(--bg-brand-weak)",
-              border: "1px solid var(--line-brand)",
-            }
-          : undefined),
+        ...(disabled
+          ? { opacity: 0.55, cursor: "default" }
+          : selected
+            ? {
+                background: "var(--bg-brand-weak)",
+                border: "1px solid var(--line-brand)",
+              }
+            : undefined),
       }}
     >
-      {/* 상단: 좌 배지 · 우 원형 체크 */}
+      {/* 상단: 좌 배지(카테고리·추천만, v3) · 우 원형 체크 */}
       <div
         style={{
           display: "flex",
@@ -120,59 +118,44 @@ function TaskCard({
         }}
       >
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <Badge tone="neutral">{areaName(task.areaId)}</Badge>
-          {task.recommended && <Badge tone="accent">추천</Badge>}
-          {task.feasibility && <Badge tone="success">즉시 착수</Badge>}
-          {task.isFoundation && <Badge tone="dark">기반 과제</Badge>}
+          <Badge tone="neutral">{getMethodStep(task.methodStep).shortLabel}</Badge>
+          {task.recommended && <Badge tone="accent">★ 추천</Badge>}
         </div>
-        <span
-          aria-hidden
-          style={{
-            flex: "none",
-            width: 22,
-            height: 22,
-            borderRadius: "50%",
-            boxSizing: "border-box",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: selected ? "var(--blue-500)" : "var(--bg-base)",
-            border: selected ? "1px solid var(--blue-500)" : "1.5px solid var(--grey-300)",
-            color: "var(--white)",
-            transition:
-              "background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
-          }}
-        >
-          {selected && <Icons.check size={13} />}
-        </span>
-      </div>
-
-      {/* 제목 + 영문 보조 태그 */}
-      <div>
-        <h3
-          style={{
-            margin: 0,
-            font: "var(--text-title1)",
-            letterSpacing: "var(--track-heading)",
-            color: "var(--fg-primary)",
-          }}
-        >
-          {task.title}
-        </h3>
-        {task.subtitle && (
-          <div
+        {!disabled && (
+          <span
+            aria-hidden
             style={{
-              marginTop: 4,
-              font: "var(--text-caption)",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              color: "var(--grey-500)",
+              flex: "none",
+              width: 22,
+              height: 22,
+              borderRadius: "50%",
+              boxSizing: "border-box",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: selected ? "var(--blue-500)" : "var(--bg-base)",
+              border: selected ? "1px solid var(--blue-500)" : "1.5px solid var(--grey-300)",
+              color: "var(--white)",
+              transition:
+                "background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
             }}
           >
-            {task.subtitle}
-          </div>
+            {selected && <Icons.check size={13} />}
+          </span>
         )}
       </div>
+
+      {/* 제목 */}
+      <h3
+        style={{
+          margin: 0,
+          font: "var(--text-title1)",
+          letterSpacing: "var(--track-heading)",
+          color: "var(--fg-primary)",
+        }}
+      >
+        {task.title}
+      </h3>
 
       {/* 요약 (2줄) */}
       <p
@@ -190,8 +173,8 @@ function TaskCard({
         {task.summary}
       </p>
 
-      {/* 기대효과 정량 한 줄 (블루) */}
-      {task.beforeAfter && (
+      {/* 기대효과 정량 한 줄 — 추천 과제만 (v3) */}
+      {task.recommended && task.beforeAfter && (
         <div
           style={{
             font: "var(--text-label-s)",
@@ -217,7 +200,7 @@ function TaskCard({
         예상 <span style={{ ...mono, fontWeight: 600 }}>{range(task.durationMonths, "개월")}</span>
       </div>
 
-      {/* 하단: 착수 조건 1줄 */}
+      {/* 하단: 착수 조건 또는 갖춰짐 안내 */}
       <div
         style={{
           marginTop: "auto",
@@ -228,28 +211,26 @@ function TaskCard({
           gap: 6,
         }}
       >
-        {task.feasibility ? (
+        {disabled ? (
           <span
             style={{
               display: "inline-flex",
-              alignItems: "flex-start",
+              alignItems: "center",
               gap: 6,
               font: "var(--text-caption)",
               fontWeight: 600,
               color: "var(--fg-success)",
             }}
           >
-            <span style={{ flex: "none", display: "inline-flex", marginTop: 1 }}>
-              <Icons.check size={13} />
-            </span>
-            {task.feasibility.badge}
+            <Icons.check size={13} />
+            {equippedBy} 사용 중 — 이미 갖춰져 있어요
           </span>
         ) : (
           <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
             {task.dataRequirements[0]}
           </span>
         )}
-        {!task.recommended && (
+        {!disabled && !task.recommended && (
           <span
             style={{
               font: "var(--text-caption)",
@@ -268,37 +249,32 @@ function TaskCard({
   );
 }
 
-/* ---------- 본문 (useSearchParams — Suspense 경계 내부) ---------- */
+/* ---------- 페이지 ---------- */
 
-function TasksContent() {
+export default function TasksPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const { completedSteps, selectedTaskIds, addTask, toggleTask, completeStep } = useDiagnosis();
+  const { completedSteps, systems, selectedTaskIds, addTask, toggleTask, completeStep } =
+    useDiagnosis();
 
-  const initialArea = searchParams.get("area");
-  const [area, setArea] = useState<FunctionAreaId | "all">(
-    initialArea && (AREA_IDS as string[]).includes(initialArea)
-      ? (initialArea as FunctionAreaId)
-      : "all",
-  );
+  const [filter, setFilter] = useState<Filter>("recommended");
   /** 기반과제 연관 제안 토스트 (F-TSK-04) */
   const [suggestion, setSuggestion] = useState<{ foundationIds: string[] } | null>(null);
 
-  /* 추천 과제 미리 담아두기 — 상태 복원 후 1회만 판단 */
-  const seeded = useRef(false);
-  useEffect(() => {
-    if (seeded.current) return;
-    if (!completedSteps.includes("result")) return; // 저장 상태 복원 전이면 대기
-    seeded.current = true;
-    if (!completedSteps.includes("tasks") && selectedTaskIds.length === 0) {
-      recommendedTasks.forEach((t) => addTask(t.id));
+  /** 이미 갖춰진 과제 → 근거 시스템명 (사용 중인 프로그램과 교차) */
+  const equippedBy = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of taskCatalog) {
+      const hit = t.coveredBySystems?.find((s) => systems.includes(s));
+      if (hit) map.set(t.id, hit);
     }
-  }, [completedSteps, selectedTaskIds, addTask]);
+    return map;
+  }, [systems]);
 
-  const filtered = useMemo(
-    () => (area === "all" ? SORTED_TASKS : SORTED_TASKS.filter((t) => t.areaId === area)),
-    [area],
-  );
+  const filtered = useMemo(() => {
+    if (filter === "recommended") return SORTED_TASKS.filter((t) => t.recommended);
+    if (filter === "all") return SORTED_TASKS;
+    return SORTED_TASKS.filter((t) => t.methodStep === filter);
+  }, [filter]);
 
   /* 가드: 진단 결과 미완료 */
   if (!completedSteps.includes("result")) {
@@ -322,7 +298,7 @@ function TasksContent() {
             개선 과제 후보
           </h2>
           <p style={{ margin: "0 0 20px", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            개선 과제는 진단 결과를 확인한 뒤에 열려요. 먼저 진단 결과를 확인해 주세요.
+            개선 과제는 진단 결과를 확인한 뒤에 열려요.
           </p>
           <Button variant="primary" href="/result">
             진단 결과 보러 가기
@@ -333,6 +309,7 @@ function TasksContent() {
   }
 
   const handleToggle = (task: ImprovementTask) => {
+    if (equippedBy.has(task.id)) return;
     const wasSelected = selectedTaskIds.includes(task.id);
     toggleTask(task.id);
     if (!wasSelected) {
@@ -391,8 +368,7 @@ function TasksContent() {
               개선 과제 후보
             </h2>
             <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-              진단 결과에 기반해 도출한 과제예요. 지금 자료로 바로 착수 가능한 과제를 함께
-              표시했어요.
+              진단 결과로 도출한 과제예요.
             </p>
           </div>
 
@@ -402,7 +378,7 @@ function TasksContent() {
               [
                 { n: TOTAL_COUNT, label: "개 후보 과제" },
                 { n: PRIORITY_AREA_COUNT, label: "곳 우선 개선 영역" },
-                { n: FEASIBLE_COUNT, label: "개 보유 자료로 즉시 착수" },
+                { n: RECOMMENDED_COUNT, label: "개 추천 과제" },
               ] as const
             ).map((s) => (
               <div key={s.label} style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -436,11 +412,11 @@ function TasksContent() {
             <span style={{ flex: "none", display: "inline-flex" }}>
               <Icons.info size={13} />
             </span>
-            예상 기간은 정부 스마트공장 보급·확산사업 표준 일정을 기준으로 한 현실 추정이에요.
+            예상 기간은 정부 스마트공장 사업 표준 일정 기준이에요.
           </div>
         </Card>
 
-        {/* ---- 필터 칩 행 ---- */}
+        {/* ---- 카테고리 칩 — ★추천 맨 앞 + 방법론 단계 (v3) ---- */}
         <Card
           radius="2xl"
           padded={false}
@@ -452,39 +428,31 @@ function TasksContent() {
             gap: 8,
           }}
         >
-          <Tag selected={area === "all"} onClick={() => setArea("all")}>
-            전체{" "}
-            <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>{TOTAL_COUNT}</span>
+          <Tag selected={filter === "recommended"} onClick={() => setFilter("recommended")}>
+            ★ 추천{" "}
+            <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>{RECOMMENDED_COUNT}</span>
           </Tag>
-          {FUNCTION_AREAS.map((a) => (
-            <Tag key={a.id} selected={area === a.id} onClick={() => setArea(a.id)}>
-              {a.name}{" "}
-              <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>{AREA_COUNTS[a.id]}</span>
+          <Tag selected={filter === "all"} onClick={() => setFilter("all")}>
+            전체 <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>{TOTAL_COUNT}</span>
+          </Tag>
+          {STEP_FILTERS.map((s) => (
+            <Tag key={s.no} selected={filter === s.no} onClick={() => setFilter(s.no)}>
+              {s.shortLabel}{" "}
+              <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>
+                {taskCatalog.filter((t) => t.methodStep === s.no).length}
+              </span>
             </Tag>
           ))}
-          <span
-            style={{
-              marginLeft: "auto",
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              font: "var(--text-caption)",
-              color: "var(--grey-500)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            정렬 · 추천순
-            <Icons.chevronDown size={13} />
-          </span>
         </Card>
 
-        {/* ---- 카드 그리드 (20종 전부 — 필터로 탐색) ---- */}
+        {/* ---- 카드 그리드 ---- */}
         <div className="axp-task-grid">
           {filtered.map((t) => (
             <TaskCard
               key={t.id}
               task={t}
               selected={selectedTaskIds.includes(t.id)}
+              equippedBy={equippedBy.get(t.id) ?? null}
               onToggle={() => handleToggle(t)}
             />
           ))}
@@ -520,10 +488,11 @@ function TasksContent() {
                 pointerEvents: "auto",
                 alignSelf: "center",
                 maxWidth: 640,
-                background: "var(--grey-800)",
-                color: "var(--fg-inverse)",
+                background: "var(--bg-elevated)",
+                color: "var(--fg-primary)",
+                border: "1px solid var(--line-default)",
                 borderRadius: "var(--radius-l)",
-                boxShadow: "var(--shadow-toast)",
+                boxShadow: "var(--shadow-3)",
                 padding: "12px 16px",
                 display: "flex",
                 alignItems: "center",
@@ -531,10 +500,10 @@ function TasksContent() {
                 flexWrap: "wrap",
               }}
             >
-              <span style={{ flex: "none", display: "inline-flex", color: "var(--ax-blue-on-dark)" }}>
+              <span style={{ flex: "none", display: "inline-flex", color: "var(--fg-brand)" }}>
                 <Icons.info size={17} />
               </span>
-              <span style={{ flex: "1 1 240px", font: "var(--text-body3)", color: "var(--fg-inverse)" }}>
+              <span style={{ flex: "1 1 240px", font: "var(--text-body3)" }}>
                 ‘{suggestionTitles}’이 선행되면 효과가 커요. 함께 담을까요?
               </span>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flex: "none" }}>
@@ -557,7 +526,7 @@ function TasksContent() {
                     cursor: "pointer",
                     padding: "6px 10px",
                     font: "var(--text-label-s)",
-                    color: "rgba(255,255,255,0.72)",
+                    color: "var(--fg-tertiary)",
                   }}
                 >
                   나중에
@@ -566,13 +535,14 @@ function TasksContent() {
             </div>
           )}
 
-          {/* 담기 바 — grey-800 서피스(토스트 문법), radius 16 */}
+          {/* 담기 바 — 밝은 서피스 + 그림자 구분 (v3: 컬러 대신 그림자) */}
           <div
             style={{
               pointerEvents: "auto",
-              background: "var(--grey-800)",
+              background: "var(--bg-elevated)",
+              border: "1px solid var(--line-default)",
               borderRadius: "var(--radius-xl)",
-              boxShadow: "var(--shadow-toast)",
+              boxShadow: "var(--shadow-3)",
               padding: "16px 20px",
               display: "flex",
               alignItems: "center",
@@ -586,15 +556,13 @@ function TasksContent() {
                   fontSize: 16,
                   fontWeight: 700,
                   lineHeight: 1.3,
-                  color: "var(--fg-inverse)",
+                  color: "var(--fg-primary)",
                 }}
               >
                 과제 <span style={{ ...mono }}>{count}</span>개 담음
               </div>
-              <div style={{ font: "var(--text-caption)", color: "rgba(255,255,255,0.62)" }}>
-                {count === 0
-                  ? "아직 담은 게 없어요"
-                  : "보통 2~3개로 시작해요 — 정부 지원사업 1회 신청 단위"}
+              <div style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                정부 지원사업 1회 신청 단위: 2~3개
               </div>
               {overLimit && (
                 <div
@@ -603,13 +571,13 @@ function TasksContent() {
                     alignItems: "center",
                     gap: 6,
                     font: "var(--text-caption)",
-                    color: "#ffc06e",
+                    color: "var(--fg-warning)",
                   }}
                 >
                   <span style={{ flex: "none", display: "inline-flex" }}>
                     <Icons.alert size={13} />
                   </span>
-                  4개 이상은 한 번에 추진하기 어려워요. 우선순위가 높은 2~3개로 좁히는 걸 권해요.
+                  우선순위 높은 2~3개를 권해요
                 </div>
               )}
             </div>
@@ -623,14 +591,5 @@ function TasksContent() {
         </div>
       </div>
     </div>
-  );
-}
-
-/* Next 정적 프리렌더 — useSearchParams는 Suspense 경계 안에서만 (기존 방식 유지) */
-export default function TasksPage() {
-  return (
-    <Suspense fallback={null}>
-      <TasksContent />
-    </Suspense>
   );
 }

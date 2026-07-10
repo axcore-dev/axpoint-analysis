@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { Icons } from "./icons";
 
 export interface ModalProps {
@@ -14,71 +15,67 @@ export interface ModalProps {
 }
 
 /**
- * 센터 모달 — radius 20, shadow-3, 스크림. ESC/스크림 클릭으로 닫기.
+ * 센터 모달 — Radix Dialog 기반 (포커스 트랩·스크롤 잠금·ESC 처리 내장).
+ * 시각은 기존 .ax-scrim / .ax-modal 문법 그대로 유지한다.
  */
 export function Modal({ open, onClose, title, wide, dismissible = true, children }: ModalProps) {
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && dismissible) onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
-  }, [open, onClose, dismissible]);
-
-  if (!open) return null;
-
   return (
-    <>
-      <div className="ax-scrim" onClick={dismissible ? onClose : undefined} aria-hidden />
-      <div className={`ax-modal ${wide ? "ax-modal--wide" : ""}`} role="dialog" aria-modal="true">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            justifyContent: "space-between",
-            gap: 12,
-            marginBottom: title ? 16 : 0,
-          }}
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="ax-scrim" />
+        <Dialog.Content
+          className={`ax-modal ${wide ? "ax-modal--wide" : ""}`}
+          aria-describedby={undefined}
+          onEscapeKeyDown={dismissible ? undefined : (e) => e.preventDefault()}
+          onPointerDownOutside={dismissible ? undefined : (e) => e.preventDefault()}
+          onInteractOutside={dismissible ? undefined : (e) => e.preventDefault()}
         >
-          {title ? (
-            <h2
-              style={{
-                margin: 0,
-                font: "var(--text-title1)",
-                letterSpacing: "var(--track-heading)",
-                color: "var(--fg-primary)",
-              }}
-            >
-              {title}
-            </h2>
-          ) : (
-            <span />
-          )}
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="닫기"
+          <div
             style={{
-              border: "none",
-              background: "transparent",
-              cursor: "pointer",
-              color: "var(--grey-500)",
-              padding: 4,
-              margin: "-4px -4px 0 0",
-              borderRadius: 8,
-              display: "inline-flex",
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 12,
+              marginBottom: title ? 16 : 0,
             }}
           >
-            <Icons.x size={20} />
-          </button>
-        </div>
-        {children}
-      </div>
-    </>
+            <Dialog.Title
+              style={
+                title
+                  ? {
+                      margin: 0,
+                      font: "var(--text-title1)",
+                      letterSpacing: "var(--track-heading)",
+                      color: "var(--fg-primary)",
+                    }
+                  : { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }
+              }
+            >
+              {title ?? "팝업"}
+            </Dialog.Title>
+            <Dialog.Close asChild>
+              <button
+                type="button"
+                aria-label="닫기"
+                style={{
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  color: "var(--grey-500)",
+                  padding: 4,
+                  margin: "-4px -4px 0 0",
+                  borderRadius: 8,
+                  display: "inline-flex",
+                  marginLeft: "auto",
+                }}
+              >
+                <Icons.x size={20} />
+              </button>
+            </Dialog.Close>
+          </div>
+          {children}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

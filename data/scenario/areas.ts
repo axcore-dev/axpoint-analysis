@@ -19,7 +19,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d08", label: "월생산집계", snippet: "값 직접 입력(수식 없음)" },
       { kind: "hitl", refId: "hitl-6", label: "설문: 현장 전달 방식", snippet: "단톡·사진" },
     ],
-    taskIds: ["t03", "t06", "t10"],
+    taskIds: ["t03", "t06", "t10", "t21"],
   },
   {
     areaId: "logistics",
@@ -74,15 +74,14 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d09", label: "회계전표(더존 출력)", snippet: "시스템 출력물 확인" },
       { kind: "hitl", refId: "hitl-13", label: "설문: 클라우드", snippet: "네이버웍스 사용 중" },
     ],
-    taskIds: ["t02", "t19", "t20"],
+    taskIds: ["t02", "t19"],
   },
   {
     areaId: "design",
     grade: "hold",
     priority: 7,
     asIs: "고객 도면 1건만 확인되어 설계 프로세스 판단 근거 부족",
-    holdReason:
-      "도면 관리 대장·설계 변경 이력 자료가 없어 판단 보류. 도면 관리 방식 자료를 올리면 진단이 가능해집니다.",
+    holdReason: "도면 관리 대장·설계 변경 이력 자료가 없어 판단 보류.",
     evidence: [{ kind: "upload", refId: "d12", label: "고객사 도면", snippet: "1건 확인 — 관리 체계 미확인" }],
     taskIds: ["t16"],
   },
@@ -91,8 +90,7 @@ export const areaAssessments: AreaAssessment[] = [
     grade: "hold",
     priority: 8,
     asIs: "고객 문의·클레임 처리 자료가 없어 판단 근거 부족",
-    holdReason:
-      "클레임 대장·고객 응대 기록이 없어 판단 보류. 관련 자료를 올리면 진단이 가능해집니다.",
+    holdReason: "클레임 대장·고객 응대 기록이 없어 판단 보류.",
     evidence: [],
     taskIds: ["t17"],
   },

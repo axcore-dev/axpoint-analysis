@@ -12,8 +12,12 @@ import {
 import type { StepId } from "@/lib/types";
 
 /**
- * 진단 플로우 클라이언트 상태 (백엔드 없음 — sessionStorage 유지)
+ * 진단 플로우 클라이언트 상태 (백엔드 없음)
  * 6단계 단일 흐름의 진입 조건(PRD 시트2)을 이 상태로 판정한다.
+ *
+ * 새로고침 정책 (수정요청v3):
+ * - 저장소 유지 없음 — 새로고침하면 데이터 초기화 (라우트 이동은 Provider가 유지)
+ * - 작업 진행 중 새로고침/이탈 시 브라우저 기본 경고(beforeunload)
  */
 export interface DiagnosisState {
   /** S0: 기업 식별값 (필수) — 어떤 값이든 데모 시나리오로 진행 */
@@ -56,25 +60,36 @@ interface DiagnosisContextValue extends DiagnosisState {
 
 const DiagnosisContext = createContext<DiagnosisContextValue | null>(null);
 
-const STORAGE_KEY = "axpoint-demo-state-v1";
+/** 구버전 저장 상태가 남아 있으면 제거 (새로고침 초기화 정책 전환) */
+const LEGACY_STORAGE_KEY = "axpoint-demo-state-v1";
 
 export function DiagnosisProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<DiagnosisState>(initialState);
-  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     try {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (raw) setState({ ...initialState, ...(JSON.parse(raw) as DiagnosisState) });
+      sessionStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
-      /* 손상된 상태는 초기화 */
+      /* noop */
     }
-    setHydrated(true);
   }, []);
 
+  /* 작업 진행 중이면 새로고침·창 닫기 전에 브라우저 기본 경고 표시 */
+  const inProgress =
+    state.companyInput !== "" ||
+    state.uploadSimulated ||
+    state.completedSteps.length > 0 ||
+    state.selectedTaskIds.length > 0;
+
   useEffect(() => {
-    if (hydrated) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state, hydrated]);
+    if (!inProgress) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = ""; // 레거시 브라우저 호환
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [inProgress]);
 
   const update = useCallback((patch: Partial<DiagnosisState>) => {
     setState((s) => ({ ...s, ...patch }));
@@ -113,7 +128,6 @@ export function DiagnosisProvider({ children }: { children: ReactNode }) {
 
   const reset = useCallback(() => {
     setState(initialState);
-    sessionStorage.removeItem(STORAGE_KEY);
   }, []);
 
   const value = useMemo(

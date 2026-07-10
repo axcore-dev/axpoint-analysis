@@ -7,11 +7,23 @@ import { LoginModal } from "@/components/auth/LoginModal";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { uploadedDocs } from "@/data/scenario/documents";
 import { FUNCTION_AREAS } from "@/data/rubric/meta";
-import { Button, Card, Icons, Loader, Tag } from "@/components/ui";
+import {
+  Autocomplete,
+  BackIconButton,
+  Button,
+  Card,
+  DotProgress,
+  Icons,
+  Loader,
+  Tag,
+  type AutocompleteItem,
+} from "@/components/ui";
 
 /**
- * S0 랜딩 — Hero 검색 + 3단계 확인 위저드 (수정요청v1)
+ * S0 랜딩 — Hero 검색 + 3단계 확인 위저드 (수정요청v1 · v3)
  * phase: search(히어로) → confirm(기업 확인 1/3) → upload(자료 2/3) → systems(현황 3/3)
+ * v3: 자동완성은 Autocomplete 컴포넌트, 업로드는 1회 일괄 첨부,
+ *     프로그램·관심 영역 모두 선택해야 진단 시작 가능
  */
 
 type Phase = "search" | "confirm" | "upload" | "systems";
@@ -22,80 +34,16 @@ const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 const TYPING_PHRASES = ["(주)데모기업", "123-45-67890"];
 const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
-/** 진행 도트 (●●○ + n/3) */
-function Progress({ step }: { step: 1 | 2 | 3 }) {
-  return (
-    <div
-      aria-label={`3단계 중 ${step}단계`}
-      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
-    >
-      {[1, 2, 3].map((i) => (
-        <span
-          key={i}
-          aria-hidden
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "var(--radius-full)",
-            background: i <= step ? "var(--bg-brand)" : "var(--grey-300)",
-            transition: "background-color var(--dur-base) var(--ease)",
-          }}
-        />
-      ))}
-      <span
-        style={{
-          marginLeft: 6,
-          fontFamily: "var(--font-mono)",
-          fontSize: 12,
-          fontWeight: 500,
-          color: "var(--fg-quaternary)",
-        }}
-      >
-        {step}/3
-      </span>
-    </div>
-  );
-}
+/** 예상 검색어 (자동완성) */
+const COMPANY_ITEMS: AutocompleteItem[] = [
+  { value: "데모기업", description: "금속가공제품 제조업 · 광주" },
+  { value: "AXCRE", description: "소프트웨어 개발 · 광명" },
+];
 
-/** 카드 좌상단 뒤로 가기 chevron */
-function BackButton({ onClick, label }: { onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      onClick={onClick}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--hover-overlay)";
-        e.currentTarget.style.color = "var(--fg-secondary)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-        e.currentTarget.style.color = "var(--fg-tertiary)";
-      }}
-      style={{
-        position: "absolute",
-        top: 14,
-        left: 14,
-        width: 32,
-        height: 32,
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        border: "none",
-        borderRadius: "var(--radius-s)",
-        background: "transparent",
-        color: "var(--fg-tertiary)",
-        cursor: "pointer",
-        transition:
-          "background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-      }}
-    >
-      <span aria-hidden style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
-        <Icons.chevronRight size={18} />
-      </span>
-    </button>
-  );
-}
+/** 올리면 좋은 서류 — 업로드 존에 칩으로 강조 (v3 개선) */
+const DOC_HINTS = ["생산일지", "발주서", "재고표", "검사성적서"];
+
+const ALL_DOC_IDS = uploadedDocs.map((d) => d.id);
 
 const stepCardStyle: CSSProperties = {
   width: "100%",
@@ -109,14 +57,6 @@ const cardHeadingStyle: CSSProperties = {
   font: "var(--text-h3)",
   letterSpacing: "var(--track-heading)",
   color: "var(--fg-primary)",
-  textAlign: "center",
-};
-
-const cardSubStyle: CSSProperties = {
-  margin: "8px 0 0",
-  font: "var(--text-body2)",
-  letterSpacing: "var(--track-body)",
-  color: "var(--fg-tertiary)",
   textAlign: "center",
 };
 
@@ -138,9 +78,12 @@ export default function LandingPage() {
   /** 포커스가 한 번이라도 닿으면 타이핑 애니메이션 종료 */
   const [touched, setTouched] = useState(false);
   const [placeholder, setPlaceholder] = useState("");
+  /** 업로드 시뮬레이션 — 일괄 첨부 후 파일별 삭제 가능 (v3 개선) */
   const [uploading, setUploading] = useState(false);
+  const [attachedIds, setAttachedIds] = useState<string[]>([]);
+  const [noMoreDocs, setNoMoreDocs] = useState(false);
 
-  /* sessionStorage 복원 값 반영 (재방문 시) */
+  /* 뒤로 돌아왔을 때 진행 중 입력값 복원 */
   useEffect(() => {
     if (companyInput) setCompany((prev) => (prev === "" ? companyInput : prev));
   }, [companyInput]);
@@ -187,15 +130,32 @@ export default function LandingPage() {
     return () => clearTimeout(timer);
   }, [phase, touched, idle]);
 
-  /* 업로드 시뮬레이션 — 1초 판독 로딩 후 완료 */
+  /* 업로드 시뮬레이션 — 1초 판독 로딩 후 일괄 첨부 (지운 파일 재업로드 포함) */
   useEffect(() => {
     if (!uploading) return;
     const t = setTimeout(() => {
-      update({ uploadSimulated: true });
+      setAttachedIds(ALL_DOC_IDS);
       setUploading(false);
+      update({ uploadSimulated: true });
     }, 1000);
     return () => clearTimeout(t);
   }, [uploading, update]);
+
+  /* 뒤로 돌아왔을 때 — 이미 업로드했다면 리스트 복원 (최초 1회) */
+  useEffect(() => {
+    if (uploadSimulated) setAttachedIds((prev) => (prev.length > 0 ? prev : ALL_DOC_IDS));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** 첨부 파일 삭제 (v3 개선) — 전부 지우면 업로드 안 한 상태로 */
+  const removeDoc = (id: string) => {
+    setNoMoreDocs(false);
+    setAttachedIds((prev) => {
+      const next = prev.filter((d) => d !== id);
+      if (next.length === 0) update({ uploadSimulated: false });
+      return next;
+    });
+  };
 
   const canSubmit = company.trim().length >= 1;
 
@@ -208,11 +168,33 @@ export default function LandingPage() {
     setPhase("confirm");
   };
 
+  /** 예상 검색어 선택 → 입력값 채우고 동일 제출 흐름(로그인 체크) */
+  const pickSuggestion = (value: string) => {
+    setCompany(value);
+    if (!user) {
+      setLoginOpen(true);
+      return;
+    }
+    setPhase("confirm");
+  };
+
+  const handleUploadClick = () => {
+    if (uploading) return;
+    if (attachedIds.length === ALL_DOC_IDS.length) {
+      setNoMoreDocs(true);
+      return;
+    }
+    setUploading(true);
+  };
+
+  /** '없음'은 배타 선택 — 없음을 고르면 나머지 해제, 다른 걸 고르면 없음 해제 */
   const toggleSystem = (name: string) => {
+    if (systems.includes(name)) {
+      update({ systems: systems.filter((s) => s !== name) });
+      return;
+    }
     update({
-      systems: systems.includes(name)
-        ? systems.filter((s) => s !== name)
-        : [...systems, name],
+      systems: name === "없음" ? ["없음"] : [...systems.filter((s) => s !== "없음"), name],
     });
   };
 
@@ -230,102 +212,57 @@ export default function LandingPage() {
     router.push("/collect");
   };
 
-  const previewDocs = uploadedDocs.slice(0, 4);
-  const restCount = uploadedDocs.length - previewDocs.length;
+  const attachedDocs = uploadedDocs.filter((d) => attachedIds.includes(d.id));
+  /* 두 섹션(프로그램·관심 영역) 모두 골라야 진단 시작 (v3) */
+  const canStart = systems.length > 0 && interestAreas.length > 0;
 
   return (
-    <div
-      style={{
-        background: "var(--bg-base)",
-        minHeight: "calc(100vh - 230px)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "48px var(--gutter)",
-        boxSizing: "border-box",
-      }}
-    >
-      {/* ─── phase: search — Hero ─────────────────────────── */}
+    <div className="flex min-h-[calc(100vh-56px)] flex-col items-center justify-center bg-surface px-[var(--gutter)] py-12">
+      {/* ─── phase: search — 검색바가 수직 중앙, 헤드라인은 그 위에 부착 ── */}
       {phase === "search" && (
-        <div
-          key="search"
-          className="ax-step-enter"
-          style={{
-            width: "100%",
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            textAlign: "center",
-          }}
-        >
-          <span
-            style={{
-              font: "var(--text-label-s)",
-              letterSpacing: "0.08em",
-              color: "var(--fg-brand)",
-            }}
-          >
-            AXpoint
-          </span>
-          <h1
-            style={{
-              margin: "16px 0 0",
-              font: "var(--text-display2)",
-              letterSpacing: "var(--track-display)",
-              color: "var(--fg-primary)",
-            }}
-          >
-            3분이면 나와요,
-            <br />
-            우리 회사의 AI 도입 답안지
-          </h1>
-          <p
-            style={{
-              margin: "16px 0 0",
-              font: "var(--text-body1)",
-              letterSpacing: "var(--track-body)",
-              color: "var(--fg-tertiary)",
-            }}
-          >
-            제조 기업 진단 무료 — 근거 있는 점수로 알려드려요
-          </p>
+        <div key="search" className="ax-step-enter relative w-full max-w-[560px]">
+          <div className="absolute bottom-full left-1/2 mb-10 flex w-max max-w-[calc(100vw-48px)] -translate-x-1/2 flex-col items-center text-center">
+            <h1 className="flex-col ax-heading mt-4 [font:var(--text-display2)] tracking-[var(--track-display)] text-ink">
+              제조 AX 첫걸음, AX<b className="text-brand">point</b>
+            </h1>
+            <p className="mt-3 [font:var(--text-body1)] tracking-[var(--track-body)] text-ink-3">
+              조사·분석·진단·설계까지, One-stop 맞춤형 솔루션
+            </p>
+          </div>
 
           <form
             onSubmit={(e) => {
               e.preventDefault();
               submitSearch();
             }}
-            style={{ width: "100%", maxWidth: 560, marginTop: 40 }}
+            className="relative w-full"
           >
-            <div
-              className="ax-field ax-field--pill"
-              style={{ height: 58, paddingLeft: 24, paddingRight: 8, gap: 12 }}
-            >
-              <span className="ax-field__icon">
-                <Icons.search size={20} />
-              </span>
-              <input
-                value={company}
-                onChange={(e) => setCompany(e.target.value)}
-                onFocus={() => setTouched(true)}
-                placeholder={placeholder}
-                aria-label="기업명 또는 사업자번호"
-                autoComplete="off"
-                style={{ fontSize: 16 }}
-              />
-              <Button
-                type="submit"
-                variant="primary"
-                size="md"
-                disabled={!canSubmit}
-                aria-label="진단 시작"
-                style={{ borderRadius: "var(--radius-full)", flex: "none", height: 42 }}
-              >
-                진단 시작
-                <Icons.arrow size={16} />
-              </Button>
-            </div>
+            <Autocomplete
+              value={company}
+              onValueChange={setCompany}
+              onSelect={pickSuggestion}
+              items={COMPANY_ITEMS}
+              placeholder={placeholder}
+              aria-label="기업명 또는 사업자번호"
+              onFocus={() => setTouched(true)}
+              leading={<Icons.search size={20} />}
+              fieldClassName="ax-field--pill"
+              fieldStyle={{ height: 58, paddingLeft: 24, paddingRight: 8, gap: 12 }}
+              inputStyle={{ fontSize: 16 }}
+              trailing={
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="md"
+                  disabled={!canSubmit}
+                  aria-label="진단 시작"
+                  style={{ borderRadius: "var(--radius-full)", flex: "none", height: 42 }}
+                >
+                  진단 시작
+                  <Icons.arrow size={16} />
+                </Button>
+              }
+            />
           </form>
         </div>
       )}
@@ -333,8 +270,8 @@ export default function LandingPage() {
       {/* ─── phase: confirm — 기업 확인 (1/3) ─────────────── */}
       {phase === "confirm" && (
         <Card key="confirm" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
-          <BackButton label="검색으로 돌아가기" onClick={() => setPhase("search")} />
-          <Progress step={1} />
+          <BackIconButton label="검색으로 돌아가기" onClick={() => setPhase("search")} />
+          <DotProgress step={1} total={3} />
           <h2 style={cardHeadingStyle}>이 기업이 맞나요?</h2>
           <div style={{ textAlign: "center", margin: "24px 0 0" }}>
             <div
@@ -371,140 +308,100 @@ export default function LandingPage() {
       {/* ─── phase: upload — 자료 올리기 (2/3) ────────────── */}
       {phase === "upload" && (
         <Card key="upload" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
-          <BackButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
-          <Progress step={2} />
-          <h2 style={cardHeadingStyle}>자료를 올려주세요</h2>
-          <p style={cardSubStyle}>
-            생산일지·발주서·재고표면 충분해요.
-            <br />
-            올릴수록 진단이 정확해져요
+          <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
+          <DotProgress step={2} total={3} />
+          <h2 className="ax-heading mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
+            <b>현장 서류</b>를 올려주세요
+          </h2>
+          <p className="mt-2 text-center [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
+            자료를 올릴수록 진단이 더 정확해져요
           </p>
 
-          <div style={{ marginTop: 24 }}>
-            {uploadSimulated ? (
-              <div
-                style={{
-                  border: "1px solid var(--line-brand)",
-                  background: "var(--bg-brand-weak)",
-                  borderRadius: "var(--radius-l)",
-                  padding: "16px 18px",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    color: "var(--fg-brand)",
-                    font: "var(--text-label-m)",
-                  }}
-                >
-                  <Icons.check size={16} />
-                  파일 <span style={{ fontFamily: "var(--font-mono)" }}>12</span>건 첨부됨
-                </div>
-                <ul style={{ margin: "10px 0 0", padding: 0, listStyle: "none" }}>
-                  {previewDocs.map((d) => (
-                    <li
-                      key={d.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 7,
-                        font: "var(--text-body3)",
-                        color: "var(--fg-secondary)",
-                        padding: "3px 0",
-                      }}
-                    >
-                      <Icons.file size={13} />
-                      {d.fileName}
-                    </li>
-                  ))}
-                  <li
-                    style={{
-                      font: "var(--text-body3)",
-                      color: "var(--fg-quaternary)",
-                      padding: "3px 0 0 20px",
-                    }}
-                  >
-                    외 <span style={{ fontFamily: "var(--font-mono)" }}>{restCount}</span>건
-                  </li>
-                </ul>
-              </div>
-            ) : uploading ? (
-              <div
-                style={{
-                  border: "1.5px dashed var(--grey-300)",
-                  borderRadius: "var(--radius-l)",
-                  background: "var(--bg-secondary)",
-                  padding: "34px 18px",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 12,
-                  color: "var(--fg-secondary)",
-                }}
-              >
-                <Loader style={{ color: "var(--fg-brand)" }} />
-                <span style={{ font: "var(--text-body2)" }}>자료를 읽고 있어요</span>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setUploading(true)}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--line-strong)";
-                  e.currentTarget.style.background = "var(--bg-tertiary)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "var(--grey-300)";
-                  e.currentTarget.style.background = "var(--bg-secondary)";
-                }}
-                style={{
-                  width: "100%",
-                  boxSizing: "border-box",
-                  border: "1.5px dashed var(--grey-300)",
-                  borderRadius: "var(--radius-l)",
-                  background: "var(--bg-secondary)",
-                  padding: "30px 18px",
-                  cursor: "pointer",
-                  textAlign: "center",
-                  fontFamily: "var(--font-sans)",
-                  transition:
-                    "border-color var(--dur-base) var(--ease), background-color var(--dur-base) var(--ease)",
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    color: "var(--fg-secondary)",
-                    font: "var(--text-label-m)",
-                  }}
-                >
-                  <Icons.upload size={18} />
-                  여기를 눌러 자료를 올려주세요
-                </span>
-              </button>
-            )}
-            <p
-              style={{
-                margin: "10px 0 0",
-                font: "var(--text-caption)",
-                color: "var(--fg-quaternary)",
-                textAlign: "center",
-              }}
+          <div className="mt-6">
+            {/* 업로드 존 — 업로드 후에도 남아 추가 업로드 가능 */}
+            <button
+              type="button"
+              onClick={handleUploadClick}
+              disabled={uploading}
+              aria-label="자료 올리기"
+              className="box-border w-full cursor-pointer rounded-[var(--radius-l)] border-[1.5px] border-dashed border-[var(--grey-300)] bg-surface-2 px-4 py-7 text-center font-[family-name:var(--font-sans)] transition-colors duration-[var(--dur-base)] hover:border-line-strong hover:bg-surface-3 disabled:cursor-default disabled:hover:border-[var(--grey-300)] disabled:hover:bg-surface-2"
             >
-              이미지(jpg/png) · PDF · xlsx · docx/hwp
-            </p>
+              {uploading ? (
+                <span className="flex min-h-[124px] flex-col items-center justify-center gap-3 text-ink-2">
+                  <Loader style={{ color: "var(--fg-brand)" }} />
+                  <span className="[font:var(--text-body2)]">자료를 읽고 있어요</span>
+                </span>
+              ) : (
+                <span className="flex flex-col items-center gap-3.5">
+                  <span className="flex size-11 items-center justify-center rounded-[var(--radius-m)] border border-line bg-surface text-ink-2 shadow-[var(--shadow-1)]">
+                    <Icons.upload size={20} />
+                  </span>
+                  <span className="[font:var(--text-label-m)] text-ink">
+                    파일 업로드, 또는 가져다 놓기
+                  </span>
+                  {/* 올리면 좋은 서류 — 칩으로 강조 (v3 개선) */}
+                  <span className="flex flex-wrap items-center justify-center gap-1.5">
+                    {DOC_HINTS.map((hint) => (
+                      <span
+                        key={hint}
+                        className="inline-flex items-center rounded-[var(--radius-full)] border border-line bg-surface px-2.5 py-1 [font:var(--text-label-s)] text-ink-2"
+                      >
+                        {hint}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="[font:var(--text-caption)] text-ink-4">
+                    PDF · 엑셀(xlsx) · 사진(jpg/png) · 한글(hwp)/워드(docx)
+                  </span>
+                </span>
+              )}
+            </button>
+
+            {noMoreDocs && (
+              <p className="mt-2 text-center [font:var(--text-caption)] text-ink-4">
+                더 올릴 자료가 없어요
+              </p>
+            )}
+
+            {/* 업로드된 파일 리스트 — 콤팩트 행 + 파일별 삭제 (v3 개선) */}
+            {attachedDocs.length > 0 && (
+              <ul className="ax-scrollbar-none mt-3 flex max-h-[236px] list-none flex-col gap-1 overflow-y-auto">
+                {attachedDocs.map((d) => (
+                  <li
+                    key={d.id}
+                    className="flex items-center gap-2.5 rounded-[var(--radius-s)] border border-line bg-surface py-1.5 pl-3 pr-1.5"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-left [font:var(--text-label-s)] text-ink">
+                      {d.fileName}
+                    </span>
+                    <span className="flex-none [font:var(--text-caption)] text-ink-4">
+                      {d.fileType.toUpperCase()}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`${d.fileName} 삭제`}
+                      onClick={() => removeDoc(d.id)}
+                      className="inline-flex flex-none cursor-pointer items-center justify-center rounded-[var(--radius-xs)] border-0 bg-transparent p-1 text-ink-4 transition-colors duration-[var(--dur-fast)] hover:bg-[var(--hover-overlay)] hover:text-ink-2"
+                    >
+                      <Icons.x size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
 
-          <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 8 }}>
-            {uploadSimulated ? (
-              <Button variant="primary" size="lg" full onClick={() => setPhase("systems")}>
-                다음
-              </Button>
-            ) : (
+          <div className="mt-5 flex flex-col gap-2">
+            <Button
+              variant="primary"
+              size="lg"
+              full
+              disabled={attachedDocs.length === 0}
+              onClick={() => setPhase("systems")}
+            >
+              다음
+            </Button>
+            {attachedDocs.length === 0 && (
               <Button
                 variant="ghost"
                 size="md"
@@ -522,10 +419,11 @@ export default function LandingPage() {
       {/* ─── phase: systems — 시스템·관심 영역 (3/3) ──────── */}
       {phase === "systems" && (
         <Card key="systems" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
-          <BackButton label="자료 올리기로 돌아가기" onClick={() => setPhase("upload")} />
-          <Progress step={3} />
-          <h2 style={cardHeadingStyle}>지금 상황을 알려주세요</h2>
-          <p style={cardSubStyle}>선택 사항이에요. 건너뛰어도 진단에는 문제 없어요</p>
+          <BackIconButton label="자료 올리기로 돌아가기" onClick={() => setPhase("upload")} />
+          <DotProgress step={3} total={3} />
+          <h2 className="ax-heading" style={cardHeadingStyle}>
+            <b>사용 중인 프로그램</b>과 <b>관심 영역</b>을 골라주세요
+          </h2>
 
           <div style={{ marginTop: 24 }}>
             <div
@@ -535,7 +433,7 @@ export default function LandingPage() {
                 marginBottom: 10,
               }}
             >
-              사용 중인 시스템
+              사용 중인 프로그램
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {SYSTEM_OPTIONS.map((name) => (
@@ -571,24 +469,12 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 8 }}>
-            <Button variant="primary" size="xl" full onClick={startDiagnosis}>
+          <div className="mt-7 flex flex-col gap-2">
+            <Button variant="primary" size="xl" full disabled={!canStart} onClick={startDiagnosis}>
               진단 시작하기
-            </Button>
-            <Button variant="ghost" size="md" full onClick={startDiagnosis}>
-              건너뛰고 시작
+              <Icons.arrow size={17} />
             </Button>
           </div>
-          <p
-            style={{
-              margin: "16px 0 0",
-              font: "var(--text-caption)",
-              color: "var(--fg-quaternary)",
-              textAlign: "center",
-            }}
-          >
-            올려주신 자료의 개인 정보는 읽는 즉시 가리고, 진단에만 써요.
-          </p>
         </Card>
       )}
 

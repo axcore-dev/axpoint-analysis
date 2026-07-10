@@ -1,13 +1,17 @@
 import type { ImprovementTask } from "@/lib/types";
 
 /**
- * 개선 과제 카탈로그 20종 (S3 통합 페이지, F-TSK-01~07 · 2026-07-09 수정요청v1)
- * - 추천 과제만 기본 노출, 미추천은 "더보기" 뒤 (F-TSK-02)
- * - subtitle = 영문 보조 태그, beforeAfter = 정량 한 줄 (참고: docs/참고자료/개선과제.png)
+ * 개선 과제 카탈로그 (S3 통합 페이지, F-TSK-01~07 · 2026-07-10 수정요청v3)
+ * - methodStep = AX 7단계 방법론 배치 (docs/참고자료/중소 제조기업 AX 7단계 방법론.xlsx)
+ *   2 데이터화·표준화 / 3 생산 모니터링 / 4 품질 안정화 / 5 재고·물류 / 6 설비 / 7 공정 최적화·확산
+ * - 방법론 정합(v3): 수기 장부 자동 판독(구 t20)은 모바일 작업일보(t03)와 중복 → 제외,
+ *   설비 예지보전(t07)은 수집(t11)과 감지(t07)로 역할 분리, 공정조건 최적화(t21) 신설
+ * - beforeAfter = 정량 한 줄 (참고: docs/참고자료/개선과제.png)
  * - 카드에는 매칭 솔루션 카운트만 — 벤더 상세는 로드맵·보고서로 이월
  * - inheritedAsIs = 해당 영역 진단 As-Is 상속 (F-TSK-05, areas.ts와 동일 문구)
- * - feasibility = 업로드 자료 기반 즉시 착수 배지 (F-TSK-06)
+ * - feasibility = 업로드 자료 기반 착수 근거 (F-TSK-06)
  * - dependsOn = 기반과제 연관 제안 트리거 (F-TSK-04)
+ * - coveredBySystems = 사용 중인 프로그램으로 이미 갖춰진 과제 → 선택 불가
  * - 비용 밴드는 정부 지원사업(스마트공장 등) 기준 자부담 추정 (단위: 만원)
  */
 export const taskCatalog: ImprovementTask[] = [
@@ -15,7 +19,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t01",
     title: "품목·거래처 코드 표준화",
-    subtitle: "DATA INTEGRATION",
+    methodStep: 2,
     beforeAfter: "품목 매칭률 28% → 단일 코드로 전 문서 대사 가능",
     summary: "문서마다 다른 품목 표기를 단일 코드 체계로 통일 — 모든 연동·자동화의 출발점",
     areaId: "logistics",
@@ -36,7 +40,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t02",
     title: "데이터 공유 체계 정리 (폴더 규칙·권한)",
-    subtitle: "DATA GOVERNANCE",
+    methodStep: 2,
     beforeAfter: "개인 PC 산재 자료 → 규칙 있는 공용 저장소 한곳",
     summary: "NAS 폴더 규칙과 접근 권한을 정리해 개인 PC 산재 데이터를 한곳으로",
     areaId: "mgmt",
@@ -55,7 +59,8 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t03",
     title: "모바일 작업일보 (생산일지 디지털 전환)",
-    subtitle: "MOBILE WORK LOG",
+    methodStep: 2,
+    coveredBySystems: ["MES"],
     beforeAfter: "일보 기록 4회 재입력 → 현장 1회 입력",
     summary: "현장에서 스마트폰·태블릿으로 1회 입력 — 수기 일지→엑셀 재입력 4단계를 제거",
     areaId: "production",
@@ -82,7 +87,8 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t04",
     title: "재고·발주점 자동 알림",
-    subtitle: "REORDER POINT",
+    methodStep: 5,
+    coveredBySystems: ["WMS"],
     beforeAfter: "결품·과잉 감(感) 발주 → 발주점 자동 알림",
     summary: "품목별 안전재고 기준을 세우고 발주 시점을 자동 알림 — 감(感) 발주 탈피",
     areaId: "logistics",
@@ -109,7 +115,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t05",
     title: "검사성적서 전자화 + 불량 코드 체계",
-    subtitle: "DIGITAL INSPECTION",
+    methodStep: 4,
     beforeAfter: "불량 사유 미기록 → 코드 기반 원인 추적",
     summary: "검사 기록을 전자 입력으로 바꾸고 불량 사유 표준 코드를 도입",
     areaId: "quality",
@@ -136,8 +142,9 @@ export const taskCatalog: ImprovementTask[] = [
   /* ============ 미추천 과제 (t06~t20) — "더보기" 노출 ============ */
   {
     id: "t06",
-    title: "실시간 생산 집계 대시보드",
-    subtitle: "MES · 기초",
+    title: "생산 현황 대시보드 (실시간 집계)",
+    methodStep: 3,
+    coveredBySystems: ["MES"],
     beforeAfter: "월 집계 반나절 → 실시간 현황판",
     summary: "작업일보 데이터를 자동 집계해 일·월 현황판으로 — 수기 집계·보고 제거",
     areaId: "production",
@@ -159,28 +166,29 @@ export const taskCatalog: ImprovementTask[] = [
   },
   {
     id: "t07",
-    title: "설비 예지보전 (센서 확대·가동 데이터 수집)",
-    subtitle: "PREDICTIVE MAINTENANCE",
+    title: "설비 이상징후 감지 (예지보전)",
+    methodStep: 6,
     beforeAfter: "고장 후 수리 → 징후 감지 후 계획 정비",
-    summary: "센서·PLC를 확대해 가동·정지 데이터를 자동 수집, 고장 전 징후 감지",
+    summary: "수집된 가동 데이터에서 고장 패턴을 학습해 정지 전에 징후를 감지",
     areaId: "equipment",
     isFoundation: false,
     recommended: false,
-    reason: "설비 데이터가 수기 점검표 수준 (ICS-05 판정 A2) — 데이터 수집 기반이 먼저 필요",
+    reason: "설비 데이터가 수기 점검표 수준 (ICS-05 판정 A2) — 가동 데이터 수집(t11)이 먼저 필요",
     inheritedAsIs: "점검표는 정기 운영되나 수기 작성이며 센서 데이터가 관리로 이어지지 않음",
     effect: { summary: "비계획 정지 감소, 보전 비용 최적화" },
-    dataRequirements: ["설비 가동 데이터 (센서 설치 선행)", "수리 이력 축적"],
+    dataRequirements: ["설비 가동 데이터 (t11 선행 필수)", "수리 이력 축적"],
     difficulty: "상",
     durationMonths: [4, 6],
     solutionCount: 3,
-    dependsOn: ["t02"],
+    dependsOn: ["t11"],
     buildOrder: 7,
     costBand: { total: [3000, 6000], selfPay: [900, 2100], note: "스마트공장 고도화 트랙 기준" },
   },
   {
     id: "t08",
     title: "견적-수주-출하 연동 관리",
-    subtitle: "QUOTE-TO-SHIP",
+    methodStep: 5,
+    coveredBySystems: ["ERP"],
     beforeAfter: "견적 이력 개인 PC 검색 → 수주-출하 자동 대사",
     summary: "견적서·거래명세를 단일 흐름으로 연결해 영업 이력을 자산화",
     areaId: "sales",
@@ -200,7 +208,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t09",
     title: "AI 외관검사 (비전 검사 자동화)",
-    subtitle: "MACHINE VISION",
+    methodStep: 4,
     beforeAfter: "검사 3시간 → 10분",
     summary: "카메라·AI로 외관 불량을 자동 판정 — 검사 공수 절감과 전수 검사 전환",
     areaId: "quality",
@@ -220,7 +228,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t10",
     title: "수요예측 기반 생산계획",
-    subtitle: "APS",
+    methodStep: 7,
     beforeAfter: "감에 의존한 생산 계획 → 데이터 기반 주간 계획",
     summary: "수주·생산 데이터로 수요를 예측해 생산 계획을 자동 제안",
     areaId: "production",
@@ -239,8 +247,8 @@ export const taskCatalog: ImprovementTask[] = [
   },
   {
     id: "t11",
-    title: "설비 IoT 모니터링",
-    subtitle: "EQUIPMENT IOT · OEE",
+    title: "설비 IoT 모니터링 (가동 데이터 수집)",
+    methodStep: 6,
     beforeAfter: "가동률 감으로 파악 → 설비별 가동률 실시간 가시화",
     summary: "설비에 IoT 게이트웨이를 연결해 가동·정지 시간을 자동 수집하고 가동률을 집계해요",
     areaId: "equipment",
@@ -263,8 +271,8 @@ export const taskCatalog: ImprovementTask[] = [
   },
   {
     id: "t12",
-    title: "전산 유지보전 관리",
-    subtitle: "CMMS",
+    title: "전산 유지보전 관리 (예방정비 기준)",
+    methodStep: 6,
     beforeAfter: "고장 나면 수리하는 사후 대응 → 예방점검 일정 자동 관리",
     summary: "점검·정비 이력을 전산화하고 예방점검 주기를 관리해 사후정비에서 예방정비로 바꿔요",
     areaId: "equipment",
@@ -283,8 +291,8 @@ export const taskCatalog: ImprovementTask[] = [
   },
   {
     id: "t13",
-    title: "통계적 공정관리",
-    subtitle: "SPC",
+    title: "통계적 공정관리 (SPC)",
+    methodStep: 4,
     beforeAfter: "불량 발생 후 인지 → 공정 이탈 조기 경보",
     summary: "치수·불량 데이터를 관리도로 모니터링해 공정이 흐트러지는 신호를 조기에 잡아요",
     areaId: "quality",
@@ -304,7 +312,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t14",
     title: "불량 추적·원인분석",
-    subtitle: "TRACEABILITY",
+    methodStep: 4,
     beforeAfter: "불량 원인 미상 → 공정 역추적으로 재발 방지",
     summary: "불량이 발생한 공정을 역추적해 근본 원인을 찾고 재발을 막아요",
     areaId: "quality",
@@ -325,7 +333,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t15",
     title: "납기 관리",
-    subtitle: "DUE-DATE CONTROL",
+    methodStep: 5,
     beforeAfter: "납기 임박 수동 확인 → 지연 위험 사전 경보",
     summary: "수주별 납기와 생산 진행을 연결해 지연 위험을 미리 알려줘요",
     areaId: "sales",
@@ -345,7 +353,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t16",
     title: "도면·설계문서 관리",
-    subtitle: "PDM",
+    methodStep: 2,
     beforeAfter: "도면 버전 관리 미확인 → 이력·권한 있는 도면 저장소",
     summary: "도면과 설계 문서를 버전·권한과 함께 한곳에서 관리해요",
     areaId: "design",
@@ -365,7 +373,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t17",
     title: "고객 클레임 관리",
-    subtitle: "CLAIM MANAGEMENT",
+    methodStep: 2,
     beforeAfter: "클레임 처리 기록 없음 → 접수-처리-회신 이력 관리",
     summary: "고객 불만 접수부터 처리·회신까지 한 흐름으로 기록하고 관리해요",
     areaId: "cs",
@@ -385,7 +393,8 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t18",
     title: "창고 위치 관리",
-    subtitle: "WMS LITE",
+    methodStep: 5,
+    coveredBySystems: ["WMS"],
     beforeAfter: "자재 위치 사람 기억 의존 → 위치 코드로 즉시 조회",
     summary: "자재·제품의 보관 위치를 코드로 관리해 찾는 시간을 줄여요",
     areaId: "logistics",
@@ -406,7 +415,7 @@ export const taskCatalog: ImprovementTask[] = [
   {
     id: "t19",
     title: "전자결재·문서 중앙화",
-    subtitle: "E-APPROVAL",
+    methodStep: 2,
     beforeAfter: "종이·메신저 결재 혼용 → 전자결재 단일 창구",
     summary: "결재와 사내 문서를 전자 시스템 한곳으로 모아 처리 이력을 남겨요",
     areaId: "mgmt",
@@ -424,29 +433,27 @@ export const taskCatalog: ImprovementTask[] = [
     buildOrder: 19,
     costBand: { total: [600, 1200], selfPay: [200, 450], note: "바우처 사업 연계 가능" },
   },
+  /* 수기 장부 자동 판독(구 t20)은 모바일 작업일보(t03)와 중복이라 제외 (방법론 정합 v3) */
   {
-    id: "t20",
-    title: "수기 장부 자동 판독 입력",
-    subtitle: "AI DATA ENTRY",
-    beforeAfter: "수기 장부 수동 타이핑 → AI 자동 판독으로 데이터화",
-    summary: "종이 일지·장부를 AI가 자동 판독해 과거 기록을 데이터로 바꿔요",
-    areaId: "mgmt",
+    id: "t21",
+    title: "공정조건 최적화·라인 확산",
+    methodStep: 7,
+    beforeAfter: "작업 조건이 사람 경험에 의존 → 데이터 기반 표준조건",
+    summary: "축적된 생산·품질 데이터로 최적 공정조건을 도출하고 우수 라인 방식을 다른 라인으로 확산해요",
+    areaId: "production",
     isFoundation: false,
     recommended: false,
     reason:
-      "현장 입력 자체를 바꾸는 모바일 작업일보(t03)가 근본 해결이에요 — 과거 수기 기록의 데이터화가 필요해지는 시점에 보조 수단으로 권장해요",
-    inheritedAsIs: "회계는 더존 기반으로 체계적 — 시스템 사용 경험이 확산의 발판",
-    feasibility: {
-      badge: "보유 수기 일지·장부 스캔으로 즉시 착수",
-      basisDocIds: ["d01", "d06"],
-    },
-    effect: { summary: "과거 기록 데이터화, 재입력 공수 절감" },
-    dataRequirements: ["수기 일지·장부 스캔본 (보유)"],
-    difficulty: "하",
-    durationMonths: [1, 2],
-    solutionCount: 3,
-    buildOrder: 20,
-    costBand: { total: [500, 1000], selfPay: [150, 400], note: "바우처 사업 연계 가능" },
+      "공정조건 분석은 생산 모니터링(t06)과 품질 데이터(t05)가 쌓인 뒤에 가능한 마지막 단계예요",
+    inheritedAsIs: "생산 기록이 수기·개인 엑셀로 4회 중복 입력되고 실시간 현황이 없음",
+    effect: { summary: "품질 편차 축소, 라인 간 생산성 상향 평준화" },
+    dataRequirements: ["공정조건·품질 연계 데이터 12개월 이상 (t06·t13 선행 필수)"],
+    difficulty: "상",
+    durationMonths: [4, 6],
+    solutionCount: 2,
+    dependsOn: ["t06", "t13"],
+    buildOrder: 21,
+    costBand: { total: [3000, 6000], selfPay: [900, 2100], note: "제조AI 특화 사업 기준" },
   },
 ];
 

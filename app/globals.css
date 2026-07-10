@@ -104,6 +104,8 @@
   --green-50: #e8f6ee;
   --orange-500: #e8710a;
   --orange-50: #fdf2e5;
+  /* 평균 미달 표시용 저채도 주황 (수정요청v3) */
+  --orange-muted: #dfa06b;
 
   /* ============ 2. 시맨틱 토큰 — 라이트 (기본) ============ */
 
@@ -293,6 +295,35 @@
 
   --hover-overlay: rgba(255, 255, 255, 0.045);
   --press-overlay: rgba(255, 255, 255, 0.1);
+}
+
+/* ============================================================
+   Tailwind 토큰 매핑 (@theme inline) — 수정요청v2: tailwindCSS 지향
+   인라인 스타일 하드코딩 대신 아래 유틸리티를 우선 사용한다.
+   예) bg-surface · bg-surface-2 · text-ink · text-ink-3 · text-brand
+       border-line · bg-brand-weak · text-danger · rounded-(--radius-m)
+   ============================================================ */
+@theme inline {
+  --color-surface: var(--bg-base);
+  --color-surface-2: var(--bg-secondary);
+  --color-surface-3: var(--bg-tertiary);
+  --color-elevated: var(--bg-elevated);
+  --color-ink: var(--fg-primary);
+  --color-ink-2: var(--fg-secondary);
+  --color-ink-3: var(--fg-tertiary);
+  --color-ink-4: var(--fg-quaternary);
+  --color-ink-disabled: var(--fg-disabled);
+  --color-inverse: var(--fg-inverse);
+  --color-brand: var(--blue-500);
+  --color-brand-weak: var(--bg-brand-weak);
+  --color-line: var(--line-default);
+  --color-line-strong: var(--line-strong);
+  --color-danger: var(--fg-danger);
+  --color-danger-weak: var(--bg-danger-weak);
+  --color-success: var(--fg-success);
+  --color-success-weak: var(--bg-success-weak);
+  --color-warning: var(--fg-warning);
+  --color-warning-weak: var(--bg-warning-weak);
 }
 
 /* ---- Base ---- */
@@ -493,6 +524,18 @@ body {
   background: var(--grey-100);
 }
 
+/* ---- 제목 굵기 강약 (수정요청v2) ----
+   제목은 기본을 가볍게 두고 <b>/<strong>으로 핵심 구절만 굵힌다.
+   예) <h3 className="ax-heading"><b>딱 맞는 결과</b>를 위해 몇 가지만 알려주세요</h3> */
+.ax-heading {
+  font-weight: 400;
+  letter-spacing: var(--track-heading);
+}
+.ax-heading b,
+.ax-heading strong {
+  font-weight: 700;
+}
+
 /* ---- 3-dot 로더 (스켈레톤 셔머 대신) ---- */
 .ax-loader {
   display: inline-flex;
@@ -565,6 +608,46 @@ body {
   to {
     opacity: 1;
     transform: translate(-50%, -50%);
+  }
+}
+
+/* ---- 스크롤바 숨김 (가로 탭 등 — 스크롤 동작은 유지) ---- */
+.ax-scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.ax-scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ---- 툴팁 — 소형 · 밝은 서피스 + 어두운 텍스트 (수정요청v3, Radix Tooltip 콘텐츠) ---- */
+.ax-tooltip {
+  display: block;
+  z-index: 120; /* 모달(100) 안에서도 위 */
+  width: max-content;
+  max-width: 220px;
+  background: var(--bg-elevated);
+  color: var(--fg-primary);
+  border: 1px solid var(--line-default);
+  border-radius: var(--radius-s);
+  box-shadow: var(--shadow-2);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  letter-spacing: var(--track-body);
+  text-align: left;
+  white-space: normal;
+  animation: ax-tooltip-in var(--dur-base) var(--ease-out);
+}
+@keyframes ax-tooltip-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

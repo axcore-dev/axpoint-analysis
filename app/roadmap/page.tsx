@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useMemo, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useInView } from "react-intersection-observer";
 import type { RoadmapStage } from "@/lib/types";
 import { getTask } from "@/data/catalog/tasks";
 import { areaName } from "@/data/rubric/meta";
@@ -10,11 +11,11 @@ import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { Badge, Button, Card, Icons } from "@/components/ui";
 
 /**
- * S4 실행 로드맵 — F-RMP-01~05 (2026-07-09 수정요청v1)
- * 참고 UI: docs/참고자료/로드맵 참고ui.png — 세로 타임라인 문법.
- * 좌측 레일(세로 라인 + 도트 + 개월차 마커) + 우측 단계 카드.
- * 단계 강조는 단일 강조색 원칙 내 블루 농도 변화(1단계 blue-500 →
- * 2단계 blue-100 → 3단계 grey)로만 구분한다.
+ * S4 실행 로드맵 — F-RMP-01~05 (2026-07-10 수정요청v3)
+ * 단계 축 = AX 7단계 방법론 (1단계 경영문제 정의는 진단으로 완료 표시).
+ * 세로 타임라인: 좌측 레일(도트 + '약 N개월' 마커) + 우측 단계 카드.
+ * 스크롤 중앙 포커스 — 뷰포트 중앙 카드만 선명, 나머지는 은은하게.
+ * 귀사/AXpoint 할 일은 단일 리스트로 통합, 진행 기준(게이트) 카드는 폐지.
  */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)", letterSpacing: "0" };
@@ -24,40 +25,62 @@ function range([min, max]: [number, number], unit: string): string {
   return min === max ? `${fmt(min)}${unit}` : `${fmt(min)}~${fmt(max)}${unit}`;
 }
 
-/* 단계별 레일 도트·좌측 보더 톤 — 블루 농도 변화 */
+/* 비완료 단계 도트 톤 — 블루 농도 변화 (첫 실행 단계가 가장 진함) */
 const STAGE_ACCENTS = ["var(--blue-500)", "var(--blue-100)", "var(--grey-300)"];
 
-function monthMarker(stage: RoadmapStage): string {
-  const from = stage.startMonth + 1;
-  const to = stage.startMonth + stage.durationMonths;
-  return from === to ? `${from}개월차` : `${from}~${to}개월차`;
+/* ---------- 스크롤 중앙 포커스 래퍼 (v3) ---------- */
+
+function FocusRow({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  /* 뷰포트 세로 중앙 ±24% 밴드에 걸치면 포커스 (react-intersection-observer) */
+  const { ref, inView } = useInView({ rootMargin: "-38% 0px -38% 0px", threshold: 0 });
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        opacity: inView ? 1 : 0.55,
+        transition: "opacity var(--dur-slow) var(--ease)",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
 }
 
 /* ---------- 단계 카드 ---------- */
 
-function StageCard({ stage, accent }: { stage: RoadmapStage; accent: string }) {
+function StageCard({ stage }: { stage: RoadmapStage }) {
   const autoReasons = new Map(stage.autoInserted.map((a) => [a.taskId, a.reason]));
 
+  /* 1단계 경영문제 정의 — 이번 진단으로 완료 */
+  if (stage.done) {
+    return (
+      <Card radius="2xl" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <h3
+            style={{
+              margin: 0,
+              font: "var(--text-h4)",
+              letterSpacing: "var(--track-heading)",
+              color: "var(--fg-primary)",
+            }}
+          >
+            단계 {stage.methodStepNo} · {stage.title}
+          </h3>
+          <Badge tone="success">완료</Badge>
+        </div>
+        <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+          {stage.purpose} — 이번 AXpoint 진단으로 마쳤어요.
+        </p>
+      </Card>
+    );
+  }
+
   return (
-    <Card
-      radius="2xl"
-      style={{
-        borderLeft: `3px solid ${accent}`,
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
-      }}
-    >
+    <Card radius="2xl" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* 단계 헤더 */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "baseline",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
+      <div>
         <h3
           style={{
             margin: 0,
@@ -68,12 +91,12 @@ function StageCard({ stage, accent }: { stage: RoadmapStage; accent: string }) {
         >
           단계 {stage.order} · {stage.title}
         </h3>
-        <span style={{ ...mono, fontSize: 14, fontWeight: 600, color: "var(--fg-secondary)" }}>
-          약 {stage.durationMonths}개월
-        </span>
+        <p style={{ margin: "6px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+          {stage.purpose}
+        </p>
       </div>
 
-      {/* 과제 리스트 (제목·영역·기간 + 자동 추가 배지·사유) */}
+      {/* 과제 리스트 — 카드마다 해당 로드맵 데이터 표기 */}
       <ul
         style={{
           margin: 0,
@@ -107,6 +130,9 @@ function StageCard({ stage, accent }: { stage: RoadmapStage; accent: string }) {
                     ? `${t.durationMonths[0]}개월`
                     : `${t.durationMonths[0]}~${t.durationMonths[1]}개월`}
                 </span>
+                <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
+                  {range(t.costBand.selfPay, "만원")}
+                </span>
                 {autoReason && <Badge tone="accent">자동 추가</Badge>}
               </div>
               {autoReason && (
@@ -125,170 +151,70 @@ function StageCard({ stage, accent }: { stage: RoadmapStage; accent: string }) {
         })}
       </ul>
 
-      {/* 진행 판정 게이트 (F-RMP-03) */}
-      {stage.gate && (
-        <div
-          style={{
-            border: "1px solid var(--line-default)",
-            borderRadius: "var(--radius-m)",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              padding: "10px 14px",
-              borderBottom: "1px solid var(--line-subtle)",
-              font: "var(--text-label-s)",
-              color: "var(--fg-brand)",
-            }}
-          >
-            다음 단계 진행 기준
-          </div>
-          <ul
-            style={{
-              margin: 0,
-              padding: "12px 14px",
-              listStyle: "none",
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              font: "var(--text-body3)",
-              color: "var(--fg-primary)",
-            }}
-          >
-            {stage.gate.criteria.map((c) => (
-              <li key={c} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                <span style={{ color: "var(--fg-brand)", flex: "none", marginTop: 2 }}>
-                  <Icons.check size={13} />
-                </span>
-                {c}
-              </li>
-            ))}
-          </ul>
-          {/* 충족/미달 2톤 분기 */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              borderTop: "1px solid var(--line-subtle)",
-            }}
-          >
-            <div
-              style={{
-                padding: "12px 14px",
-                display: "flex",
-                gap: 8,
-                alignItems: "flex-start",
-                background: "var(--bg-brand-weak)",
-                font: "var(--text-body3)",
-                color: "var(--fg-brand)",
-              }}
-            >
-              <span style={{ flex: "none", marginTop: 2 }}>
-                <Icons.check size={13} />
-              </span>
-              <span>
-                <strong style={{ fontWeight: 600 }}>충족 시</strong> — {stage.gate.threshold}
-              </span>
-            </div>
-            <div
-              style={{
-                padding: "12px 14px",
-                display: "flex",
-                gap: 8,
-                alignItems: "flex-start",
-                background: "var(--bg-warning-weak)",
-                font: "var(--text-body3)",
-                color: "var(--fg-warning)",
-              }}
-            >
-              <span style={{ flex: "none", marginTop: 2 }}>
-                <Icons.alert size={13} />
-              </span>
-              <span>
-                <strong style={{ fontWeight: 600 }}>미달 시</strong> — {stage.gate.onFail}
-              </span>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 비용 밴드 (F-RMP-04) */}
+      {/* 금액 (F-RMP-04, v3: '자부담' → '금액') */}
       <div>
         <div style={{ font: "var(--text-body2)", color: "var(--fg-primary)" }}>
-          예상 자부담{" "}
-          <span style={{ ...mono, fontWeight: 600, color: "var(--fg-primary)" }}>
-            {range(stage.costBand.selfPay, "만원")}
+          금액{" "}
+          <span style={{ ...mono, fontWeight: 600, color: "var(--fg-brand)" }}>
+            {range(stage.costBand.selfPay, "")}
           </span>
+          만 원
         </div>
         <div style={{ font: "var(--text-caption)", color: "var(--grey-500)", marginTop: 3 }}>
           {stage.costBand.note}
         </div>
       </div>
 
-      {/* 역할 분담 2열 (F-RMP-05) */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-          gap: 12,
-        }}
-      >
-        {(
-          [
-            { label: "귀사가 할 일", items: stage.roles.company },
-            { label: "AXpoint가 할 일", items: stage.roles.axpoint },
-          ] as const
-        ).map((col) => (
-          <div
-            key={col.label}
+      {/* 할 일 — 귀사/AXpoint 통합 리스트 (F-RMP-05, v3) */}
+      {stage.todos.length > 0 && (
+        <div
+          style={{
+            padding: "12px 14px",
+            border: "1px solid var(--line-subtle)",
+            borderRadius: "var(--radius-m)",
+          }}
+        >
+          <div style={{ font: "var(--text-label-s)", color: "var(--fg-primary)", marginBottom: 8 }}>
+            할 일
+          </div>
+          <ul
             style={{
-              padding: "12px 14px",
-              border: "1px solid var(--line-subtle)",
-              borderRadius: "var(--radius-m)",
+              margin: 0,
+              padding: 0,
+              listStyle: "none",
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              font: "var(--text-body3)",
+              color: "var(--fg-secondary)",
             }}
           >
-            <div
-              style={{
-                font: "var(--text-label-s)",
-                color: "var(--fg-primary)",
-                marginBottom: 8,
-              }}
-            >
-              {col.label}
-            </div>
-            <ul
-              style={{
-                margin: 0,
-                padding: 0,
-                listStyle: "none",
-                display: "flex",
-                flexDirection: "column",
-                gap: 5,
-                font: "var(--text-body3)",
-                color: "var(--fg-secondary)",
-              }}
-            >
-              {col.items.map((item) => (
-                <li key={item} style={{ display: "flex", gap: 7, alignItems: "flex-start" }}>
-                  <span
-                    aria-hidden
-                    style={{
-                      flex: "none",
-                      width: 4,
-                      height: 4,
-                      borderRadius: "50%",
-                      background: "var(--grey-400)",
-                      marginTop: 8,
-                    }}
-                  />
-                  {item}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
+            {stage.todos.map((todo) => (
+              <li
+                key={`${todo.owner}-${todo.text}`}
+                style={{ display: "flex", gap: 8, alignItems: "flex-start" }}
+              >
+                <span
+                  style={{
+                    flex: "none",
+                    marginTop: 1,
+                    display: "inline-flex",
+                    padding: "2px 8px",
+                    borderRadius: "var(--radius-full)",
+                    background: todo.owner === "AXpoint" ? "var(--bg-brand-weak)" : "var(--bg-tertiary)",
+                    font: "var(--text-caption)",
+                    fontWeight: 600,
+                    color: todo.owner === "AXpoint" ? "var(--fg-brand)" : "var(--fg-secondary)",
+                  }}
+                >
+                  {todo.owner}
+                </span>
+                {todo.text}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </Card>
   );
 }
@@ -344,6 +270,9 @@ export default function RoadmapPage() {
     router.push("/report");
   };
 
+  /* 비완료 단계 도트 톤 인덱스 */
+  let accentIdx = 0;
+
   return (
     <div className="ax-step-enter" style={{ padding: "48px var(--gutter) 80px" }}>
       <style>{`
@@ -356,7 +285,7 @@ export default function RoadmapPage() {
       `}</style>
 
       <div style={{ maxWidth: "var(--container-content)", margin: "0 auto" }}>
-        {/* ---- 상단 헤더 (라이트) ---- */}
+        {/* ---- 상단 헤더 — 숫자만 브랜드 컬러 (v3) ---- */}
         <header style={{ marginBottom: 40 }}>
           <h2
             style={{
@@ -391,7 +320,7 @@ export default function RoadmapPage() {
           >
             <span>
               담은 과제{" "}
-              <span style={{ ...mono, fontWeight: 700, color: "var(--fg-primary)" }}>
+              <span style={{ ...mono, fontWeight: 700, color: "var(--fg-brand)" }}>
                 {selectedTaskIds.length}
               </span>
               개
@@ -401,7 +330,7 @@ export default function RoadmapPage() {
             </span>
             <span>
               총{" "}
-              <span style={{ ...mono, fontWeight: 700, color: "var(--fg-primary)" }}>
+              <span style={{ ...mono, fontWeight: 700, color: "var(--fg-brand)" }}>
                 {roadmap.totalMonths}
               </span>
               개월
@@ -410,15 +339,17 @@ export default function RoadmapPage() {
               ·
             </span>
             <span>
-              예상 자부담{" "}
-              <span style={{ ...mono, fontWeight: 700, color: "var(--fg-primary)" }}>
-                {range([selfMin, selfMax], "만원")}
+              금액{" "}
+              <span style={{ ...mono, fontWeight: 700, color: "var(--fg-brand)" }}>
+                {range([selfMin, selfMax], "")}
+                
               </span>
+              만 원
             </span>
           </div>
         </header>
 
-        {/* ---- 세로 타임라인 ---- */}
+        {/* ---- 세로 타임라인 (스크롤 중앙 포커스, v3) ---- */}
         <div style={{ position: "relative" }}>
           {/* 레일 세로 라인 */}
           <span
@@ -433,59 +364,59 @@ export default function RoadmapPage() {
             }}
           />
           {roadmap.stages.map((stage, i) => {
-            const accent = STAGE_ACCENTS[Math.min(i, STAGE_ACCENTS.length - 1)];
+            const accent = stage.done
+              ? "var(--green-500)"
+              : STAGE_ACCENTS[Math.min(accentIdx++, STAGE_ACCENTS.length - 1)];
             return (
-              <div
+              <FocusRow
                 key={stage.order}
-                className="axp-rm-row"
                 style={{ marginBottom: i === roadmap.stages.length - 1 ? 0 : 28 }}
               >
-                {/* 개월차 마커 */}
-                <div
-                  style={{
-                    ...mono,
-                    paddingTop: 4,
-                    paddingRight: 6,
-                    textAlign: "right",
-                    fontSize: 12,
-                    fontWeight: 600,
-                    lineHeight: 1.4,
-                    color: "var(--fg-tertiary)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {monthMarker(stage)}
-                </div>
-                {/* 도트 */}
-                <div style={{ display: "flex", justifyContent: "center" }}>
-                  <span
-                    aria-hidden
+                <div className="axp-rm-row">
+                  {/* 기간 마커 — '약 N개월' (v3) */}
+                  <div
                     style={{
-                      position: "relative",
-                      zIndex: 1,
-                      marginTop: 6,
-                      width: 12,
-                      height: 12,
-                      borderRadius: "50%",
-                      background: accent,
-                      boxShadow: "0 0 0 3px var(--bg-base)",
+                      ...mono,
+                      paddingTop: 4,
+                      paddingRight: 6,
+                      textAlign: "right",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      lineHeight: 1.4,
+                      color: "var(--fg-tertiary)",
+                      whiteSpace: "nowrap",
                     }}
-                  />
+                  >
+                    {stage.done ? "완료" : `약 ${stage.durationMonths}개월`}
+                  </div>
+                  {/* 도트 */}
+                  <div style={{ display: "flex", justifyContent: "center" }}>
+                    <span
+                      aria-hidden
+                      style={{
+                        position: "relative",
+                        zIndex: 1,
+                        marginTop: 6,
+                        width: 12,
+                        height: 12,
+                        borderRadius: "50%",
+                        background: accent,
+                        boxShadow: "0 0 0 3px var(--bg-base)",
+                      }}
+                    />
+                  </div>
+                  {/* 단계 카드 */}
+                  <div style={{ paddingLeft: 12, minWidth: 0 }}>
+                    <StageCard stage={stage} />
+                  </div>
                 </div>
-                {/* 단계 카드 */}
-                <div style={{ paddingLeft: 12, minWidth: 0 }}>
-                  <StageCard stage={stage} accent={accent} />
-                </div>
-              </div>
+              </FocusRow>
             );
           })}
         </div>
 
-        {/* ---- 말미 CTA ---- */}
-        <div style={{ marginTop: 56, textAlign: "center" }}>
-          <p style={{ margin: "0 0 20px", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            로드맵과 예상 효과를 한 장으로 정리한 보고서가 준비돼 있어요.
-          </p>
+        {/* ---- 말미 CTA — 우측 하단 (v3) ---- */}
+        <div style={{ marginTop: 56, display: "flex", justifyContent: "flex-end" }}>
           <Button variant="primary" size="xl" onClick={goReport}>
             보고서 보기
             <Icons.arrow size={18} />

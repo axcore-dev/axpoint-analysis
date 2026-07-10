@@ -8,8 +8,8 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import * as Collapsible from "@radix-ui/react-collapsible";
 
 import {
   Badge,
@@ -45,7 +45,6 @@ import { getGlossary } from "@/data/glossary";
 import {
   axisFindings,
   comprehensiveAnalysis,
-  overallOpinion,
   strategyType,
 } from "@/data/scenario/narrative";
 
@@ -198,6 +197,28 @@ function RadarChart({
             />
           );
         })}
+        {/* 선택 축 그라데이션 — 선택 꼭짓점은 블루 유지, 멀어질수록 회색 (v3) */}
+        {selected !== null &&
+          (() => {
+            const selIdx = axes.findIndex((a) => a.axis === selected);
+            if (selIdx < 0) return null;
+            const [sx, sy] = pt(selIdx, ownVals[selIdx]);
+            return (
+              <defs>
+                <radialGradient
+                  id="ax-radar-sel"
+                  gradientUnits="userSpaceOnUse"
+                  cx={sx}
+                  cy={sy}
+                  r={R * 2.1}
+                >
+                  <stop offset="0%" stopColor="var(--blue-500)" />
+                  <stop offset="55%" stopColor="var(--grey-400)" />
+                  <stop offset="100%" stopColor="var(--grey-400)" />
+                </radialGradient>
+              </defs>
+            );
+          })()}
         {/* 평균 — 회색 점선 */}
         <polygon
           points={poly(avgVals)}
@@ -207,27 +228,35 @@ function RadarChart({
           strokeDasharray="4 4"
           strokeLinejoin="round"
         />
-        {/* 자사 — 블루 반투명 */}
-        <polygon
-          points={poly(ownVals)}
-          fill="rgba(10,80,255,0.12)"
-          stroke="var(--blue-500)"
-          strokeWidth={2}
-          strokeLinejoin="round"
-        />
+        {/* 자사 — 선택 없으면 블루, 선택 시 그라데이션 (전환 시 부드러운 페이드) */}
+        <g key={selected ?? "none"} style={{ animation: "ax-fade-in var(--dur-slow) var(--ease)" }}>
+          <polygon
+            points={poly(ownVals)}
+            fill={selected ? "url(#ax-radar-sel)" : "var(--blue-500)"}
+            fillOpacity={0.12}
+            stroke={selected ? "url(#ax-radar-sel)" : "var(--blue-500)"}
+            strokeWidth={2}
+            strokeLinejoin="round"
+          />
+        </g>
         {/* 꼭짓점 도트 (호버 툴팁 + 클릭 선택) */}
         {ownVals.map((v, i) => {
           const [x, y] = pt(i, v);
           const isSel = selected === axes[i].axis;
+          const dimmed = selected !== null && !isSel;
           return (
             <g key={axes[i].axis}>
               <circle
                 cx={x}
                 cy={y}
-                r={isSel ? 5 : 3.5}
-                fill="var(--blue-500)"
+                r={isSel || hover === i ? 5 : 3.5}
+                fill={dimmed ? "var(--grey-400)" : "var(--blue-500)"}
                 stroke="var(--white)"
                 strokeWidth={1.5}
+                style={{
+                  transition:
+                    "r var(--dur-base) var(--ease), fill var(--dur-base) var(--ease)",
+                }}
               />
               {/* 히트 영역 */}
               <circle
@@ -245,13 +274,14 @@ function RadarChart({
             </g>
           );
         })}
-        {/* 축 라벨 (클릭 가능) */}
+        {/* 축 라벨 — 호버·선택 시 부드러운 강조 (v3) */}
         {axes.map((a, i) => {
           const [x, y] = pt(i, 118);
           const short = AXES.find((m) => m.id === a.axis)?.short ?? a.axis;
           const anchor = i === 0 || i === 3 ? "middle" : i === 1 || i === 2 ? "start" : "end";
           const dy = i === 0 ? -8 : i === 3 ? 16 : 4;
           const isSel = selected === a.axis;
+          const isHover = hover === i;
           return (
             <text
               key={a.axis}
@@ -259,11 +289,11 @@ function RadarChart({
               y={y + dy}
               textAnchor={anchor}
               fontSize={12.5}
-              fontWeight={isSel ? 700 : 600}
-              fill={isSel ? "var(--blue-500)" : "var(--grey-700)"}
+              fontWeight={isSel || isHover ? 700 : 600}
+              fill={isSel || isHover ? "var(--blue-500)" : "var(--grey-700)"}
               fontFamily="var(--font-sans)"
               letterSpacing="-0.01em"
-              style={{ cursor: "pointer" }}
+              style={{ cursor: "pointer", transition: "fill var(--dur-base) var(--ease)" }}
               onClick={() => onSelect(a.axis)}
               onMouseEnter={() => setHover(i)}
               onMouseLeave={() => setHover(null)}
@@ -274,24 +304,37 @@ function RadarChart({
             </text>
           );
         })}
-        {/* 호버 점수 툴팁 — grey-800 말풍선 */}
+        {/* 호버 툴팁 — 소형 · 밝은 서피스 · 평균 병기 (v3) */}
         {hover !== null &&
           (() => {
-            const label = `${fmtScore(axes[hover].score)}점`;
+            const label = `${fmtScore(axes[hover].score)} · 평균 ${axes[hover].industryAvg}`;
             const [x, y] = pt(hover, ownVals[hover]);
-            const w = label.length * 7.5 + 18;
+            const w = label.length * 6 + 16;
             const tx = Math.min(Math.max(x, w / 2 + 4), 360 - w / 2 - 4);
-            const ty = Math.max(y - 36, 4);
+            const ty = Math.max(y - 32, 4);
             return (
-              <g pointerEvents="none">
-                <rect x={tx - w / 2} y={ty} width={w} height={23} rx={7} fill="var(--grey-800)" />
+              <g
+                pointerEvents="none"
+                style={{ animation: "ax-fade-in var(--dur-base) var(--ease)" }}
+              >
+                <rect
+                  x={tx - w / 2}
+                  y={ty}
+                  width={w}
+                  height={21}
+                  rx={6}
+                  fill="var(--bg-elevated)"
+                  stroke="var(--line-default)"
+                  strokeWidth={1}
+                  style={{ filter: "drop-shadow(0 2px 6px rgba(2,9,19,0.1))" }}
+                />
                 <text
                   x={tx}
-                  y={ty + 15.5}
+                  y={ty + 14.5}
                   textAnchor="middle"
-                  fontSize={11.5}
+                  fontSize={11}
                   fontWeight={600}
-                  fill="var(--white)"
+                  fill="var(--fg-primary)"
                   fontFamily="var(--font-mono)"
                 >
                   {label}
@@ -344,8 +387,9 @@ function RadarChart({
   );
 }
 
-/* ---- 프로그레스바 (자사 채움 + 평균 위치 점선 마커) ---- */
+/* ---- 프로그레스바 (자사 채움 + 평균 위치 점선 마커, 평균 미달 = 저채도 주황 v3) ---- */
 function ScoreBar({ score, avg }: { score: number; avg: number }) {
+  const belowAvg = score < avg;
   return (
     <div style={{ position: "relative", padding: "22px 0 20px" }}>
       <div
@@ -362,7 +406,8 @@ function ScoreBar({ score, avg }: { score: number; avg: number }) {
             width: `${Math.max(0, Math.min(100, score))}%`,
             height: "100%",
             borderRadius: "var(--radius-full)",
-            background: "var(--blue-500)",
+            background: belowAvg ? "var(--orange-muted)" : "var(--blue-500)",
+            transition: "width var(--dur-slow) var(--ease), background-color var(--dur-base) var(--ease)",
           }}
         />
       </div>
@@ -500,7 +545,6 @@ export default function ResultPage() {
   /* ---- 점수: 전부 런타임 계산 ---- */
   const overall = useMemo(() => computeOverall(judgments), []);
   const judgmentById = useMemo(() => new Map(judgments.map((j) => [j.questionId, j])), []);
-  const docById = useMemo(() => new Map(uploadedDocs.map((d) => [d.id, d])), []);
   const axisById = useMemo(
     () => new Map(overall.axes.map((a) => [a.axis, a])),
     [overall],
@@ -514,6 +558,8 @@ export default function ResultPage() {
   const [basisAxis, setBasisAxis] = useState<AxisId | null>(null);
   const [statDetail, setStatDetail] = useState<CompanyStat | null>(null);
   const [chainArea, setChainArea] = useState<AreaAssessment | null>(null);
+  /** 가치사슬 신호 아코디언 — 디폴트 접힘 (v3) */
+  const [vcOpen, setVcOpen] = useState(false);
   const statRowRef = useRef<HTMLDivElement>(null);
 
   const collectDone = completedSteps.includes("collect");
@@ -592,7 +638,6 @@ export default function ResultPage() {
   /* 목표 단계 = 현재 +1 (최대 Lv.5) */
   const currentIdx = overall.level.level - 1;
   const targetIdx = Math.min(currentIdx + 1, LEVELS.length - 1);
-  const targetLevel = LEVELS[targetIdx];
 
   /* 업종 평균 위치 — INDUSTRY_AVG 평균을 mapLevel로 환산 */
   const industryAvgScore =
@@ -609,9 +654,9 @@ export default function ResultPage() {
     setShowAllAxes(false);
   };
 
-  const goTasks = (area?: FunctionAreaId) => {
+  const goTasks = () => {
     completeStep("result");
-    router.push(area ? `/tasks?area=${area}` : "/tasks");
+    router.push("/tasks");
   };
 
   const basisScore = basisAxis ? axisById.get(basisAxis) : undefined;
@@ -624,17 +669,17 @@ export default function ResultPage() {
 
   return (
     <div className="ax-step-enter" style={{ background: "var(--bg-base)" }}>
-      {/* ================= 섹션 1 — 기업 개요 + 현재 단계 ================= */}
+      {/* ================= 섹션 1 — 기업 개요 + 현재 단계 (통합 카드, v3) ================= */}
       <section style={{ padding: "40px 0 12px" }}>
         <Inner>
           <div style={{ display: "grid", gap: 16 }}>
-            {/* 기업 개요 카드 */}
             <Card radius="2xl" style={{ padding: 28 }}>
+              {/* 기업 식별 */}
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
                 <h2
                   style={{
                     margin: 0,
-                    font: "var(--text-h2)",
+                    font: "var(--text-title1)",
                     letterSpacing: "var(--track-heading)",
                     color: "var(--fg-primary)",
                   }}
@@ -645,16 +690,57 @@ export default function ResultPage() {
                   {demoCompany.bizNo}
                 </span>
               </div>
-              <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+              <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
                 대표 {demoCompany.ceo} · 설립 <span style={mono}>{foundedYear}</span>년 (업력{" "}
-                <span style={mono}>{yearsInBusiness}</span>년) · {region}
-              </p>
-              <p style={{ margin: "6px 0 0", font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                <span style={mono}>{yearsInBusiness}</span>년) · {region} ·{" "}
                 {demoCompany.infoSource}
               </p>
 
-              {/* 통계 칩 — 가로 스크롤 + 우측 스크롤 버튼 */}
-              <div style={{ position: "relative", marginTop: 20 }}>
+              {/* 현재 단계 — 메인 카피 크게 */}
+              <div style={{ marginTop: 30 }}>
+                <h3
+                  className="ax-heading"
+                  style={{
+                    margin: 0,
+                    font: "var(--text-h2)",
+                    letterSpacing: "var(--track-heading)",
+                    color: "var(--fg-primary)",
+                  }}
+                >
+                  현재 <b style={{ color: "var(--fg-brand)" }}>{overall.level.label}</b> 단계예요
+                </h3>
+                <p
+                  style={{
+                    margin: "8px 0 0",
+                    font: "var(--text-body2)",
+                    color: "var(--fg-secondary)",
+                  }}
+                >
+                  업종 평균(Lv.{industryLevel.level})
+                  {overall.level.level === industryLevel.level
+                    ? "과 비슷한"
+                    : overall.level.level > industryLevel.level
+                      ? "보다 높은"
+                      : "보다 낮은"}{" "}
+                  수준이에요
+                </p>
+                <DotStepper
+                  steps={stepperSteps}
+                  current={currentIdx}
+                  target={targetIdx}
+                  style={{ marginTop: 28 }}
+                />
+              </div>
+
+              {/* 연한 구분선 + 통계 칩 */}
+              <div
+                style={{
+                  position: "relative",
+                  marginTop: 28,
+                  paddingTop: 24,
+                  borderTop: "1px solid var(--line-subtle)",
+                }}
+              >
                 <div
                   ref={statRowRef}
                   style={{
@@ -676,6 +762,8 @@ export default function ResultPage() {
                         flexDirection: "column",
                         alignItems: "flex-start",
                         gap: 5,
+                        minWidth: 136,
+                        boxSizing: "border-box",
                         padding: "12px 18px",
                         borderRadius: "var(--radius-l)",
                         border: "1px solid var(--line-default)",
@@ -728,81 +816,19 @@ export default function ResultPage() {
                   <Icons.chevronRight size={16} />
                 </button>
               </div>
-            </Card>
 
-            {/* 현재 단계 카드 — DotStepper */}
-            <Card radius="2xl" style={{ padding: 28 }}>
-              <h4
-                style={{
-                  margin: 0,
-                  font: "var(--text-title1)",
-                  letterSpacing: "var(--track-heading)",
-                  color: "var(--fg-primary)",
-                }}
-              >
-                현재 단계 <span style={{ color: "var(--fg-brand)" }}>{overall.level.label}</span> →
-                목표 {targetLevel.label}
-              </h4>
-              <p style={{ margin: "6px 0 26px", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
-                {overall.level.description}
-              </p>
-              <DotStepper steps={stepperSteps} current={currentIdx} target={targetIdx} />
-              <p style={{ margin: "18px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                업종 평균도 Lv.{industryLevel.level} 구간이에요 (평균{" "}
-                <span style={mono}>{Math.round(industryAvgScore)}</span>점, 데모 표본)
-              </p>
-              <p style={{ margin: "6px 0 0", font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                기준: 정부 스마트공장 수준확인제도(
-                <TermTooltip term="KSMS">{getGlossary("KSMS")?.easy}</TermTooltip>) 계열 5단계 ·
-                전국 중소 제조 기업 약 <span style={mono}>80%</span>가 스마트공장 미도입 상태예요
-                (데모 통계)
-              </p>
-            </Card>
-
-            {/* 종합 소견 3단 */}
-            <Card radius="2xl" style={{ padding: 28 }}>
-              <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 10 }}>
-                한마디로
-              </div>
+              {/* 뭐부터 해야 할지 한 줄 */}
               <p
                 style={{
-                  margin: 0,
-                  font: "var(--text-h4)",
-                  letterSpacing: "var(--track-heading)",
-                  lineHeight: 1.4,
-                  color: "var(--fg-primary)",
-                  maxWidth: 780,
+                  margin: "16px 0 0",
+                  font: "var(--text-body2)",
+                  color: "var(--fg-secondary)",
                 }}
               >
-                {overallOpinion.oneLiner}
+                첫 단추는 <b style={{ fontWeight: 700 }}>품목 코드 표준화</b>와{" "}
+                <b style={{ fontWeight: 700 }}>모바일 작업일보</b> — 보유하신 자료로 바로 시작할 수
+                있어요.
               </p>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-                  gap: 24,
-                  marginTop: 22,
-                  paddingTop: 22,
-                  borderTop: "1px solid var(--line-subtle)",
-                }}
-              >
-                <div>
-                  <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
-                    그래서
-                  </div>
-                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                    {overallOpinion.soWhat}
-                  </p>
-                </div>
-                <div>
-                  <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
-                    권고
-                  </div>
-                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                    {overallOpinion.recommendation}
-                  </p>
-                </div>
-              </div>
             </Card>
           </div>
         </Inner>
@@ -811,11 +837,7 @@ export default function ResultPage() {
       {/* ================= 섹션 2 — 카테고리별 준비도 ================= */}
       <section style={{ padding: "56px 0" }}>
         <Inner>
-          <SectionHead
-            label="카테고리별 준비도"
-            title="어디가 강하고, 어디가 병목일까요"
-            sub="차트의 카테고리를 누르면 오른쪽에서 상세를 볼 수 있어요. 점선은 평균(중소 금속가공 표본)이에요."
-          />
+          <SectionHead label="카테고리별 준비도" title="어디가 강하고, 어디가 병목일까요" />
           <div
             style={{
               display: "grid",
@@ -827,17 +849,60 @@ export default function ResultPage() {
             {/* 좌 — 레이더 */}
             <RadarChart axes={overall.axes} selected={selectedAxis} onSelect={selectAxis} />
 
-            {/* 우 — 상세 카드 */}
-            <Card radius="2xl" style={{ padding: 26 }}>
+            {/* 우 — 상세 카드 (모두 보기 버튼은 카드 밖 우측, v3) */}
+            <div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setShowAllAxes((v) => !v);
+                    setSelectedAxis(null);
+                  }}
+                >
+                  {showAllAxes ? "접기" : "모두 보기"}
+                </Button>
+              </div>
+              <Card radius="2xl" style={{ padding: 26 }}>
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 12,
+                  gap: 10,
                   marginBottom: 16,
                 }}
               >
+                {selectedAxis && !showAllAxes && (
+                  <button
+                    type="button"
+                    aria-label="요약으로 돌아가기"
+                    onClick={() => setSelectedAxis(null)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 28,
+                      height: 28,
+                      margin: "-2px 0 -2px -6px",
+                      border: "none",
+                      borderRadius: "var(--radius-s)",
+                      background: "transparent",
+                      color: "var(--fg-tertiary)",
+                      cursor: "pointer",
+                      transition: "background-color var(--dur-fast) var(--ease)",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "var(--hover-overlay)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <span aria-hidden style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
+                      <Icons.chevronRight size={16} />
+                    </span>
+                  </button>
+                )}
                 <strong
                   style={{
                     font: "var(--text-title1)",
@@ -849,16 +914,6 @@ export default function ResultPage() {
                     ? selectedScore.name
                     : "AX 진단 결과 상세"}
                 </strong>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setShowAllAxes((v) => !v);
-                    setSelectedAxis(null);
-                  }}
-                >
-                  {showAllAxes ? "접기" : "모두 보기"}
-                </Button>
               </div>
 
               {showAllAxes ? (
@@ -934,9 +989,6 @@ export default function ResultPage() {
                     <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
                       점수 근거
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedAxis(null)}>
-                      요약으로
-                    </Button>
                   </div>
                 </div>
               ) : (
@@ -980,7 +1032,8 @@ export default function ResultPage() {
                   </p>
                 </div>
               )}
-            </Card>
+              </Card>
+            </div>
           </div>
         </Inner>
       </section>
@@ -991,7 +1044,7 @@ export default function ResultPage() {
           <SectionHead
             label="기능영역"
             title="기능영역별 현재 상태"
-            sub="점수 대신 등급으로 표기해요. 자료가 부족한 영역은 판단을 보류하고, 자료를 보완하면 진단이 가능해져요."
+            sub="점수 대신 등급으로 표기해요."
           />
           <div
             style={{
@@ -1039,52 +1092,13 @@ export default function ResultPage() {
                     >
                       {area.grade === "hold" && area.holdReason ? area.holdReason : area.asIs}
                     </p>
-                    <div
-                      style={{
-                        marginTop: "auto",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
-                      }}
-                    >
-                      {area.grade === "critical" ? (
+                    {area.grade === "critical" && (
+                      <div style={{ marginTop: "auto" }}>
                         <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
                           사유 보기
                         </Button>
-                      ) : area.grade === "hold" ? (
-                        <Link
-                          href="/collect"
-                          style={{
-                            font: "var(--text-label-s)",
-                            color: "var(--fg-brand)",
-                            textDecoration: "none",
-                          }}
-                        >
-                          자료 추가하기
-                        </Link>
-                      ) : (
-                        <span />
-                      )}
-                      {area.taskIds.length > 0 && (
-                        <Link
-                          href={`/tasks?area=${area.areaId}`}
-                          onClick={() => completeStep("result")}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 4,
-                            font: "var(--text-label-s)",
-                            color: "var(--fg-brand)",
-                            textDecoration: "none",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          개선과제 <span style={mono}>{area.taskIds.length}</span>건
-                          <Icons.chevronRight size={13} />
-                        </Link>
-                      )}
-                    </div>
+                      </div>
+                    )}
                   </Card>
                 );
               })}
@@ -1092,80 +1106,86 @@ export default function ResultPage() {
         </Inner>
       </section>
 
-      {/* ================= 섹션 4 — 가치사슬 ================= */}
-      {valueChainAnalysis.available && (
-        <section style={{ padding: "56px 0" }}>
-          <Inner>
-            <SectionHead
-              label="가치사슬 신호"
-              title="자료를 이어 붙이니, 원자재 흐름이 보여요"
-              sub="따로 보면 표일 뿐인 자료를 연결했어요 — 귀사가 올려주신 자료로만 나온 결과예요."
-            />
+      {/* ============ 섹션 4 — 종합 분석 결과 (가치사슬 신호 통합, v3) ============ */}
+      <section style={{ padding: "56px 0 80px" }}>
+        <Inner>
+          <SectionHead label="종합 분석" title="종합 분석 결과" />
 
-            {/* 연결 칩 행 */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: 8,
-                marginBottom: 20,
-              }}
-            >
-              {[
-                { icon: <Icons.file size={13} />, label: "발주서 = 소요" },
-                { icon: <Icons.clipboard size={13} />, label: "생산 기록 = 투입·소진" },
-                { icon: <Icons.layers size={13} />, label: "재고표 = 잔량" },
-              ].map((c, i) => (
-                <span key={c.label} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                  {i > 0 && (
-                    <span style={{ color: "var(--grey-400)", fontSize: 13, fontWeight: 600 }} aria-hidden="true">
-                      +
-                    </span>
-                  )}
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "7px 13px",
-                      borderRadius: "var(--radius-full)",
-                      border: "1px solid var(--line-default)",
-                      background: "var(--bg-secondary)",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "var(--fg-secondary)",
-                    }}
-                  >
-                    {c.icon}
-                    {c.label}
-                  </span>
-                </span>
-              ))}
-              <span style={{ display: "inline-flex", color: "var(--grey-400)" }} aria-hidden="true">
-                <Icons.arrow size={14} />
-              </span>
-              <span
+          {/* 가치사슬 신호 — 아코디언 (Radix Collapsible, 디폴트 접힘), 신호는 #태그로만 */}
+          {valueChainAnalysis.available && (
+            <Card radius="2xl" padded={false} style={{ overflow: "hidden", marginBottom: 16 }}>
+              <Collapsible.Root open={vcOpen} onOpenChange={setVcOpen}>
+              <Collapsible.Trigger asChild>
+              <button
+                type="button"
                 style={{
-                  display: "inline-flex",
+                  width: "100%",
+                  display: "flex",
                   alignItems: "center",
-                  gap: 6,
-                  padding: "7px 13px",
-                  borderRadius: "var(--radius-full)",
-                  border: "1px solid var(--blue-100)",
-                  background: "var(--bg-brand-weak)",
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "var(--fg-brand)",
+                  flexWrap: "wrap",
+                  gap: 10,
+                  padding: "18px 22px",
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer",
+                  fontFamily: "var(--font-sans)",
+                  textAlign: "left",
+                  transition: "background-color var(--dur-fast) var(--ease)",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--hover-overlay)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "transparent";
                 }}
               >
-                <Icons.bolt size={13} />
-                소진·회전 신호
-              </span>
-            </div>
+                <strong
+                  style={{
+                    font: "var(--text-title2)",
+                    letterSpacing: "var(--track-heading)",
+                    color: "var(--fg-primary)",
+                    flex: "none",
+                  }}
+                >
+                  가치사슬 신호
+                </strong>
+                <span style={{ display: "flex", flexWrap: "wrap", gap: 6, flex: "1 1 auto" }}>
+                  {valueChainAnalysis.signals.map((signal) => (
+                    <span
+                      key={signal.id}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "4px 10px",
+                        borderRadius: "var(--radius-full)",
+                        background: "var(--bg-tertiary)",
+                        font: "var(--text-caption)",
+                        fontWeight: 600,
+                        color: "var(--fg-secondary)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      #{signal.title}
+                    </span>
+                  ))}
+                </span>
+                <span
+                  aria-hidden
+                  style={{
+                    display: "inline-flex",
+                    flex: "none",
+                    color: "var(--grey-500)",
+                    transform: vcOpen ? "rotate(-90deg)" : "rotate(90deg)",
+                    transition: "transform var(--dur-base) var(--ease)",
+                  }}
+                >
+                  <Icons.chevronRight size={16} />
+                </span>
+              </button>
+              </Collapsible.Trigger>
 
-            {/* 품목별 표 */}
-            <Card radius="2xl" padded={false} style={{ overflow: "hidden" }}>
+              <Collapsible.Content>
+                <div className="ax-step-enter" style={{ borderTop: "1px solid var(--line-subtle)" }}>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", minWidth: 720, borderCollapse: "collapse" }}>
                   <thead>
@@ -1173,22 +1193,10 @@ export default function ResultPage() {
                       {[
                         { key: "item", label: <>자재/품목</>, align: "left" as const },
                         { key: "stock", label: <>현재고</>, align: "right" as const },
-                        {
-                          key: "safety",
-                          label: (
-                            <TermTooltip term="안전재고">{getGlossary("안전재고")?.easy}</TermTooltip>
-                          ),
-                          align: "right" as const,
-                        },
+                        { key: "safety", label: <>안전재고</>, align: "right" as const },
                         { key: "daily", label: <>일평균 소진</>, align: "right" as const },
                         { key: "days", label: <>재고 소진일</>, align: "right" as const },
-                        {
-                          key: "turn",
-                          label: (
-                            <TermTooltip term="월 회전">{getGlossary("재고 회전")?.easy}</TermTooltip>
-                          ),
-                          align: "right" as const,
-                        },
+                        { key: "turn", label: <>월 회전</>, align: "right" as const },
                         { key: "action", label: <>권장 조치</>, align: "left" as const },
                       ].map((h) => (
                         <th
@@ -1294,136 +1302,89 @@ export default function ResultPage() {
                   </tbody>
                 </table>
               </div>
+                </div>
+              </Collapsible.Content>
+              </Collapsible.Root>
             </Card>
-            <p style={{ margin: "10px 0 0", font: "var(--text-caption)", color: "var(--grey-500)" }}>
-              재고 소진일은 일평균 소진 기준의 예상이에요.{" "}
-              <TermTooltip term="발주점">{getGlossary("발주점")?.easy}</TermTooltip> 기준이 없어
-              지금은 사람 기억으로 발주 시점을 잡고 있어요. (데모 수치 — 발주서·생산 기록·재고표
-              기준)
-            </p>
+          )}
 
-            {/* 흐름 신호 3건 */}
-            <div
+          {/* 종합 분석 — 보고서형 단일 카드 (강점/보완/AX 전략 제안 불릿, v3) */}
+          <Card radius="2xl" style={{ padding: 28 }}>
+            <p
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-                gap: 12,
-                marginTop: 24,
+                margin: 0,
+                font: "var(--text-h4)",
+                letterSpacing: "var(--track-heading)",
+                lineHeight: 1.4,
+                color: "var(--fg-primary)",
+                maxWidth: 820,
               }}
             >
-              {valueChainAnalysis.signals.map((signal) => {
-                const warning = signal.severity === "warning";
-                const sourceNames = signal.sourceDocIds
-                  .map((id) => docById.get(id)?.docType ?? id)
-                  .join(" · ");
-                return (
-                  <Card key={signal.id} radius="l" style={{ padding: "18px 20px" }}>
-                    <div style={{ marginBottom: 10 }}>
-                      <Badge tone={warning ? "warning" : "neutral"}>{warning ? "주의" : "참고"}</Badge>
-                    </div>
-                    <strong
-                      style={{
-                        display: "block",
-                        font: "var(--text-label-m)",
-                        lineHeight: 1.35,
-                        color: "var(--fg-primary)",
-                      }}
-                    >
-                      {signal.title}
-                    </strong>
-                    <p style={{ margin: "8px 0 10px", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                      {signal.finding}
-                    </p>
-                    <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                      근거(업로드): {sourceNames}
-                    </p>
-                  </Card>
-                );
-              })}
-            </div>
-          </Inner>
-        </section>
-      )}
-
-      {/* ================= 섹션 5 — 종합 분석 결과 ================= */}
-      <section style={{ padding: "56px 0 80px" }}>
-        <Inner>
-          <SectionHead label="종합 분석 결과" title="진단을 한 줄로 정리하면" />
-          <p
-            style={{
-              margin: "0 0 28px",
-              font: "var(--text-h3)",
-              letterSpacing: "var(--track-heading)",
-              lineHeight: 1.4,
-              color: "var(--fg-primary)",
-              maxWidth: 780,
-            }}
-          >
-            {comprehensiveAnalysis.conclusion}
-          </p>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: 12,
-            }}
-          >
-            {comprehensiveAnalysis.strengths.map((s) => (
-              <Card key={s.title} radius="l" style={{ padding: "20px 22px" }}>
-                <div style={{ marginBottom: 10 }}>
-                  <Badge tone="success">강점</Badge>
-                </div>
-                <strong style={{ display: "block", font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                  {s.title}
-                </strong>
-                <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                  {s.body}
-                </p>
-              </Card>
-            ))}
-            {comprehensiveAnalysis.improvements.map((s) => (
-              <Card key={s.title} radius="l" style={{ padding: "20px 22px" }}>
-                <div style={{ marginBottom: 10 }}>
-                  <Badge tone="warning">보완</Badge>
-                </div>
-                <strong style={{ display: "block", font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                  {s.title}
-                </strong>
-                <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                  {s.body}
-                </p>
-              </Card>
-            ))}
-          </div>
-
-          {/* AX 전략 방향 제안 */}
-          <Card radius="2xl" style={{ padding: 28, marginTop: 16, background: "var(--bg-secondary)" }}>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <strong style={{ font: "var(--text-title1)", color: "var(--fg-primary)" }}>
-                AX 전략 방향 제안
-              </strong>
-              <Badge tone="accent">{strategyType.label}</Badge>
-            </div>
-            <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)", maxWidth: 860 }}>
-              {comprehensiveAnalysis.strategyDirection}
+              {comprehensiveAnalysis.conclusion}
             </p>
-            <p style={{ margin: "10px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)", maxWidth: 860 }}>
-              데이터가 한 번만 입력되는 기반과{" "}
-              <TermTooltip term="데이터 관리 체계">
-                {getGlossary("데이터 관리 체계")?.easy}
-              </TermTooltip>
-              가 잡히면, 다음 단계에서{" "}
-              <TermTooltip term="예지보전">{getGlossary("예지보전")?.easy}</TermTooltip>·
-              <TermTooltip term="OEE">{getGlossary("OEE")?.easy}</TermTooltip> 같은 설비 데이터 활용
-              과제로 넓혀 갈 수 있어요.
-            </p>
+
+            <div style={{ marginTop: 24, display: "grid", gap: 22 }}>
+              {(
+                [
+                  {
+                    label: "강점",
+                    color: "var(--fg-success)",
+                    items: comprehensiveAnalysis.strengths,
+                  },
+                  {
+                    label: "보완",
+                    color: "var(--fg-warning)",
+                    items: comprehensiveAnalysis.improvements,
+                  },
+                  {
+                    label: "AX 전략 제안",
+                    color: "var(--fg-brand)",
+                    items: [
+                      {
+                        title: strategyType.label,
+                        body: comprehensiveAnalysis.strategyDirection,
+                      },
+                    ],
+                  },
+                ] as const
+              ).map((group) => (
+                <div key={group.label}>
+                  <div
+                    style={{
+                      font: "var(--text-label-s)",
+                      color: group.color,
+                      marginBottom: 8,
+                    }}
+                  >
+                    {group.label}
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }}>
+                    {group.items.map((it) => (
+                      <li
+                        key={it.title}
+                        style={{
+                          font: "var(--text-body2)",
+                          color: "var(--fg-secondary)",
+                          maxWidth: 860,
+                        }}
+                      >
+                        <strong style={{ fontWeight: 600, color: "var(--fg-primary)" }}>
+                          {it.title}
+                        </strong>{" "}
+                        — {it.body}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
           </Card>
 
-          {/* CTA */}
-          <div style={{ textAlign: "center", marginTop: 40 }}>
+          {/* CTA — 우측 하단 (v3) */}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 32 }}>
             <Button variant="primary" size="xl" onClick={() => goTasks()}>
               개선 과제 고르러 가기
+              <Icons.arrow size={17} />
             </Button>
           </div>
         </Inner>
@@ -1497,7 +1458,11 @@ export default function ResultPage() {
               <TermTooltip term="판정 보류">{getGlossary("판정 보류")?.easy}</TermTooltip>로 두고
               감점하지 않아요. 판정은 문항별 기준 서술에 분류하는 방식이에요.
             </p>
-            <div style={{ marginTop: 12 }}>
+            {/* 스크롤은 팝업 안쪽 리스트에서만 (v3) */}
+            <div
+              className="ax-scrollbar-none"
+              style={{ marginTop: 12, maxHeight: "48vh", overflowY: "auto" }}
+            >
               {basisQuestions.map((q) => {
                 const j = judgmentById.get(q.id);
                 const deferred = !j || j.anchor === null;
@@ -1584,13 +1549,6 @@ export default function ResultPage() {
               </div>
               <EvidenceTextList items={chainArea.evidence} />
             </div>
-            {chainArea.taskIds.length > 0 && (
-              <div>
-                <Button variant="secondary" size="md" onClick={() => goTasks(chainArea.areaId)}>
-                  이 영역 개선과제 {chainArea.taskIds.length}건 보기
-                </Button>
-              </div>
-            )}
           </div>
         )}
       </Modal>
