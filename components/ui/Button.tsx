@@ -1,7 +1,7 @@
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ReactNode } from "react";
 
-type ButtonVariant = "primary" | "secondary" | "utility" | "ghost";
-type ButtonSize = "sm" | "md" | "lg";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "utility";
+type ButtonSize = "sm" | "md" | "lg" | "xl";
 
 type CommonProps = {
   variant?: ButtonVariant;
@@ -18,7 +18,10 @@ type ButtonAsAnchor = CommonProps &
 
 export type ButtonProps = ButtonAsButton | ButtonAsAnchor;
 
-/** AXCORE primary action. The blue pill is the brand's universal "click me". */
+/**
+ * 버튼 v2 — 사이즈와 라운드가 페어(xl 56/16 · lg 48/14 · md 40/12 · sm 32/10).
+ * 프레스는 오버레이(크기 변형 없음), 호버 워시 내장. 화면당 primary 하나.
+ */
 export function Button({
   variant = "primary",
   size = "md",
@@ -30,7 +33,7 @@ export function Button({
   const cls = [
     "ax-btn",
     `ax-btn--${variant}`,
-    `ax-btn--${size}`,
+    `ax-btn--${size === "lg" ? "lg" : size}`,
     full ? "ax-btn--full" : "",
     className,
   ]

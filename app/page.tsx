@@ -1,172 +1,392 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/auth/AuthContext";
+import { LoginModal } from "@/components/auth/LoginModal";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
-import { STEPS } from "@/components/flow/steps";
 import { uploadedDocs } from "@/data/scenario/documents";
 import { FUNCTION_AREAS } from "@/data/rubric/meta";
-import { Button, Card, Eyebrow, Icons, Input, Tag } from "@/components/ui";
+import { Button, Card, Icons, Loader, Tag } from "@/components/ui";
 
 /**
- * S0 랜딩 — 진입·진단 시작 (역할 1개 원칙, F-CMN-01)
- * 식별값 1자 이상 입력 시에만 진단 시작 가능 (REQ-F-04).
+ * S0 랜딩 — Hero 검색 + 3단계 확인 위저드 (수정요청v1)
+ * phase: search(히어로) → confirm(기업 확인 1/3) → upload(자료 2/3) → systems(현황 3/3)
  */
+
+type Phase = "search" | "confirm" | "upload" | "systems";
 
 const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 
-/** 필드 라벨 — 카드 내 a)~d) 공통 문법 */
-function FieldLabel({
-  no,
-  title,
-  optional = false,
-}: {
-  no: string;
-  title: string;
-  optional?: boolean;
-}) {
+/** 플레이스홀더 타이핑 애니메이션 문구 */
+const TYPING_PHRASES = ["(주)데모기업", "123-45-67890"];
+const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
+
+/** 진행 도트 (●●○ + n/3) */
+function Progress({ step }: { step: 1 | 2 | 3 }) {
   return (
-    <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 10 }}>
+    <div
+      aria-label={`3단계 중 ${step}단계`}
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+    >
+      {[1, 2, 3].map((i) => (
+        <span
+          key={i}
+          aria-hidden
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "var(--radius-full)",
+            background: i <= step ? "var(--bg-brand)" : "var(--grey-300)",
+            transition: "background-color var(--dur-base) var(--ease)",
+          }}
+        />
+      ))}
       <span
         style={{
+          marginLeft: 6,
           fontFamily: "var(--font-mono)",
           fontSize: 12,
-          color: "var(--ax-blue)",
-          fontWeight: 600,
+          fontWeight: 500,
+          color: "var(--fg-quaternary)",
         }}
       >
-        {no}
-      </span>
-      <span
-        style={{
-          fontSize: "var(--type-body-strong-size)",
-          fontWeight: 600,
-          letterSpacing: "-0.01em",
-          color: "var(--text-strong)",
-        }}
-      >
-        {title}
-      </span>
-      <span style={{ fontSize: 12, color: "var(--slate-400)" }}>
-        {optional ? "선택" : "필수"}
+        {step}/3
       </span>
     </div>
   );
 }
 
+/** 카드 좌상단 뒤로 가기 chevron */
+function BackButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--hover-overlay)";
+        e.currentTarget.style.color = "var(--fg-secondary)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--fg-tertiary)";
+      }}
+      style={{
+        position: "absolute",
+        top: 14,
+        left: 14,
+        width: 32,
+        height: 32,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        border: "none",
+        borderRadius: "var(--radius-s)",
+        background: "transparent",
+        color: "var(--fg-tertiary)",
+        cursor: "pointer",
+        transition:
+          "background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+      }}
+    >
+      <span aria-hidden style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
+        <Icons.chevronRight size={18} />
+      </span>
+    </button>
+  );
+}
+
+const stepCardStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 520,
+  position: "relative",
+  padding: "var(--space-8)",
+};
+
+const cardHeadingStyle: CSSProperties = {
+  margin: "16px 0 0",
+  font: "var(--text-h3)",
+  letterSpacing: "var(--track-heading)",
+  color: "var(--fg-primary)",
+  textAlign: "center",
+};
+
+const cardSubStyle: CSSProperties = {
+  margin: "8px 0 0",
+  font: "var(--text-body2)",
+  letterSpacing: "var(--track-body)",
+  color: "var(--fg-tertiary)",
+  textAlign: "center",
+};
+
 export default function LandingPage() {
   const router = useRouter();
-  const { companyInput, uploadSimulated, systems, interestAreas, update, completeStep } =
-    useDiagnosis();
+  const { user } = useAuth();
+  const {
+    companyInput,
+    uploadSimulated,
+    systems,
+    interestAreas,
+    update,
+    completeStep,
+  } = useDiagnosis();
 
+  const [phase, setPhase] = useState<Phase>("search");
+  const [loginOpen, setLoginOpen] = useState(false);
   const [company, setCompany] = useState("");
+  /** 포커스가 한 번이라도 닿으면 타이핑 애니메이션 종료 */
+  const [touched, setTouched] = useState(false);
+  const [placeholder, setPlaceholder] = useState("");
+  const [uploading, setUploading] = useState(false);
 
   /* sessionStorage 복원 값 반영 (재방문 시) */
   useEffect(() => {
     if (companyInput) setCompany((prev) => (prev === "" ? companyInput : prev));
   }, [companyInput]);
 
-  const canStart = company.trim().length >= 1;
+  const idle = company.length === 0;
+
+  /* 플레이스홀더 타이핑 애니메이션 — 비어 있고 포커스 전일 때만.
+     setTimeout 체인으로 한 글자씩 타이핑 → 대기 → 지우기 → 다음 문구. */
+  useEffect(() => {
+    if (phase !== "search") return;
+    if (touched || !idle) {
+      setPlaceholder(STATIC_PLACEHOLDER);
+      return;
+    }
+    let phraseIdx = 0;
+    let charIdx = 0;
+    let deleting = false;
+    let timer: ReturnType<typeof setTimeout>;
+
+    const tick = () => {
+      const phrase = TYPING_PHRASES[phraseIdx];
+      if (!deleting) {
+        charIdx += 1;
+        setPlaceholder(phrase.slice(0, charIdx) + "|");
+        if (charIdx >= phrase.length) {
+          deleting = true;
+          timer = setTimeout(tick, 1500); // 다 쓴 뒤 잠시 머무름
+          return;
+        }
+        timer = setTimeout(tick, 110);
+      } else {
+        charIdx -= 1;
+        setPlaceholder(phrase.slice(0, charIdx) + "|");
+        if (charIdx <= 0) {
+          deleting = false;
+          phraseIdx = (phraseIdx + 1) % TYPING_PHRASES.length;
+          timer = setTimeout(tick, 450);
+          return;
+        }
+        timer = setTimeout(tick, 55);
+      }
+    };
+    timer = setTimeout(tick, 500);
+    return () => clearTimeout(timer);
+  }, [phase, touched, idle]);
+
+  /* 업로드 시뮬레이션 — 1초 판독 로딩 후 완료 */
+  useEffect(() => {
+    if (!uploading) return;
+    const t = setTimeout(() => {
+      update({ uploadSimulated: true });
+      setUploading(false);
+    }, 1000);
+    return () => clearTimeout(t);
+  }, [uploading, update]);
+
+  const canSubmit = company.trim().length >= 1;
+
+  const submitSearch = () => {
+    if (!canSubmit) return;
+    if (!user) {
+      setLoginOpen(true); // 검색 입력값은 state에 그대로 보존
+      return;
+    }
+    setPhase("confirm");
+  };
 
   const toggleSystem = (name: string) => {
-    const next = systems.includes(name)
-      ? systems.filter((s) => s !== name)
-      : [...systems, name];
-    update({ systems: next });
+    update({
+      systems: systems.includes(name)
+        ? systems.filter((s) => s !== name)
+        : [...systems, name],
+    });
   };
 
   const toggleArea = (id: string) => {
-    const next = interestAreas.includes(id)
-      ? interestAreas.filter((a) => a !== id)
-      : [...interestAreas, id];
-    update({ interestAreas: next });
+    update({
+      interestAreas: interestAreas.includes(id)
+        ? interestAreas.filter((a) => a !== id)
+        : [...interestAreas, id],
+    });
   };
 
-  const onStart = () => {
-    if (!canStart) return;
+  const startDiagnosis = () => {
     update({ companyInput: company.trim() });
     completeStep("landing");
     router.push("/collect");
   };
 
   const previewDocs = uploadedDocs.slice(0, 4);
+  const restCount = uploadedDocs.length - previewDocs.length;
 
   return (
-    <div>
-      {/* ── 다크 히어로 타일 ─────────────────────────────── */}
-      <section
-        style={{
-          background: "var(--tile-dark-1)",
-          padding: "var(--space-section) var(--gutter) 150px",
-        }}
-      >
-        <div style={{ maxWidth: "var(--container-content)", margin: "0 auto", textAlign: "center" }}>
-          <Eyebrow tone="on-dark">AXPOINT · 제조 AX 진단</Eyebrow>
-          <h1
+    <div
+      style={{
+        background: "var(--bg-base)",
+        minHeight: "calc(100vh - 230px)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "48px var(--gutter)",
+        boxSizing: "border-box",
+      }}
+    >
+      {/* ─── phase: search — Hero ─────────────────────────── */}
+      {phase === "search" && (
+        <div
+          key="search"
+          className="ax-step-enter"
+          style={{
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            textAlign: "center",
+          }}
+        >
+          <span
             style={{
-              margin: "20px 0 0",
-              fontSize: "var(--type-hero-size)",
-              fontWeight: 700,
-              lineHeight: "var(--type-hero-line)",
-              letterSpacing: "var(--type-hero-track)",
-              color: "var(--on-dark)",
+              font: "var(--text-label-s)",
+              letterSpacing: "0.08em",
+              color: "var(--fg-brand)",
             }}
           >
-            우리 공장에 맞는 AI는?
+            AXpoint
+          </span>
+          <h1
+            style={{
+              margin: "16px 0 0",
+              font: "var(--text-display2)",
+              letterSpacing: "var(--track-display)",
+              color: "var(--fg-primary)",
+            }}
+          >
+            3분이면 나와요,
+            <br />
+            우리 회사의 AI 도입 답안지
           </h1>
           <p
             style={{
-              margin: "22px auto 0",
-              maxWidth: 640,
-              fontSize: 19,
-              lineHeight: 1.55,
-              letterSpacing: "-0.008em",
-              color: "var(--on-dark-muted)",
+              margin: "16px 0 0",
+              font: "var(--text-body1)",
+              letterSpacing: "var(--track-body)",
+              color: "var(--fg-tertiary)",
             }}
           >
-            자료만 올리면, 우리 공장의 AX 단계·개선 과제·로드맵·예상 효과까지 — 즉시,
-            무료로, 근거와 함께.
+            제조 기업 진단 무료 — 근거 있는 점수로 알려드려요
           </p>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitSearch();
+            }}
+            style={{ width: "100%", maxWidth: 560, marginTop: 40 }}
+          >
+            <div
+              className="ax-field ax-field--pill"
+              style={{ height: 58, paddingLeft: 24, paddingRight: 8, gap: 12 }}
+            >
+              <span className="ax-field__icon">
+                <Icons.search size={20} />
+              </span>
+              <input
+                value={company}
+                onChange={(e) => setCompany(e.target.value)}
+                onFocus={() => setTouched(true)}
+                placeholder={placeholder}
+                aria-label="기업명 또는 사업자번호"
+                autoComplete="off"
+                style={{ fontSize: 16 }}
+              />
+              <Button
+                type="submit"
+                variant="primary"
+                size="md"
+                disabled={!canSubmit}
+                aria-label="진단 시작"
+                style={{ borderRadius: "var(--radius-full)", flex: "none", height: 42 }}
+              >
+                진단 시작
+                <Icons.arrow size={16} />
+              </Button>
+            </div>
+          </form>
         </div>
-      </section>
+      )}
 
-      {/* ── 진단 시작 카드 (히어로에 겹침) ───────────────── */}
-      <section style={{ background: "var(--canvas)", padding: "0 var(--gutter) var(--space-section)" }}>
-        <Card
-          padded={false}
-          style={{
-            maxWidth: 780,
-            margin: "-90px auto 0",
-            position: "relative",
-            zIndex: 1,
-            padding: "var(--space-xl)",
-            boxShadow: "var(--shadow-soft)",
-          }}
-        >
-          {/* a) 기업 식별값 */}
-          <div>
-            <FieldLabel no="a" title="기업명 또는 사업자번호" />
-            <Input
-              value={company}
-              onChange={(e) => setCompany(e.target.value)}
-              placeholder="(주)데모기업 또는 123-45-67890"
-              leadingIcon={<Icons.building size={18} />}
-              aria-label="기업명 또는 사업자번호"
-            />
-            <p style={{ margin: "8px 0 0", fontSize: "var(--type-fine-size)", color: "var(--slate-400)" }}>
-              데모 환경 — 어떤 기업명을 입력해도 데모 시나리오((주)데모기업)로 진행됩니다.
-            </p>
+      {/* ─── phase: confirm — 기업 확인 (1/3) ─────────────── */}
+      {phase === "confirm" && (
+        <Card key="confirm" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
+          <BackButton label="검색으로 돌아가기" onClick={() => setPhase("search")} />
+          <Progress step={1} />
+          <h2 style={cardHeadingStyle}>이 기업이 맞나요?</h2>
+          <div style={{ textAlign: "center", margin: "24px 0 0" }}>
+            <div
+              style={{
+                font: "var(--text-h2)",
+                letterSpacing: "var(--track-heading)",
+                color: "var(--fg-primary)",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {company.trim()}
+            </div>
+            <div
+              style={{
+                margin: "8px 0 0",
+                font: "var(--text-body2)",
+                color: "var(--fg-tertiary)",
+              }}
+            >
+              금속가공제품 제조업 · 광주
+            </div>
           </div>
+          <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 8 }}>
+            <Button variant="primary" size="lg" full onClick={() => setPhase("upload")}>
+              맞아요, 계속할게요
+            </Button>
+            <Button variant="ghost" size="md" full onClick={() => setPhase("search")}>
+              다시 검색
+            </Button>
+          </div>
+        </Card>
+      )}
 
-          {/* b) 자료 업로드 (시뮬레이션) */}
-          <div style={{ marginTop: "var(--space-xl)" }}>
-            <FieldLabel no="b" title="자료 업로드" optional />
+      {/* ─── phase: upload — 자료 올리기 (2/3) ────────────── */}
+      {phase === "upload" && (
+        <Card key="upload" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
+          <BackButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
+          <Progress step={2} />
+          <h2 style={cardHeadingStyle}>자료를 올려주세요</h2>
+          <p style={cardSubStyle}>
+            생산일지·발주서·재고표면 충분해요.
+            <br />
+            올릴수록 진단이 정확해져요
+          </p>
+
+          <div style={{ marginTop: 24 }}>
             {uploadSimulated ? (
               <div
                 style={{
-                  border: "1px solid var(--ax-blue-hairline)",
-                  background: "var(--ax-blue-wash)",
-                  borderRadius: "var(--radius-md)",
+                  border: "1px solid var(--line-brand)",
+                  background: "var(--bg-brand-weak)",
+                  borderRadius: "var(--radius-l)",
                   padding: "16px 18px",
                 }}
               >
@@ -175,13 +395,12 @@ export default function LandingPage() {
                     display: "flex",
                     alignItems: "center",
                     gap: 8,
-                    color: "var(--ax-blue)",
-                    fontWeight: 600,
-                    fontSize: 15,
+                    color: "var(--fg-brand)",
+                    font: "var(--text-label-m)",
                   }}
                 >
                   <Icons.check size={16} />
-                  데모 자료 <span style={{ fontFamily: "var(--font-mono)" }}>12</span>건 첨부됨
+                  파일 <span style={{ fontFamily: "var(--font-mono)" }}>12</span>건 첨부됨
                 </div>
                 <ul style={{ margin: "10px 0 0", padding: 0, listStyle: "none" }}>
                   {previewDocs.map((d) => (
@@ -191,8 +410,8 @@ export default function LandingPage() {
                         display: "flex",
                         alignItems: "center",
                         gap: 7,
-                        fontSize: 13,
-                        color: "var(--slate-600)",
+                        font: "var(--text-body3)",
+                        color: "var(--fg-secondary)",
                         padding: "3px 0",
                       }}
                     >
@@ -200,26 +419,58 @@ export default function LandingPage() {
                       {d.fileName}
                     </li>
                   ))}
-                  <li style={{ fontSize: 13, color: "var(--slate-400)", padding: "3px 0 0 20px" }}>
-                    외 <span style={{ fontFamily: "var(--font-mono)" }}>8</span>건
+                  <li
+                    style={{
+                      font: "var(--text-body3)",
+                      color: "var(--fg-quaternary)",
+                      padding: "3px 0 0 20px",
+                    }}
+                  >
+                    외 <span style={{ fontFamily: "var(--font-mono)" }}>{restCount}</span>건
                   </li>
                 </ul>
+              </div>
+            ) : uploading ? (
+              <div
+                style={{
+                  border: "1.5px dashed var(--grey-300)",
+                  borderRadius: "var(--radius-l)",
+                  background: "var(--bg-secondary)",
+                  padding: "34px 18px",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 12,
+                  color: "var(--fg-secondary)",
+                }}
+              >
+                <Loader style={{ color: "var(--fg-brand)" }} />
+                <span style={{ font: "var(--text-body2)" }}>자료를 읽고 있어요</span>
               </div>
             ) : (
               <button
                 type="button"
-                onClick={() => update({ uploadSimulated: true })}
+                onClick={() => setUploading(true)}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = "var(--line-strong)";
+                  e.currentTarget.style.background = "var(--bg-tertiary)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = "var(--grey-300)";
+                  e.currentTarget.style.background = "var(--bg-secondary)";
+                }}
                 style={{
                   width: "100%",
                   boxSizing: "border-box",
-                  border: "1.5px dashed var(--slate-300)",
-                  borderRadius: "var(--radius-md)",
-                  background: "var(--surface-ghost)",
-                  padding: "28px 18px",
+                  border: "1.5px dashed var(--grey-300)",
+                  borderRadius: "var(--radius-l)",
+                  background: "var(--bg-secondary)",
+                  padding: "30px 18px",
                   cursor: "pointer",
                   textAlign: "center",
                   fontFamily: "var(--font-sans)",
-                  transition: "border-color .15s ease, background-color .15s ease",
+                  transition:
+                    "border-color var(--dur-base) var(--ease), background-color var(--dur-base) var(--ease)",
                 }}
               >
                 <span
@@ -227,36 +478,63 @@ export default function LandingPage() {
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 8,
-                    color: "var(--slate-700)",
-                    fontSize: 15,
-                    fontWeight: 500,
+                    color: "var(--fg-secondary)",
+                    font: "var(--text-label-m)",
                   }}
                 >
                   <Icons.upload size={18} />
-                  생산일지·발주서·재고표 등을 여기에 올려 주세요
-                </span>
-                <span
-                  style={{
-                    display: "block",
-                    marginTop: 8,
-                    fontSize: "var(--type-fine-size)",
-                    color: "var(--slate-400)",
-                  }}
-                >
-                  이미지(jpg/png) · PDF · xlsx · docx/hwp 지원 — 클릭 시 데모 자료 12건이
-                  첨부됩니다
+                  여기를 눌러 자료를 올려주세요
                 </span>
               </button>
             )}
-            <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--slate-500)" }}>
-              자료를 올릴수록 진단이 정확해집니다.
+            <p
+              style={{
+                margin: "10px 0 0",
+                font: "var(--text-caption)",
+                color: "var(--fg-quaternary)",
+                textAlign: "center",
+              }}
+            >
+              이미지(jpg/png) · PDF · xlsx · docx/hwp
             </p>
           </div>
 
-          {/* c) 시스템·관심 영역 */}
-          <div style={{ marginTop: "var(--space-xl)" }}>
-            <FieldLabel no="c" title="시스템·8대 기능 현황" optional />
-            <div style={{ fontSize: 13, color: "var(--slate-500)", marginBottom: 8 }}>
+          <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 8 }}>
+            {uploadSimulated ? (
+              <Button variant="primary" size="lg" full onClick={() => setPhase("systems")}>
+                다음
+              </Button>
+            ) : (
+              <Button
+                variant="ghost"
+                size="md"
+                full
+                disabled={uploading}
+                onClick={() => setPhase("systems")}
+              >
+                자료 없이 진행
+              </Button>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {/* ─── phase: systems — 시스템·관심 영역 (3/3) ──────── */}
+      {phase === "systems" && (
+        <Card key="systems" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
+          <BackButton label="자료 올리기로 돌아가기" onClick={() => setPhase("upload")} />
+          <Progress step={3} />
+          <h2 style={cardHeadingStyle}>지금 상황을 알려주세요</h2>
+          <p style={cardSubStyle}>선택 사항이에요. 건너뛰어도 진단에는 문제 없어요</p>
+
+          <div style={{ marginTop: 24 }}>
+            <div
+              style={{
+                font: "var(--text-label-s)",
+                color: "var(--fg-secondary)",
+                marginBottom: 10,
+              }}
+            >
               사용 중인 시스템
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -270,8 +548,15 @@ export default function LandingPage() {
                 </Tag>
               ))}
             </div>
-            <div style={{ fontSize: 13, color: "var(--slate-500)", margin: "16px 0 8px" }}>
-              관심 영역 (8대 기능)
+
+            <div
+              style={{
+                font: "var(--text-label-s)",
+                color: "var(--fg-secondary)",
+                margin: "20px 0 10px",
+              }}
+            >
+              관심 영역
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               {FUNCTION_AREAS.map((area) => (
@@ -286,193 +571,35 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* d) CTA */}
-          <div style={{ marginTop: "var(--space-xl)" }}>
-            <Button variant="primary" size="lg" full disabled={!canStart} onClick={onStart}>
-              AI 진단 시작
+          <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 8 }}>
+            <Button variant="primary" size="xl" full onClick={startDiagnosis}>
+              진단 시작하기
             </Button>
-            {!canStart && (
-              <p
-                style={{
-                  margin: "10px 0 0",
-                  fontSize: 13,
-                  color: "var(--slate-500)",
-                  textAlign: "center",
-                }}
-              >
-                기업명 또는 사업자번호를 입력하면 시작할 수 있습니다
-              </p>
-            )}
-            <p
-              style={{
-                margin: "14px 0 0",
-                fontSize: "var(--type-fine-size)",
-                color: "var(--slate-400)",
-                textAlign: "center",
-              }}
-            >
-              업로드 자료의 개인정보는 판독 직후 마스킹되며 진단 목적 외 사용되지 않습니다.
-            </p>
-          </div>
-        </Card>
-      </section>
-
-      {/* ── mist 섹션 — 차별점 3카드 ─────────────────────── */}
-      <section
-        style={{
-          background: "var(--surface-mist)",
-          padding: "var(--space-section) var(--gutter)",
-        }}
-      >
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <Eyebrow>왜 AXPOINT인가</Eyebrow>
-          <h2
-            style={{
-              margin: "16px 0 0",
-              fontSize: "var(--type-section-size)",
-              fontWeight: 600,
-              lineHeight: 1.2,
-              letterSpacing: "-0.014em",
-              color: "var(--text-strong)",
-            }}
-          >
-            설문이 아니라, 귀사의 실제 자료로 진단합니다
-          </h2>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              gap: "var(--space-lg)",
-              marginTop: "var(--space-xl)",
-            }}
-          >
-            {[
-              {
-                icon: <Icons.clipboard size={22} />,
-                title: "실물 자료 기반 진단",
-                body: "생산일지·발주서 같은 실물 자료를 판독해 점수마다 근거 문서를 답니다. 감이 아니라 기록으로 진단합니다.",
-              },
-              {
-                icon: <Icons.link size={22} />,
-                title: "가치사슬 교차 분석",
-                body: "발주–생산–재고 문서를 서로 대조해 끊긴 지점을 찾아냅니다. 귀사 자료로만 산출되는 분석입니다.",
-              },
-              {
-                icon: <Icons.shield size={22} />,
-                title: "정부사업 언어 정합",
-                body: "KSMS·스마트공장 수준확인 기준과 같은 언어로 결과를 냅니다. 지원사업 신청서에 바로 연결됩니다.",
-              },
-            ].map((item) => (
-              <Card key={item.title}>
-                <div style={{ color: "var(--ax-blue)" }}>{item.icon}</div>
-                <h3
-                  style={{
-                    margin: "14px 0 0",
-                    fontSize: 19,
-                    fontWeight: 600,
-                    letterSpacing: "-0.01em",
-                    color: "var(--text-strong)",
-                  }}
-                >
-                  {item.title}
-                </h3>
-                <p
-                  style={{
-                    margin: "8px 0 0",
-                    fontSize: 15,
-                    lineHeight: 1.55,
-                    color: "var(--text-secondary)",
-                  }}
-                >
-                  {item.body}
-                </p>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── 다크 섹션 — 진행 안내 ───────────────────────── */}
-      <section
-        style={{
-          background: "var(--tile-dark-2)",
-          padding: "var(--space-section) var(--gutter)",
-        }}
-      >
-        <div style={{ maxWidth: "var(--container-content)", margin: "0 auto", textAlign: "center" }}>
-          <Eyebrow tone="on-dark">진행 안내</Eyebrow>
-          <h2
-            style={{
-              margin: "16px 0 0",
-              fontSize: "var(--type-section-size)",
-              fontWeight: 600,
-              lineHeight: 1.2,
-              letterSpacing: "-0.014em",
-              color: "var(--on-dark)",
-            }}
-          >
-            여섯 단계, 약{" "}
-            <span style={{ fontFamily: "var(--font-mono)", color: "var(--ax-blue-on-dark)" }}>3</span>
-            분이면 끝납니다
-          </h2>
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              justifyContent: "center",
-              alignItems: "center",
-              gap: 6,
-              marginTop: "var(--space-xl)",
-            }}
-          >
-            {STEPS.map((step, i) => (
-              <span key={step.id} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                {i > 0 && (
-                  <span aria-hidden style={{ color: "var(--slate-600)", display: "inline-flex" }}>
-                    <Icons.chevronRight size={14} />
-                  </span>
-                )}
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 7,
-                    padding: "9px 15px",
-                    borderRadius: "var(--radius-pill)",
-                    border: "1px solid rgba(255,255,255,0.14)",
-                    color: "var(--on-dark-muted)",
-                    fontSize: 14,
-                    letterSpacing: "-0.006em",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 11,
-                      color: "var(--ax-blue-on-dark)",
-                    }}
-                  >
-                    {i + 1}
-                  </span>
-                  {step.label}
-                </span>
-              </span>
-            ))}
+            <Button variant="ghost" size="md" full onClick={startDiagnosis}>
+              건너뛰고 시작
+            </Button>
           </div>
           <p
             style={{
-              margin: "24px auto 0",
-              maxWidth: 620,
-              fontSize: 15,
-              lineHeight: 1.55,
-              color: "var(--on-dark-muted)",
+              margin: "16px 0 0",
+              font: "var(--text-caption)",
+              color: "var(--fg-quaternary)",
+              textAlign: "center",
             }}
           >
-            자료를 올리면 공개 데이터와 함께 자동 분류하고, 진단 결과에서 개선 과제를 골라
-            로드맵과 보고서까지 한 흐름으로 이어집니다.
+            올려주신 자료의 개인 정보는 읽는 즉시 가리고, 진단에만 써요.
           </p>
-        </div>
-      </section>
+        </Card>
+      )}
+
+      <LoginModal
+        open={loginOpen}
+        onClose={() => setLoginOpen(false)}
+        onSuccess={() => {
+          setLoginOpen(false);
+          setPhase("confirm");
+        }}
+      />
     </div>
   );
 }

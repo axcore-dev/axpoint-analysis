@@ -22,7 +22,7 @@ export const hitlResponses: HitlResponse[] = [
   {
     questionNo: 8,
     questionId: "TAS-02",
-    answer: "있다",
+    answer: "장비 위주로 도입해 봤어요",
     answerDetail: "2023년 CNC 2대 증설. 2024년 바코드 재고관리 앱 도입 시도 후 6개월 만에 중단",
   },
   { questionNo: 9, questionId: "TAS-04", answer: "회의적", answerDetail: "젊은 직원들은 해보자는 분위기" },

@@ -70,6 +70,12 @@ export interface SurveyQuestion {
   options: string[];
   /** 조건부 노출 설명 (예: 재무 미확인 시) */
   condition?: string;
+  /** '기타' 선택지 허용 — 선택 시 자유 입력 (v2 설문 규칙) */
+  allowOther?: boolean;
+  /** 이 답을 고르면 사유/내용 입력란 노출 (예: "불가(사유)") */
+  reasonOn?: string[];
+  /** 모든 문항은 SKIP 가능 — 스킵 시 판정 보류 처리 (v2) */
+  skippable?: boolean;
 }
 
 /* ============ 판정 · 근거 ============ */
@@ -186,12 +192,19 @@ export interface UploadedDoc {
 export type SourceStatus = "done" | "partial" | "failed";
 
 export interface PublicSource {
-  id: string; // "nts" | "dart" | "kipo" | "pps" | "employment" | "news"
+  id: string;
+  /** 데이터 종류 (예: "특허·실용신안") */
   name: string;
+  /** 수집처 출처 (예: "KIPRISPlus(특허청) API") — v2: 종류+출처+건수만 표기 */
+  sourceApi: string;
   status: SourceStatus;
   /** 수집 건수 */
   count: number;
-  /** 요약 항목 (특허는 요약지표화, F-COL-08) */
+  /** 8대 영역 자료 분류에서의 대분류 배치 */
+  area: FunctionAreaId;
+  /** 공개 수집 자료의 디지털화 수준 (v2: 8대 영역 분류에 표기) */
+  digitalLevel: DigitalLevel;
+  /** 요약 항목 (상세용) */
   items: string[];
   note?: string;
 }
@@ -240,6 +253,10 @@ export interface ValueChainAnalysis {
 export interface ImprovementTask {
   id: string;
   title: string;
+  /** 영문 보조 태그 (예: "PREDICTIVE MAINTENANCE") — 참고 UI 문법 */
+  subtitle?: string;
+  /** Before → After 정량 한 줄 (예: "검사 3시간 → 10분") */
+  beforeAfter?: string;
   summary: string;
   areaId: FunctionAreaId;
   /** 기반과제 여부 (시각 구분 + 자동 삽입 대상, F-TSK-04/F-RMP-02) */
@@ -340,6 +357,27 @@ export interface CompanyProfile {
   address: string;
   /** 기업 정보 기준 출처 표기 (REQ-F-06: DART 기준) */
   infoSource: string;
+}
+
+/** 기업 개요 통계 칩 (진단 결과 섹션 1 — 가로 스크롤, 클릭 시 팝업 상세) */
+export interface CompanyStat {
+  id: string;
+  label: string;
+  /** 대표 값 (예: "82억원") */
+  value: string;
+  /** 값의 기준/연도 (예: "2025년") */
+  basis?: string;
+  /** 팝업 상세 내용 */
+  detail: string[];
+  /** 연결 공개 데이터 소스 id */
+  sourceId?: string;
+}
+
+/** 용어 사전 — 전문 용어 호버 툴팁 (라이팅 규칙 4.1) */
+export interface GlossaryEntry {
+  term: string;
+  /** 쉬운 말 풀이 (해요체 한 문장) */
+  easy: string;
 }
 
 /** 진행 단계 (6단계 단일 흐름, F-CMN-01) */

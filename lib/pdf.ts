@@ -2,11 +2,13 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
 /**
- * 클라이언트 PDF 생성 유틸 (F-RPT-02, F-RPT-06)
+ * 클라이언트 PDF 생성 유틸 (F-RPT-02, F-RPT-06 · 2026-07-09 수정요청v1)
  *
- * 화면 밖(position:fixed, left:-9999px, width:794px = A4 96dpi 폭)에 렌더된
- * ReportDocument DOM을 html2canvas(scale 2)로 캡처한 뒤, 캔버스를 A4 페이지
- * 높이 단위로 잘라 jsPDF(A4 portrait)에 여러 페이지로 삽입한다.
+ * 구 방식(긴 캔버스를 A4 높이로 슬라이싱)은 표·행이 페이지 경계에서 잘리는
+ * 문제가 있어 폐기. ReportDocument가 페이지 컨테이너 배열(각 794×1123px,
+ * `data-report-page` 속성)로 렌더되고, 여기서는 각 페이지 요소를 개별
+ * html2canvas 캡처 → jsPDF addPage로 삽입한다. 794×1123은 A4(210×297mm)
+ * 비율과 일치하므로 페이지 흐름이 끊어지지 않는다.
  *
  * 주의: html2canvas는 oklch 등 최신 CSS 색상 함수를 지원하지 않으므로
  * ReportDocument 내부는 인라인 hex 스타일만 사용한다 (Tailwind 유틸리티 금지).
@@ -15,6 +17,9 @@ import { jsPDF } from "jspdf";
 const CAPTURE_WIDTH = 794; // A4 210mm @ 96dpi
 const CAPTURE_SCALE = 2; // 이미지 품질
 
+/** ReportDocument의 페이지 컨테이너를 식별하는 속성 */
+export const REPORT_PAGE_SELECTOR = "[data-report-page]";
+
 /** 파일명에 쓸 수 없는 문자 제거 */
 function sanitizeFileName(name: string): string {
   const cleaned = name.replace(/[\\/:*?"<>|]/g, "_").trim();
@@ -22,8 +27,8 @@ function sanitizeFileName(name: string): string {
 }
 
 /**
- * element(폭 794px 가정)를 캡처해 A4 세로 PDF로 저장한다.
- * 저장 파일명: AXpoint_진단보고서_{회사명}.pdf
+ * element 내부의 페이지 컨테이너들(각 794×1123px)을 페이지 단위로 캡처해
+ * A4 세로 PDF로 저장한다. 저장 파일명: AXpoint_진단보고서_{회사명}.pdf
  */
 export async function generateReportPdf(
   element: HTMLElement,
@@ -34,58 +39,34 @@ export async function generateReportPdf(
     await document.fonts.ready;
   }
 
-  const canvas = await html2canvas(element, {
-    scale: CAPTURE_SCALE,
-    backgroundColor: "#ffffff",
-    logging: false,
-    windowWidth: CAPTURE_WIDTH,
-  });
+  const pages = Array.from(
+    element.querySelectorAll<HTMLElement>(REPORT_PAGE_SELECTOR),
+  );
+  if (pages.length === 0) {
+    throw new Error("보고서 페이지 요소(data-report-page)를 찾을 수 없습니다");
+  }
 
   const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
   const pageWidthMm = pdf.internal.pageSize.getWidth(); // 210
   const pageHeightMm = pdf.internal.pageSize.getHeight(); // 297
 
-  /* 캔버스 픽셀 기준 한 페이지 높이 (표준 슬라이싱 패턴) */
-  const pageHeightPx = Math.floor((canvas.width * pageHeightMm) / pageWidthMm);
+  for (let i = 0; i < pages.length; i += 1) {
+    const canvas = await html2canvas(pages[i], {
+      scale: CAPTURE_SCALE,
+      backgroundColor: "#ffffff",
+      logging: false,
+      windowWidth: CAPTURE_WIDTH,
+    });
 
-  let renderedPx = 0;
-  let pageIndex = 0;
-
-  while (renderedPx < canvas.height) {
-    const sliceHeightPx = Math.min(pageHeightPx, canvas.height - renderedPx);
-
-    const slice = document.createElement("canvas");
-    slice.width = canvas.width;
-    slice.height = sliceHeightPx;
-    const ctx = slice.getContext("2d");
-    if (!ctx) throw new Error("PDF 슬라이스 캔버스 컨텍스트를 생성할 수 없습니다");
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, slice.width, slice.height);
-    ctx.drawImage(
-      canvas,
-      0,
-      renderedPx,
-      canvas.width,
-      sliceHeightPx,
-      0,
-      0,
-      canvas.width,
-      sliceHeightPx,
-    );
-
-    if (pageIndex > 0) pdf.addPage();
+    if (i > 0) pdf.addPage();
     pdf.addImage(
-      slice.toDataURL("image/jpeg", 0.92),
+      canvas.toDataURL("image/jpeg", 0.92),
       "JPEG",
       0,
       0,
       pageWidthMm,
-      (sliceHeightPx * pageWidthMm) / canvas.width,
+      pageHeightMm,
     );
-
-    renderedPx += sliceHeightPx;
-    pageIndex += 1;
   }
 
   pdf.save(`AXpoint_진단보고서_${sanitizeFileName(companyName)}.pdf`);

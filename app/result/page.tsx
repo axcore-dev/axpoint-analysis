@@ -1,38 +1,69 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { Badge, Button, Card, Eyebrow, Icons } from "@/components/ui";
-import { SourceChips } from "@/components/flow/SourceChip";
+import {
+  Badge,
+  Button,
+  Card,
+  DotStepper,
+  Icons,
+  Loader,
+  Modal,
+  TermTooltip,
+} from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 
-import { computeOverall, sortAxesByScore } from "@/lib/scoring/engine";
-import type { AreaGrade, AxisScore, EvidenceRef, Judgment } from "@/lib/types";
-import { ANCHOR_SCORE, AXES, areaName } from "@/data/rubric/meta";
+import { computeOverall, mapLevel, sortAxesByScore } from "@/lib/scoring/engine";
+import type {
+  AreaAssessment,
+  AxisId,
+  AxisScore,
+  CompanyStat,
+  EvidenceKind,
+  EvidenceRef,
+  FunctionAreaId,
+} from "@/lib/types";
+import { AXES, INDUSTRY_AVG, LEVELS, areaName } from "@/data/rubric/meta";
 import { rubricQuestions } from "@/data/rubric/questions";
 import { judgments } from "@/data/scenario/judgments";
 import { areaAssessments } from "@/data/scenario/areas";
 import { valueChainAnalysis } from "@/data/scenario/valueChain";
 import { uploadedDocs } from "@/data/scenario/documents";
-import { demoCompany } from "@/data/scenario/company";
+import { companyStats, demoCompany } from "@/data/scenario/company";
+import { publicSources } from "@/data/scenario/publicData";
+import { getGlossary } from "@/data/glossary";
 import {
   axisFindings,
+  comprehensiveAnalysis,
   overallOpinion,
-  positionFootnote,
-  recommendationClose,
   strategyType,
 } from "@/data/scenario/narrative";
 
 /* ============================================================
-   S2 진단 결과 (F-ANL-01~08)
-   - 점수는 런타임에 computeOverall(judgments)로 산출 (하드코딩 금지)
-   - 5섹션: 종합 소견(다크) → 6축(white) → 8영역(mist)
-     → 가치사슬(white) → 권고 확인(mist)
+   S2 진단 결과 — 2026-07-09 수정요청v1 전면 재작성
+   - 점수는 전부 computeOverall(judgments) 런타임 계산 (하드코딩 금지)
+   - 라이트 연속 흐름 (다크 히어로 폐지), 콘텐츠 max-width 1080px
+   - 섹션: 기업 개요·현재 단계 → 카테고리별 준비도 → 8영역 →
+     가치사슬 → 종합 분석 결과 (권고 확인 섹션은 폐지)
    ============================================================ */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
+const clamp2: CSSProperties = {
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
 
 /** 점수 표기 — 소수 1자리까지 (정수는 정수로) */
 function fmtScore(n: number | null): string {
@@ -40,73 +71,64 @@ function fmtScore(n: number | null): string {
   return String(Math.round(n * 10) / 10);
 }
 
-function fmtDelta(d: number): string {
-  const r = Math.round(Math.abs(d) * 10) / 10;
-  return `${d >= 0 ? "+" : "-"}${r}`;
-}
+const KIND_LABEL: Record<EvidenceKind, string> = {
+  upload: "업로드",
+  public: "공개 데이터",
+  hitl: "확인 응답",
+};
 
-/* ---- 풀블리드 타일 섹션 ---- */
-function Section({
-  tone,
-  wide = false,
-  children,
-}: {
-  tone: "dark" | "mist" | "white";
-  wide?: boolean;
-  children: ReactNode;
-}) {
-  const bg =
-    tone === "dark"
-      ? "var(--surface-dark)"
-      : tone === "mist"
-        ? "var(--surface-mist)"
-        : "var(--surface-page)";
+/** 근거를 출처 텍스트로 — "업로드 · 3월 생산일지 — "종이 양식에…"" */
+function EvidenceTextList({ items }: { items: EvidenceRef[] }) {
+  if (items.length === 0) return null;
   return (
-    <section
-      style={{
-        background: bg,
-        color: tone === "dark" ? "var(--on-dark)" : "var(--text-body)",
-        padding: "var(--space-section) 24px",
-      }}
-    >
-      <div style={{ maxWidth: wide ? 1200 : 980, margin: "0 auto" }}>{children}</div>
-    </section>
+    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>
+      {items.map((e, i) => (
+        <li
+          key={`${e.refId}-${i}`}
+          style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--fg-tertiary)" }}
+        >
+          <span style={{ fontWeight: 600, color: "var(--fg-secondary)" }}>
+            {KIND_LABEL[e.kind]} · {e.label}
+          </span>
+          {e.snippet && <> — &ldquo;{e.snippet}&rdquo;</>}
+        </li>
+      ))}
+    </ul>
   );
 }
 
-function SectionHeader({
-  eyebrow,
+/* ---- 콘텐츠 래퍼 (max 1080px) ---- */
+function Inner({ children }: { children: ReactNode }) {
+  return <div style={{ maxWidth: 1080, margin: "0 auto", padding: "0 24px" }}>{children}</div>;
+}
+
+function SectionHead({
+  label,
   title,
-  caption,
+  sub,
 }: {
-  eyebrow: string;
+  label: string;
   title: string;
-  caption?: string;
+  sub?: ReactNode;
 }) {
   return (
-    <header style={{ marginBottom: "var(--space-xl)" }}>
-      <Eyebrow style={{ marginBottom: 12 }}>{eyebrow}</Eyebrow>
-      <h2
+    <header style={{ marginBottom: 24 }}>
+      <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
+        {label}
+      </div>
+      <h3
         style={{
-          fontSize: "var(--type-section-size)",
-          fontWeight: 600,
-          lineHeight: "var(--type-section-line)",
-          letterSpacing: "var(--type-section-track)",
-          color: "var(--text-strong)",
           margin: 0,
+          font: "var(--text-h3)",
+          letterSpacing: "var(--track-heading)",
+          color: "var(--fg-primary)",
         }}
       >
         {title}
-      </h2>
-      {caption && (
-        <p
-          style={{
-            margin: "10px 0 0",
-            fontSize: "var(--type-caption-size)",
-            color: "var(--text-secondary)",
-          }}
-        >
-          {caption}
+      </h3>
+      {sub && (
+        <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+          {sub}
         </p>
       )}
     </header>
@@ -114,12 +136,21 @@ function SectionHeader({
 }
 
 /* ============================================================
-   레이더 차트 — SVG 직접 구현 (6각형)
+   섹션 2 보조 — 레이더 차트 (호버 점수 툴팁 + 축 클릭 선택)
    ============================================================ */
-function RadarChart({ axes }: { axes: AxisScore[] }) {
-  const cx = 170;
-  const cy = 162;
-  const R = 112;
+function RadarChart({
+  axes,
+  selected,
+  onSelect,
+}: {
+  axes: AxisScore[];
+  selected: AxisId | null;
+  onSelect: (id: AxisId) => void;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const cx = 180;
+  const cy = 168;
+  const R = 114;
 
   const pt = (i: number, v: number): [number, number] => {
     const ang = (Math.PI / 180) * (-90 + i * 60);
@@ -129,31 +160,32 @@ function RadarChart({ axes }: { axes: AxisScore[] }) {
     vals.map((v, i) => pt(i, v).map((n) => n.toFixed(1)).join(",")).join(" ");
 
   const ownVals = axes.map((a) => a.score ?? 0);
-  const indVals = axes.map((a) => a.industryAvg);
+  const avgVals = axes.map((a) => a.industryAvg);
 
   return (
     <figure style={{ margin: 0 }}>
       <svg
-        viewBox="0 0 340 324"
+        viewBox="0 0 360 336"
         role="img"
-        aria-label={`6축 준비도 레이더 차트 — 자사 점수와 업종 평균 비교. ${axes
-          .map((a) => `${a.name} ${fmtScore(a.score)}점(업종 ${a.industryAvg}점)`)
+        aria-label={`카테고리별 준비도 차트 — 자사 점수와 평균 비교. ${axes
+          .map((a) => `${a.name} ${fmtScore(a.score)}점(평균 ${a.industryAvg}점)`)
           .join(", ")}`}
         style={{ width: "100%", maxWidth: 460, display: "block", margin: "0 auto" }}
       >
-        {/* 그리드 링 (25/50/75/100) */}
+        {/* 그리드 링 */}
         {[25, 50, 75, 100].map((v) => (
           <polygon
             key={v}
             points={poly(axes.map(() => v))}
             fill="none"
-            stroke={v === 100 ? "var(--slate-200)" : "var(--slate-100)"}
+            stroke={v === 100 ? "var(--grey-200)" : "var(--grey-100)"}
             strokeWidth={1}
           />
         ))}
         {/* 스포크 */}
         {axes.map((a, i) => {
           const [x, y] = pt(i, 100);
+          const isSel = selected === a.axis;
           return (
             <line
               key={a.axis}
@@ -161,61 +193,65 @@ function RadarChart({ axes }: { axes: AxisScore[] }) {
               y1={cy}
               x2={x}
               y2={y}
-              stroke="var(--slate-100)"
-              strokeWidth={1}
+              stroke={isSel ? "var(--blue-100)" : "var(--grey-100)"}
+              strokeWidth={isSel ? 1.5 : 1}
             />
           );
         })}
-        {/* 링 눈금 (상단 스포크) */}
-        {[25, 50, 75, 100].map((v) => (
-          <text
-            key={v}
-            x={cx + 5}
-            y={cy - R * (v / 100) - 2}
-            fontSize={9}
-            fill="var(--slate-300)"
-            fontFamily="var(--font-mono)"
-          >
-            {v}
-          </text>
-        ))}
-        {/* 업종 평균 — slate 점선 스트로크만 */}
+        {/* 평균 — 회색 점선 */}
         <polygon
-          points={poly(indVals)}
+          points={poly(avgVals)}
           fill="none"
-          stroke="var(--slate-400)"
+          stroke="var(--grey-400)"
           strokeWidth={1.5}
           strokeDasharray="4 4"
           strokeLinejoin="round"
         />
-        {/* 자사 — 블루 반투명 채움 + 블루 스트로크 */}
+        {/* 자사 — 블루 반투명 */}
         <polygon
           points={poly(ownVals)}
           fill="rgba(10,80,255,0.12)"
-          stroke="var(--ax-blue)"
+          stroke="var(--blue-500)"
           strokeWidth={2}
           strokeLinejoin="round"
         />
+        {/* 꼭짓점 도트 (호버 툴팁 + 클릭 선택) */}
         {ownVals.map((v, i) => {
           const [x, y] = pt(i, v);
+          const isSel = selected === axes[i].axis;
           return (
-            <circle
-              key={axes[i].axis}
-              cx={x}
-              cy={y}
-              r={3.5}
-              fill="var(--ax-blue)"
-              stroke="#fff"
-              strokeWidth={1.5}
-            />
+            <g key={axes[i].axis}>
+              <circle
+                cx={x}
+                cy={y}
+                r={isSel ? 5 : 3.5}
+                fill="var(--blue-500)"
+                stroke="var(--white)"
+                strokeWidth={1.5}
+              />
+              {/* 히트 영역 */}
+              <circle
+                cx={x}
+                cy={y}
+                r={13}
+                fill="transparent"
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                onClick={() => onSelect(axes[i].axis)}
+                role="button"
+                aria-label={`${axes[i].name} ${fmtScore(axes[i].score)}점 — 상세 보기`}
+              />
+            </g>
           );
         })}
-        {/* 축 라벨 (AXES.short) */}
+        {/* 축 라벨 (클릭 가능) */}
         {axes.map((a, i) => {
-          const [x, y] = pt(i, 117);
+          const [x, y] = pt(i, 118);
           const short = AXES.find((m) => m.id === a.axis)?.short ?? a.axis;
           const anchor = i === 0 || i === 3 ? "middle" : i === 1 || i === 2 ? "start" : "end";
-          const dy = i === 0 ? -6 : i === 3 ? 14 : 4;
+          const dy = i === 0 ? -8 : i === 3 ? 16 : 4;
+          const isSel = selected === a.axis;
           return (
             <text
               key={a.axis}
@@ -223,227 +259,235 @@ function RadarChart({ axes }: { axes: AxisScore[] }) {
               y={y + dy}
               textAnchor={anchor}
               fontSize={12.5}
-              fontWeight={600}
-              fill="var(--slate-700)"
+              fontWeight={isSel ? 700 : 600}
+              fill={isSel ? "var(--blue-500)" : "var(--grey-700)"}
               fontFamily="var(--font-sans)"
               letterSpacing="-0.01em"
+              style={{ cursor: "pointer" }}
+              onClick={() => onSelect(a.axis)}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              role="button"
+              aria-label={`${a.name} 상세 보기`}
             >
               {short}
             </text>
           );
         })}
+        {/* 호버 점수 툴팁 — grey-800 말풍선 */}
+        {hover !== null &&
+          (() => {
+            const label = `${fmtScore(axes[hover].score)}점`;
+            const [x, y] = pt(hover, ownVals[hover]);
+            const w = label.length * 7.5 + 18;
+            const tx = Math.min(Math.max(x, w / 2 + 4), 360 - w / 2 - 4);
+            const ty = Math.max(y - 36, 4);
+            return (
+              <g pointerEvents="none">
+                <rect x={tx - w / 2} y={ty} width={w} height={23} rx={7} fill="var(--grey-800)" />
+                <text
+                  x={tx}
+                  y={ty + 15.5}
+                  textAnchor="middle"
+                  fontSize={11.5}
+                  fontWeight={600}
+                  fill="var(--white)"
+                  fontFamily="var(--font-mono)"
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })()}
       </svg>
-      {/* 범례 */}
       <figcaption
         style={{
           display: "flex",
           justifyContent: "center",
           gap: 24,
-          marginTop: 14,
-          fontSize: "var(--type-fine-size)",
-          color: "var(--text-secondary)",
+          marginTop: 12,
+          font: "var(--text-caption)",
+          color: "var(--fg-tertiary)",
         }}
       >
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
           <svg width="22" height="10" aria-hidden="true">
-            <rect x="1" y="1" width="20" height="8" rx="2" fill="rgba(10,80,255,0.12)" stroke="var(--ax-blue)" strokeWidth="1.5" />
+            <rect
+              x="1"
+              y="1"
+              width="20"
+              height="8"
+              rx="2"
+              fill="rgba(10,80,255,0.12)"
+              stroke="var(--blue-500)"
+              strokeWidth="1.5"
+            />
           </svg>
           자사
         </span>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
           <svg width="22" height="10" aria-hidden="true">
-            <line x1="1" y1="5" x2="21" y2="5" stroke="var(--slate-400)" strokeWidth="1.5" strokeDasharray="4 3" />
+            <line
+              x1="1"
+              y1="5"
+              x2="21"
+              y2="5"
+              stroke="var(--grey-400)"
+              strokeWidth="1.5"
+              strokeDasharray="4 3"
+            />
           </svg>
-          업종평균 (중소 금속가공 표본)
+          평균 (중소 금속가공 표본)
         </span>
       </figcaption>
     </figure>
   );
 }
 
-/* ============================================================
-   축별 리스트 행 — 점수·업종 비교·근거·채점 기준 접기
-   ============================================================ */
-function MiniBar({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: number;
-  color: string;
-}) {
+/* ---- 프로그레스바 (자사 채움 + 평균 위치 점선 마커) ---- */
+function ScoreBar({ score, avg }: { score: number; avg: number }) {
   return (
-    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <span style={{ width: 26, fontSize: 11, color: "var(--slate-500)", flex: "none" }}>
-        {label}
-      </span>
-      <span
+    <div style={{ position: "relative", padding: "22px 0 20px" }}>
+      <div
         style={{
-          flex: 1,
-          height: 6,
-          borderRadius: "var(--radius-pill)",
-          background: "var(--slate-100)",
+          height: 8,
+          borderRadius: "var(--radius-full)",
+          background: "var(--grey-100)",
           overflow: "hidden",
         }}
         aria-hidden="true"
       >
-        <span
+        <div
           style={{
-            display: "block",
+            width: `${Math.max(0, Math.min(100, score))}%`,
             height: "100%",
-            width: `${Math.max(0, Math.min(100, value))}%`,
-            borderRadius: "var(--radius-pill)",
-            background: color,
+            borderRadius: "var(--radius-full)",
+            background: "var(--blue-500)",
           }}
         />
-      </span>
-      <span style={{ ...mono, fontSize: 12, color: "var(--slate-600)", width: 36, textAlign: "right", flex: "none" }}>
-        {fmtScore(value)}
-      </span>
-    </span>
-  );
-}
-
-function QuestionEvidenceRow({ judgment }: { judgment: Judgment | undefined }) {
-  if (!judgment) {
-    return (
-      <p style={{ margin: "6px 0 0", fontSize: 13, color: "var(--slate-500)" }}>
-        판정 데이터 없음 — 자료 보완 시 판정이 가능해집니다.
-      </p>
-    );
-  }
-  const deferred = judgment.anchor === null;
-  return (
-    <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        {deferred ? (
-          <Badge tone="outline">판정 보류 — 감점이 아닌 커버리지 하락</Badge>
-        ) : (
-          <Badge tone="neutral">
-            <span style={mono}>{judgment.anchor}</span>
-            <span style={mono}>{ANCHOR_SCORE[judgment.anchor!]}점</span>
-          </Badge>
-        )}
-        {judgment.lowConfidence && <Badge tone="outline">신뢰도 낮음</Badge>}
       </div>
-      {deferred && judgment.deferReason && (
-        <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "var(--slate-600)" }}>
-          {judgment.deferReason}
-        </p>
-      )}
-      <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: "var(--slate-600)" }}>
-        {judgment.rationale}
-      </p>
-      {judgment.evidence.length > 0 && <SourceChips items={judgment.evidence} />}
+      {/* 평균 마커 — 세로 점선 + 상단 "평균" / 하단 점수 */}
+      <div
+        style={{
+          position: "absolute",
+          left: `${Math.max(0, Math.min(100, avg))}%`,
+          top: 0,
+          bottom: 0,
+          transform: "translateX(-50%)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+        }}
+        aria-label={`평균 ${avg}점`}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--grey-500)", lineHeight: 1 }}>
+          평균
+        </span>
+        <span
+          style={{
+            flex: 1,
+            width: 0,
+            borderLeft: "1.5px dashed var(--grey-400)",
+            margin: "3px 0",
+          }}
+        />
+        <span style={{ ...mono, fontSize: 11, color: "var(--grey-500)", lineHeight: 1 }}>{avg}</span>
+      </div>
     </div>
   );
 }
 
-function AxisRow({ axis }: { axis: AxisScore }) {
-  const [open, setOpen] = useState(false);
-  const questions = rubricQuestions.filter((q) => q.axis === axis.axis);
-  const byId = useMemo(() => new Map(judgments.map((j) => [j.questionId, j])), []);
-  const delta = (axis.score ?? 0) - axis.industryAvg;
-  const partial = axis.judgedCount < axis.totalCount;
+/* ============================================================
+   섹션 3 보조 — 관리 대상 인과 체인 (장비.png 문법, 화면 로컬 상수)
+   시나리오 정합: areas.ts asIs · valueChain.ts 신호와 일치
+   ============================================================ */
+const CAUSE_CHAINS: Partial<Record<FunctionAreaId, string[]>> = {
+  production: ["수기 기록 4회 재입력", "이관 오류·수량 불일치", "월 집계 반나절", "현황 파악 지연"],
+  logistics: ["품목 표기 제각각", "재고 대사 불가", "감(感) 발주", "과잉 재고 2.5주치"],
+  quality: ["불량 사유 미기록", "원인 분석 불가", "같은 불량 반복", "클레임 대응 지연"],
+};
 
+function CauseChain({ steps }: { steps: string[] }) {
+  const last = steps.length - 1;
   return (
-    <Card style={{ padding: "20px 22px" }}>
-      {/* 헤더: 축명 + 점수 */}
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
-        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-          <strong style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--text-strong)" }}>
-            {axis.name}
-          </strong>
-          {axis.estimated && <Badge tone="outline">추정(신뢰도 낮음)</Badge>}
-          {partial && (
-            <Badge tone="outline">
-              <span style={mono}>
-                판정 {axis.judgedCount}/{axis.totalCount} · 커버리지 {Math.round(axis.coverage * 100)}%
-              </span>
-            </Badge>
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 8,
+        padding: "4px 0",
+      }}
+    >
+      {steps.map((s, i) => (
+        <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {i > 0 && (
+            <span style={{ display: "inline-flex", color: "var(--grey-400)" }} aria-hidden="true">
+              <Icons.arrow size={13} />
+            </span>
           )}
-        </div>
-        <span style={{ ...mono, fontSize: 26, fontWeight: 600, color: "var(--text-strong)", whiteSpace: "nowrap" }}>
-          {fmtScore(axis.score)}
-          <span style={{ fontSize: 13, fontWeight: 400, color: "var(--slate-400)" }}>/100</span>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              padding: "8px 14px",
+              borderRadius: "var(--radius-s)",
+              fontSize: 13,
+              lineHeight: 1.35,
+              ...(i === 0
+                ? {
+                    background: "var(--bg-danger-weak)",
+                    color: "var(--fg-danger)",
+                    fontWeight: 600,
+                  }
+                : i === last
+                  ? {
+                      background: "var(--bg-base)",
+                      border: "1px solid var(--line-strong)",
+                      color: "var(--fg-primary)",
+                      fontWeight: 700,
+                    }
+                  : {
+                      background: "var(--bg-tertiary)",
+                      color: "var(--fg-secondary)",
+                    }),
+            }}
+          >
+            {s}
+          </span>
         </span>
-      </div>
-
-      {/* 업종 평균 미니 비교 */}
-      <div style={{ display: "grid", gap: 5, margin: "14px 0 0" }}>
-        <MiniBar label="자사" value={axis.score ?? 0} color="var(--ax-blue)" />
-        <MiniBar label="업종" value={axis.industryAvg} color="var(--slate-300)" />
-      </div>
-      <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--slate-500)" }}>
-        업종 평균 대비{" "}
-        <span style={{ ...mono, color: delta >= 0 ? "var(--ax-blue)" : "var(--slate-700)", fontWeight: 600 }}>
-          {fmtDelta(delta)}
-        </span>
-      </p>
-
-      {/* 근거 문장 */}
-      <p style={{ margin: "12px 0 0", fontSize: 14, lineHeight: 1.55, color: "var(--text-secondary)" }}>
-        {axisFindings[axis.axis]}
-      </p>
-
-      {/* 채점 기준·근거 접기 */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        style={{
-          marginTop: 14,
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          border: "none",
-          background: "transparent",
-          padding: 0,
-          cursor: "pointer",
-          fontFamily: "var(--font-sans)",
-          fontSize: 13,
-          fontWeight: 600,
-          color: "var(--ax-blue)",
-        }}
-      >
-        <span
-          style={{
-            display: "inline-flex",
-            transform: open ? "rotate(180deg)" : "rotate(0deg)",
-            transition: "transform .15s ease",
-          }}
-        >
-          <Icons.chevronDown size={14} />
-        </span>
-        채점 기준·근거 보기
-      </button>
-
-      {open && (
-        <div style={{ marginTop: 6 }}>
-          {questions.map((q) => (
-            <div key={q.id} style={{ borderTop: "1px solid var(--divider-soft)", padding: "14px 0" }}>
-              <div style={{ ...mono, fontSize: 11, color: "var(--slate-400)", marginBottom: 4 }}>{q.id}</div>
-              <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.006em", color: "var(--text-strong)" }}>
-                {q.question}
-              </div>
-              <QuestionEvidenceRow judgment={byId.get(q.id)} />
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
+      ))}
+    </div>
   );
 }
 
 /* ============================================================
-   8영역 평가 — 등급 배지 (숫자 점수 미노출, REQ-F-12)
+   섹션 4 보조 — 품목별 재고 흐름 표 (가치사슬.png 문법, 화면 로컬 상수)
+   vc2 신호와 정합: 브라켓 B-102 계열 과잉(회전 0.3회) · 발주점 부재
    ============================================================ */
-const GRADE_META: Record<AreaGrade, { label: string; tone: "danger" | "neutral" | "success" | "outline" }> = {
-  critical: { label: "심각", tone: "danger" },
-  normal: { label: "보통", tone: "neutral" },
-  strength: { label: "강점", tone: "success" },
-  hold: { label: "판단 보류", tone: "outline" },
+type StockTone = "danger" | "warning" | "success";
+const STOCK_ROWS: {
+  item: string;
+  stock: string;
+  safety: string;
+  daily: string;
+  days: number;
+  tone: StockTone;
+  turn: string;
+  action: string;
+  actionTone: "danger" | "strong" | "plain";
+}[] = [
+  { item: "기어 D", stock: "15", safety: "80", daily: "5", days: 3, tone: "danger", turn: "1.4회", action: "즉시 발주", actionTone: "danger" },
+  { item: "샤프트 B", stock: "40", safety: "120", daily: "8", days: 5, tone: "danger", turn: "1.1회", action: "즉시 발주", actionTone: "danger" },
+  { item: "핀 F", stock: "60", safety: "150", daily: "9", days: 7, tone: "warning", turn: "0.9회", action: "이번 주 발주", actionTone: "strong" },
+  { item: "하우징 C", stock: "560", safety: "400", daily: "22", days: 25, tone: "success", turn: "0.4회", action: "정상", actionTone: "plain" },
+  { item: "브라켓 B-102", stock: "1,240", safety: "800", daily: "45", days: 27, tone: "success", turn: "0.3회", action: "정상 · 과잉 주의", actionTone: "strong" },
+];
+
+const STOCK_TONE_COLOR: Record<StockTone, string> = {
+  danger: "var(--fg-danger)",
+  warning: "var(--fg-warning)",
+  success: "var(--fg-success)",
 };
 
 /* ============================================================
@@ -453,393 +497,1103 @@ export default function ResultPage() {
   const router = useRouter();
   const { companyInput, completedSteps, completeStep } = useDiagnosis();
 
+  /* ---- 점수: 전부 런타임 계산 ---- */
   const overall = useMemo(() => computeOverall(judgments), []);
-  const sortedAxes = useMemo(() => sortAxesByScore(overall.axes), [overall]);
+  const judgmentById = useMemo(() => new Map(judgments.map((j) => [j.questionId, j])), []);
   const docById = useMemo(() => new Map(uploadedDocs.map((d) => [d.id, d])), []);
+  const axisById = useMemo(
+    () => new Map(overall.axes.map((a) => [a.axis, a])),
+    [overall],
+  );
+  const axesByBottleneck = useMemo(() => sortAxesByScore(overall.axes), [overall]);
 
-  /* 가드 — 자료 정리(collect) 미완료 시 안내만 렌더 */
-  if (!completedSteps.includes("collect")) {
+  /* ---- 화면 상태 ---- */
+  const [ready, setReady] = useState(false);
+  const [selectedAxis, setSelectedAxis] = useState<AxisId | null>(null);
+  const [showAllAxes, setShowAllAxes] = useState(false);
+  const [basisAxis, setBasisAxis] = useState<AxisId | null>(null);
+  const [statDetail, setStatDetail] = useState<CompanyStat | null>(null);
+  const [chainArea, setChainArea] = useState<AreaAssessment | null>(null);
+  const statRowRef = useRef<HTMLDivElement>(null);
+
+  const collectDone = completedSteps.includes("collect");
+  const resultDone = completedSteps.includes("result");
+
+  /* 최초 진입 시 약 2초 로딩 — 재방문(result 완료)이면 생략 */
+  useEffect(() => {
+    if (!collectDone) return;
+    if (resultDone) {
+      setReady(true);
+      return;
+    }
+    const t = setTimeout(() => setReady(true), 2000);
+    return () => clearTimeout(t);
+  }, [collectDone, resultDone]);
+
+  /* ---- 가드: 자료 정리(collect) 미완료 ---- */
+  if (!collectDone) {
     return (
-      <Section tone="white">
-        <Card style={{ maxWidth: 560, margin: "48px auto", padding: "40px 36px", textAlign: "center" }}>
-          <Eyebrow style={{ marginBottom: 14, justifyContent: "center", display: "flex" }}>진단 결과</Eyebrow>
+      <Inner>
+        <Card
+          radius="2xl"
+          style={{ maxWidth: 560, margin: "64px auto", padding: "40px 36px", textAlign: "center" }}
+        >
+          <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 12 }}>
+            진단 결과
+          </div>
           <h1
             style={{
               margin: "0 0 12px",
-              fontSize: 24,
-              fontWeight: 600,
-              letterSpacing: "-0.014em",
-              color: "var(--text-strong)",
+              font: "var(--text-h2)",
+              letterSpacing: "var(--track-heading)",
+              color: "var(--fg-primary)",
             }}
           >
-            아직 진단 결과가 준비되지 않았습니다
+            아직 진단 결과가 준비되지 않았어요
           </h1>
-          <p style={{ margin: "0 0 24px", fontSize: 15, lineHeight: 1.55, color: "var(--text-secondary)" }}>
-            자료 정리 단계를 완료하면 업로드 자료·공개 데이터·확인 응답을 근거로 진단 결과가 생성됩니다.
+          <p style={{ margin: "0 0 24px", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+            자료 정리 단계를 마치면 업로드 자료·공개 데이터·확인 응답을 근거로 진단 결과가
+            만들어져요.
           </p>
           <Button variant="primary" href="/collect">
             자료 정리로 돌아가기
           </Button>
         </Card>
-      </Section>
+      </Inner>
+    );
+  }
+
+  /* ---- 로딩 (약 2초) ---- */
+  if (!ready) {
+    return (
+      <div
+        style={{
+          minHeight: "60vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 20,
+        }}
+      >
+        <Loader style={{ color: "var(--fg-brand)" }} />
+        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+          방금 정리된 자료를 기준으로 진단하고 있어요
+        </p>
+      </div>
     );
   }
 
   const companyName = companyInput.trim() || demoCompany.name;
+  const foundedYear = new Date(demoCompany.established).getFullYear();
+  const yearsInBusiness = new Date().getFullYear() - foundedYear;
+  const region = demoCompany.address.split(" ").slice(0, 2).join(" ");
+
+  /* 목표 단계 = 현재 +1 (최대 Lv.5) */
+  const currentIdx = overall.level.level - 1;
+  const targetIdx = Math.min(currentIdx + 1, LEVELS.length - 1);
+  const targetLevel = LEVELS[targetIdx];
+
+  /* 업종 평균 위치 — INDUSTRY_AVG 평균을 mapLevel로 환산 */
+  const industryAvgScore =
+    Object.values(INDUSTRY_AVG).reduce((a, b) => a + b, 0) / Object.values(INDUSTRY_AVG).length;
+  const industryLevel = mapLevel(industryAvgScore);
+
+  const stepperSteps = LEVELS.map((l, i) => ({
+    label: l.label,
+    sub: i === targetIdx ? "목표 단계" : undefined,
+  }));
+
+  const selectAxis = (id: AxisId) => {
+    setSelectedAxis(id);
+    setShowAllAxes(false);
+  };
+
+  const goTasks = (area?: FunctionAreaId) => {
+    completeStep("result");
+    router.push(area ? `/tasks?area=${area}` : "/tasks");
+  };
+
+  const basisScore = basisAxis ? axisById.get(basisAxis) : undefined;
+  const basisQuestions = basisAxis ? rubricQuestions.filter((q) => q.axis === basisAxis) : [];
+  const statSource = statDetail?.sourceId
+    ? publicSources.find((s) => s.id === statDetail.sourceId)
+    : undefined;
+
+  const selectedScore = selectedAxis ? axisById.get(selectedAxis) : undefined;
 
   return (
-    <div>
-      {/* ================= 섹션 1 — 종합 소견 (다크 히어로) ================= */}
-      <Section tone="dark">
-        <Eyebrow tone="on-dark" style={{ marginBottom: 18 }}>
-          진단 결과 — 종합 소견
-        </Eyebrow>
-
-        {/* 회사 요약 1줄 */}
-        <p style={{ margin: "0 0 6px", fontSize: 15, color: "var(--on-dark-muted)" }}>
-          <strong style={{ color: "var(--on-dark)", fontWeight: 600 }}>{companyName}</strong>
-          {" · "}
-          {demoCompany.industry} · <span style={mono}>{demoCompany.employees}</span>명
-          <sup style={{ fontSize: 10, marginLeft: 2 }}>*</sup>
-        </p>
-        <p style={{ margin: "0 0 36px", fontSize: "var(--type-fine-size)", color: "var(--slate-500)" }}>
-          * {demoCompany.infoSource}
-        </p>
-
-        {/* 대표 지표 — 단계(Lv) 하나만 초대형 (REQ-F-10) */}
-        <h1
-          style={{
-            margin: 0,
-            fontSize: "clamp(44px, 8vw, 72px)",
-            fontWeight: 700,
-            lineHeight: 1.07,
-            letterSpacing: "-0.02em",
-            color: "var(--on-dark)",
-          }}
-        >
-          {overall.level.label}
-        </h1>
-        <p style={{ margin: "14px 0 0", fontSize: 13, color: "var(--on-dark-muted)" }}>
-          <span style={{ ...mono, color: "var(--on-dark)" }}>
-            AX 준비도 {overall.score}/100
-          </span>
-        </p>
-        <p
-          style={{
-            margin: "10px 0 0",
-            maxWidth: 700,
-            fontSize: 17,
-            lineHeight: 1.47,
-            color: "var(--on-dark-muted)",
-          }}
-        >
-          {overall.level.description}
-        </p>
-
-        <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.12)", margin: "40px 0" }} />
-
-        {/* 3단 소견: 한마디로 / 그래서 / 권고 */}
-        <div style={{ marginBottom: 32 }}>
-          <Eyebrow tone="on-dark" style={{ marginBottom: 12 }}>
-            한마디로
-          </Eyebrow>
-          <p
-            style={{
-              margin: 0,
-              maxWidth: 820,
-              fontSize: "clamp(22px, 3.4vw, 30px)",
-              fontWeight: 600,
-              lineHeight: 1.25,
-              letterSpacing: "-0.014em",
-              color: "var(--on-dark)",
-            }}
-          >
-            {overallOpinion.oneLiner}
-          </p>
-        </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-            gap: 32,
-          }}
-        >
-          <div>
-            <Eyebrow tone="on-dark" style={{ marginBottom: 10 }}>
-              그래서
-            </Eyebrow>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "var(--on-dark-muted)" }}>
-              {overallOpinion.soWhat}
-            </p>
-          </div>
-          <div>
-            <Eyebrow tone="on-dark" style={{ marginBottom: 10 }}>
-              권고
-            </Eyebrow>
-            <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: "var(--on-dark-muted)" }}>
-              {overallOpinion.recommendation}
-            </p>
-          </div>
-        </div>
-
-        <hr style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.12)", margin: "40px 0 24px" }} />
-
-        <p style={{ margin: 0, fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--on-dark)" }}>
-          지금 시작하면 전국 중소 제조 상위 <span style={mono}>20%</span> 진입 흐름에 올라탑니다
-        </p>
-        <p style={{ margin: "8px 0 0", fontSize: "var(--type-fine-size)", color: "var(--slate-500)", maxWidth: 700 }}>
-          {positionFootnote}
-        </p>
-      </Section>
-
-      {/* ================= 섹션 2 — 6축 준비도 (white) ================= */}
-      <Section tone="white" wide>
-        <SectionHeader
-          eyebrow="6축 준비도"
-          title="어디가 강하고, 어디가 병목인가"
-          caption="업종 평균(중소 금속가공 표본)과 비교합니다. 오른쪽 목록은 병목(낮은 점수) 축 우선 정렬."
-        />
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-            gap: 48,
-            alignItems: "start",
-          }}
-        >
-          <div style={{ position: "sticky", top: 120 }}>
-            <RadarChart axes={overall.axes} />
-          </div>
-          <div style={{ display: "grid", gap: 14 }}>
-            {sortedAxes.map((axis) => (
-              <AxisRow key={axis.axis} axis={axis} />
-            ))}
-          </div>
-        </div>
-      </Section>
-
-      {/* ================= 섹션 3 — 8영역 평가 (mist) ================= */}
-      <Section tone="mist">
-        <SectionHeader
-          eyebrow="8영역 평가"
-          title="기능영역별 현재 상태"
-          caption="점수가 아닌 등급으로 표기합니다 — 심각 영역부터. 자료가 부족한 영역은 판단을 보류합니다."
-        />
-        <div style={{ display: "grid", gap: 14 }}>
-          {[...areaAssessments]
-            .sort((a, b) => a.priority - b.priority)
-            .map((area) => {
-              const meta = GRADE_META[area.grade];
-              return (
-                <Card key={area.areaId} style={{ padding: "20px 22px" }}>
-                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                    <strong style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.01em", color: "var(--text-strong)" }}>
-                      {areaName(area.areaId)}
-                    </strong>
-                    <Badge tone={meta.tone}>{meta.label}</Badge>
-                  </div>
-                  <p style={{ margin: "10px 0 0", fontSize: 15, lineHeight: 1.55, color: "var(--text-body)" }}>
-                    {area.asIs}
-                  </p>
-                  {area.grade === "hold" && area.holdReason && (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        padding: "12px 14px",
-                        borderRadius: "var(--radius-md)",
-                        background: "var(--surface-ghost)",
-                        border: "1px dashed var(--slate-200)",
-                        fontSize: 13,
-                        lineHeight: 1.55,
-                        color: "var(--slate-600)",
-                      }}
-                    >
-                      {area.holdReason}{" "}
-                      <Link
-                        href="/collect"
-                        style={{ color: "var(--ax-blue)", fontWeight: 600, textDecoration: "none", whiteSpace: "nowrap" }}
-                      >
-                        자료 추가하기
-                      </Link>
-                    </div>
-                  )}
-                  {area.evidence.length > 0 && (
-                    <div style={{ marginTop: 12 }}>
-                      <SourceChips items={area.evidence} />
-                    </div>
-                  )}
-                  {area.taskIds.length > 0 && (
-                    <p style={{ margin: "12px 0 0" }}>
-                      <Link
-                        href={`/tasks?area=${area.areaId}`}
-                        onClick={() => completeStep("result")}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 6,
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: "var(--ax-blue)",
-                          textDecoration: "none",
-                        }}
-                      >
-                        이 영역 개선과제 <span style={mono}>{area.taskIds.length}</span>건 보기
-                        <Icons.arrow size={13} />
-                      </Link>
-                    </p>
-                  )}
-                </Card>
-              );
-            })}
-        </div>
-      </Section>
-
-      {/* ================= 섹션 4 — 가치사슬 흐름 (white) ================= */}
-      {valueChainAnalysis.available && (
-        <Section tone="white" wide>
-          <header style={{ marginBottom: "var(--space-xl)" }}>
-            <Eyebrow style={{ marginBottom: 12 }}>가치사슬 흐름</Eyebrow>
-            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
-              <h2
-                style={{
-                  fontSize: "var(--type-section-size)",
-                  fontWeight: 600,
-                  lineHeight: "var(--type-section-line)",
-                  letterSpacing: "var(--type-section-track)",
-                  color: "var(--text-strong)",
-                  margin: 0,
-                }}
-              >
-                발주에서 출하까지, 자료가 말하는 신호
-              </h2>
-              <Badge tone="accent">귀사 자료로만 산출</Badge>
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 14 }}>
-              {valueChainAnalysis.usedDocTypes.map((t) => (
-                <span
-                  key={t}
+    <div className="ax-step-enter" style={{ background: "var(--bg-base)" }}>
+      {/* ================= 섹션 1 — 기업 개요 + 현재 단계 ================= */}
+      <section style={{ padding: "40px 0 12px" }}>
+        <Inner>
+          <div style={{ display: "grid", gap: 16 }}>
+            {/* 기업 개요 카드 */}
+            <Card radius="2xl" style={{ padding: 28 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
+                <h2
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    padding: "4px 10px",
-                    borderRadius: "var(--radius-pill)",
-                    border: "1px solid var(--hairline)",
-                    background: "var(--surface-ghost)",
-                    fontSize: 12,
-                    color: "var(--slate-600)",
+                    margin: 0,
+                    font: "var(--text-h2)",
+                    letterSpacing: "var(--track-heading)",
+                    color: "var(--fg-primary)",
                   }}
                 >
-                  {t}
+                  {companyName}
+                </h2>
+                <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
+                  {demoCompany.bizNo}
+                </span>
+              </div>
+              <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                대표 {demoCompany.ceo} · 설립 <span style={mono}>{foundedYear}</span>년 (업력{" "}
+                <span style={mono}>{yearsInBusiness}</span>년) · {region}
+              </p>
+              <p style={{ margin: "6px 0 0", font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                {demoCompany.infoSource}
+              </p>
+
+              {/* 통계 칩 — 가로 스크롤 + 우측 스크롤 버튼 */}
+              <div style={{ position: "relative", marginTop: 20 }}>
+                <div
+                  ref={statRowRef}
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    overflowX: "auto",
+                    paddingRight: 48,
+                    scrollbarWidth: "none",
+                  }}
+                >
+                  {companyStats.map((stat) => (
+                    <button
+                      key={stat.id}
+                      type="button"
+                      onClick={() => setStatDetail(stat)}
+                      style={{
+                        flex: "none",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 5,
+                        padding: "12px 18px",
+                        borderRadius: "var(--radius-l)",
+                        border: "1px solid var(--line-default)",
+                        background: "var(--bg-base)",
+                        cursor: "pointer",
+                        fontFamily: "var(--font-sans)",
+                        whiteSpace: "nowrap",
+                        transition: "background-color var(--dur-fast) var(--ease)",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "var(--grey-50)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "var(--bg-base)";
+                      }}
+                      aria-label={`${stat.label} ${stat.value} — 상세 보기`}
+                    >
+                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                        {stat.label}
+                        {stat.basis ? ` (${stat.basis})` : ""}
+                      </span>
+                      <span style={{ ...mono, fontSize: 15, fontWeight: 600, color: "var(--fg-primary)" }}>
+                        {stat.value}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => statRowRef.current?.scrollBy({ left: 280, behavior: "smooth" })}
+                  aria-label="통계 칩 더 보기"
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 34,
+                    height: 34,
+                    borderRadius: "50%",
+                    border: "1px solid var(--line-default)",
+                    background: "var(--bg-elevated)",
+                    boxShadow: "var(--shadow-1)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--grey-600)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Icons.chevronRight size={16} />
+                </button>
+              </div>
+            </Card>
+
+            {/* 현재 단계 카드 — DotStepper */}
+            <Card radius="2xl" style={{ padding: 28 }}>
+              <h4
+                style={{
+                  margin: 0,
+                  font: "var(--text-title1)",
+                  letterSpacing: "var(--track-heading)",
+                  color: "var(--fg-primary)",
+                }}
+              >
+                현재 단계 <span style={{ color: "var(--fg-brand)" }}>{overall.level.label}</span> →
+                목표 {targetLevel.label}
+              </h4>
+              <p style={{ margin: "6px 0 26px", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+                {overall.level.description}
+              </p>
+              <DotStepper steps={stepperSteps} current={currentIdx} target={targetIdx} />
+              <p style={{ margin: "18px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                업종 평균도 Lv.{industryLevel.level} 구간이에요 (평균{" "}
+                <span style={mono}>{Math.round(industryAvgScore)}</span>점, 데모 표본)
+              </p>
+              <p style={{ margin: "6px 0 0", font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                기준: 정부 스마트공장 수준확인제도(
+                <TermTooltip term="KSMS">{getGlossary("KSMS")?.easy}</TermTooltip>) 계열 5단계 ·
+                전국 중소 제조 기업 약 <span style={mono}>80%</span>가 스마트공장 미도입 상태예요
+                (데모 통계)
+              </p>
+            </Card>
+
+            {/* 종합 소견 3단 */}
+            <Card radius="2xl" style={{ padding: 28 }}>
+              <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 10 }}>
+                한마디로
+              </div>
+              <p
+                style={{
+                  margin: 0,
+                  font: "var(--text-h4)",
+                  letterSpacing: "var(--track-heading)",
+                  lineHeight: 1.4,
+                  color: "var(--fg-primary)",
+                  maxWidth: 780,
+                }}
+              >
+                {overallOpinion.oneLiner}
+              </p>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+                  gap: 24,
+                  marginTop: 22,
+                  paddingTop: 22,
+                  borderTop: "1px solid var(--line-subtle)",
+                }}
+              >
+                <div>
+                  <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
+                    그래서
+                  </div>
+                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                    {overallOpinion.soWhat}
+                  </p>
+                </div>
+                <div>
+                  <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
+                    권고
+                  </div>
+                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                    {overallOpinion.recommendation}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          </div>
+        </Inner>
+      </section>
+
+      {/* ================= 섹션 2 — 카테고리별 준비도 ================= */}
+      <section style={{ padding: "56px 0" }}>
+        <Inner>
+          <SectionHead
+            label="카테고리별 준비도"
+            title="어디가 강하고, 어디가 병목일까요"
+            sub="차트의 카테고리를 누르면 오른쪽에서 상세를 볼 수 있어요. 점선은 평균(중소 금속가공 표본)이에요."
+          />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: 32,
+              alignItems: "start",
+            }}
+          >
+            {/* 좌 — 레이더 */}
+            <RadarChart axes={overall.axes} selected={selectedAxis} onSelect={selectAxis} />
+
+            {/* 우 — 상세 카드 */}
+            <Card radius="2xl" style={{ padding: 26 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  marginBottom: 16,
+                }}
+              >
+                <strong
+                  style={{
+                    font: "var(--text-title1)",
+                    letterSpacing: "var(--track-heading)",
+                    color: "var(--fg-primary)",
+                  }}
+                >
+                  {selectedAxis && selectedScore && !showAllAxes
+                    ? selectedScore.name
+                    : "AX 진단 결과 상세"}
+                </strong>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setShowAllAxes((v) => !v);
+                    setSelectedAxis(null);
+                  }}
+                >
+                  {showAllAxes ? "접기" : "모두 보기"}
+                </Button>
+              </div>
+
+              {showAllAxes ? (
+                /* 전체 그리드 모드 — 병목 축 우선 정렬 */
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+                    gap: 12,
+                  }}
+                >
+                  {axesByBottleneck.map((a) => (
+                    <div
+                      key={a.axis}
+                      style={{
+                        border: "1px solid var(--line-default)",
+                        borderRadius: "var(--radius-l)",
+                        padding: "16px 18px",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          justifyContent: "space-between",
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                          {a.name}
+                        </span>
+                        <span style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}>
+                          {fmtScore(a.score)}
+                          <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>점</span>
+                        </span>
+                      </div>
+                      <ScoreBar score={a.score ?? 0} avg={a.industryAvg} />
+                      <p
+                        style={{
+                          margin: 0,
+                          font: "var(--text-body3)",
+                          color: "var(--fg-tertiary)",
+                          ...clamp2,
+                        }}
+                      >
+                        {axisFindings[a.axis]}
+                      </p>
+                      <div style={{ marginTop: 10 }}>
+                        <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.axis)}>
+                          점수 근거
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : selectedAxis && selectedScore ? (
+                /* 카테고리 선택 상태 */
+                <div>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                    <span style={{ ...mono, fontSize: 32, fontWeight: 700, color: "var(--fg-primary)" }}>
+                      {fmtScore(selectedScore.score)}
+                    </span>
+                    <span style={{ font: "var(--text-body3)", color: "var(--grey-400)" }}>/ 100점</span>
+                  </div>
+                  <ScoreBar
+                    score={selectedScore.score ?? 0}
+                    avg={selectedScore.industryAvg}
+                  />
+                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                    {axisFindings[selectedAxis]}
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+                    <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
+                      점수 근거
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedAxis(null)}>
+                      요약으로
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                /* 기본 상태 — 요약 */
+                <div style={{ display: "grid", gap: 14 }}>
+                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                    여섯 카테고리 평균이 종합 <span style={{ ...mono, fontWeight: 600 }}>{overall.score}</span>
+                    점이에요. 분포는 &ldquo;{overall.balanceLabel}&rdquo; 유형으로, 강점과 병목이
+                    뚜렷하게 갈려요.
+                  </p>
+                  <div>
+                    <Badge tone="accent">전략 유형 · {strategyType.label}</Badge>
+                    <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+                      {strategyType.description}
+                    </p>
+                  </div>
+                  <div style={{ display: "grid", gap: 8, paddingTop: 6, borderTop: "1px solid var(--line-subtle)" }}>
+                    <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                      <strong style={{ color: "var(--fg-danger)", fontWeight: 600 }}>병목</strong> ·{" "}
+                      {overall.bottlenecks
+                        .map((id) => {
+                          const a = axisById.get(id);
+                          return `${a?.name} ${fmtScore(a?.score ?? null)}점`;
+                        })
+                        .join(" · ")}{" "}
+                      — 여기부터 채우면 효과가 빨라요.
+                    </p>
+                    <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                      <strong style={{ color: "var(--fg-success)", fontWeight: 600 }}>강점</strong> ·{" "}
+                      {overall.strengths
+                        .map((id) => {
+                          const a = axisById.get(id);
+                          return `${a?.name} ${fmtScore(a?.score ?? null)}점`;
+                        })
+                        .join(" · ")}{" "}
+                      — 도입을 감당할 체력이에요.
+                    </p>
+                  </div>
+                  <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                    왼쪽 차트의 카테고리 이름이나 점을 눌러 보세요.
+                  </p>
+                </div>
+              )}
+            </Card>
+          </div>
+        </Inner>
+      </section>
+
+      {/* ================= 섹션 3 — 8영역 (은은한 밴드) ================= */}
+      <section style={{ background: "var(--bg-secondary)", padding: "56px 0" }}>
+        <Inner>
+          <SectionHead
+            label="기능영역"
+            title="기능영역별 현재 상태"
+            sub="점수 대신 등급으로 표기해요. 자료가 부족한 영역은 판단을 보류하고, 자료를 보완하면 진단이 가능해져요."
+          />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+              gap: 12,
+            }}
+          >
+            {[...areaAssessments]
+              .sort((a, b) => a.priority - b.priority)
+              .map((area) => {
+                const gradeMeta =
+                  area.grade === "critical"
+                    ? { label: "관리 대상", tone: "danger" as const }
+                    : area.grade === "normal"
+                      ? { label: "보통", tone: "neutral" as const }
+                      : area.grade === "strength"
+                        ? { label: "강점", tone: "success" as const }
+                        : { label: "판단 보류", tone: "outline" as const };
+                return (
+                  <Card
+                    key={area.areaId}
+                    radius="l"
+                    style={{
+                      padding: "18px 20px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                        {areaName(area.areaId)}
+                      </strong>
+                      <Badge tone={gradeMeta.tone}>{gradeMeta.label}</Badge>
+                    </div>
+                    <p
+                      style={{
+                        margin: 0,
+                        font: "var(--text-body3)",
+                        color: "var(--fg-secondary)",
+                        minHeight: 39,
+                        ...clamp2,
+                      }}
+                    >
+                      {area.grade === "hold" && area.holdReason ? area.holdReason : area.asIs}
+                    </p>
+                    <div
+                      style={{
+                        marginTop: "auto",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                      }}
+                    >
+                      {area.grade === "critical" ? (
+                        <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
+                          사유 보기
+                        </Button>
+                      ) : area.grade === "hold" ? (
+                        <Link
+                          href="/collect"
+                          style={{
+                            font: "var(--text-label-s)",
+                            color: "var(--fg-brand)",
+                            textDecoration: "none",
+                          }}
+                        >
+                          자료 추가하기
+                        </Link>
+                      ) : (
+                        <span />
+                      )}
+                      {area.taskIds.length > 0 && (
+                        <Link
+                          href={`/tasks?area=${area.areaId}`}
+                          onClick={() => completeStep("result")}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 4,
+                            font: "var(--text-label-s)",
+                            color: "var(--fg-brand)",
+                            textDecoration: "none",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          개선과제 <span style={mono}>{area.taskIds.length}</span>건
+                          <Icons.chevronRight size={13} />
+                        </Link>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+          </div>
+        </Inner>
+      </section>
+
+      {/* ================= 섹션 4 — 가치사슬 ================= */}
+      {valueChainAnalysis.available && (
+        <section style={{ padding: "56px 0" }}>
+          <Inner>
+            <SectionHead
+              label="가치사슬 신호"
+              title="자료를 이어 붙이니, 원자재 흐름이 보여요"
+              sub="따로 보면 표일 뿐인 자료를 연결했어요 — 귀사가 올려주신 자료로만 나온 결과예요."
+            />
+
+            {/* 연결 칩 행 */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: 8,
+                marginBottom: 20,
+              }}
+            >
+              {[
+                { icon: <Icons.file size={13} />, label: "발주서 = 소요" },
+                { icon: <Icons.clipboard size={13} />, label: "생산 기록 = 투입·소진" },
+                { icon: <Icons.layers size={13} />, label: "재고표 = 잔량" },
+              ].map((c, i) => (
+                <span key={c.label} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  {i > 0 && (
+                    <span style={{ color: "var(--grey-400)", fontSize: 13, fontWeight: 600 }} aria-hidden="true">
+                      +
+                    </span>
+                  )}
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "7px 13px",
+                      borderRadius: "var(--radius-full)",
+                      border: "1px solid var(--line-default)",
+                      background: "var(--bg-secondary)",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: "var(--fg-secondary)",
+                    }}
+                  >
+                    {c.icon}
+                    {c.label}
+                  </span>
                 </span>
               ))}
+              <span style={{ display: "inline-flex", color: "var(--grey-400)" }} aria-hidden="true">
+                <Icons.arrow size={14} />
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "7px 13px",
+                  borderRadius: "var(--radius-full)",
+                  border: "1px solid var(--blue-100)",
+                  background: "var(--bg-brand-weak)",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--fg-brand)",
+                }}
+              >
+                <Icons.bolt size={13} />
+                소진·회전 신호
+              </span>
             </div>
-          </header>
+
+            {/* 품목별 표 */}
+            <Card radius="2xl" padded={false} style={{ overflow: "hidden" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", minWidth: 720, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      {[
+                        { key: "item", label: <>자재/품목</>, align: "left" as const },
+                        { key: "stock", label: <>현재고</>, align: "right" as const },
+                        {
+                          key: "safety",
+                          label: (
+                            <TermTooltip term="안전재고">{getGlossary("안전재고")?.easy}</TermTooltip>
+                          ),
+                          align: "right" as const,
+                        },
+                        { key: "daily", label: <>일평균 소진</>, align: "right" as const },
+                        { key: "days", label: <>재고 소진일</>, align: "right" as const },
+                        {
+                          key: "turn",
+                          label: (
+                            <TermTooltip term="월 회전">{getGlossary("재고 회전")?.easy}</TermTooltip>
+                          ),
+                          align: "right" as const,
+                        },
+                        { key: "action", label: <>권장 조치</>, align: "left" as const },
+                      ].map((h) => (
+                        <th
+                          key={h.key}
+                          style={{
+                            textAlign: h.align,
+                            padding: "14px 18px",
+                            font: "var(--text-caption)",
+                            color: "var(--grey-500)",
+                            borderBottom: "1px solid var(--line-default)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {h.label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {STOCK_ROWS.map((r, idx) => (
+                      <tr
+                        key={r.item}
+                        style={{
+                          background: r.tone === "danger" ? "var(--bg-danger-weak)" : "transparent",
+                        }}
+                      >
+                        <td
+                          style={{
+                            padding: "13px 18px",
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "var(--fg-primary)",
+                            borderBottom:
+                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {r.item}
+                        </td>
+                        {[r.stock, r.safety, r.daily].map((v, i) => (
+                          <td
+                            key={i}
+                            style={{
+                              ...mono,
+                              padding: "13px 18px",
+                              fontSize: 14,
+                              textAlign: "right",
+                              color: "var(--fg-secondary)",
+                              borderBottom:
+                                idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
+                            }}
+                          >
+                            {v}
+                          </td>
+                        ))}
+                        <td
+                          style={{
+                            ...mono,
+                            padding: "13px 18px",
+                            fontSize: 14,
+                            fontWeight: 700,
+                            textAlign: "right",
+                            color: STOCK_TONE_COLOR[r.tone],
+                            borderBottom:
+                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
+                          }}
+                        >
+                          D-{r.days}
+                        </td>
+                        <td
+                          style={{
+                            ...mono,
+                            padding: "13px 18px",
+                            fontSize: 14,
+                            textAlign: "right",
+                            color: "var(--fg-secondary)",
+                            borderBottom:
+                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
+                          }}
+                        >
+                          {r.turn}
+                        </td>
+                        <td
+                          style={{
+                            padding: "13px 18px",
+                            fontSize: 13.5,
+                            fontWeight: r.actionTone === "plain" ? 400 : 700,
+                            color:
+                              r.actionTone === "danger"
+                                ? "var(--fg-danger)"
+                                : r.actionTone === "strong"
+                                  ? "var(--fg-primary)"
+                                  : "var(--fg-secondary)",
+                            borderBottom:
+                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {r.action}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+            <p style={{ margin: "10px 0 0", font: "var(--text-caption)", color: "var(--grey-500)" }}>
+              재고 소진일은 일평균 소진 기준의 예상이에요.{" "}
+              <TermTooltip term="발주점">{getGlossary("발주점")?.easy}</TermTooltip> 기준이 없어
+              지금은 사람 기억으로 발주 시점을 잡고 있어요. (데모 수치 — 발주서·생산 기록·재고표
+              기준)
+            </p>
+
+            {/* 흐름 신호 3건 */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+                gap: 12,
+                marginTop: 24,
+              }}
+            >
+              {valueChainAnalysis.signals.map((signal) => {
+                const warning = signal.severity === "warning";
+                const sourceNames = signal.sourceDocIds
+                  .map((id) => docById.get(id)?.docType ?? id)
+                  .join(" · ");
+                return (
+                  <Card key={signal.id} radius="l" style={{ padding: "18px 20px" }}>
+                    <div style={{ marginBottom: 10 }}>
+                      <Badge tone={warning ? "warning" : "neutral"}>{warning ? "주의" : "참고"}</Badge>
+                    </div>
+                    <strong
+                      style={{
+                        display: "block",
+                        font: "var(--text-label-m)",
+                        lineHeight: 1.35,
+                        color: "var(--fg-primary)",
+                      }}
+                    >
+                      {signal.title}
+                    </strong>
+                    <p style={{ margin: "8px 0 10px", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                      {signal.finding}
+                    </p>
+                    <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                      근거(업로드): {sourceNames}
+                    </p>
+                  </Card>
+                );
+              })}
+            </div>
+          </Inner>
+        </section>
+      )}
+
+      {/* ================= 섹션 5 — 종합 분석 결과 ================= */}
+      <section style={{ padding: "56px 0 80px" }}>
+        <Inner>
+          <SectionHead label="종합 분석 결과" title="진단을 한 줄로 정리하면" />
+          <p
+            style={{
+              margin: "0 0 28px",
+              font: "var(--text-h3)",
+              letterSpacing: "var(--track-heading)",
+              lineHeight: 1.4,
+              color: "var(--fg-primary)",
+              maxWidth: 780,
+            }}
+          >
+            {comprehensiveAnalysis.conclusion}
+          </p>
 
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              gap: 16,
-              alignItems: "stretch",
+              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+              gap: 12,
             }}
           >
-            {valueChainAnalysis.signals.map((signal) => {
-              const warning = signal.severity === "warning";
-              const docs: EvidenceRef[] = signal.sourceDocIds.map((id) => {
-                const doc = docById.get(id);
-                return {
-                  kind: "upload",
-                  refId: id,
-                  label: doc?.fileName ?? id,
-                  snippet: doc?.summaryTeaser,
-                };
-              });
-              return (
-                <Card key={signal.id} style={{ padding: "20px 22px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        color: warning ? "#9a6a12" : "var(--ax-blue)",
-                      }}
-                      aria-label={warning ? "주의 신호" : "참고 신호"}
-                    >
-                      {warning ? <Icons.alert size={18} /> : <Icons.info size={18} />}
-                    </span>
-                    <Badge tone={warning ? "warning" : "accent"}>{warning ? "주의" : "참고"}</Badge>
-                  </div>
-                  <strong
-                    style={{
-                      display: "block",
-                      fontSize: 16,
-                      fontWeight: 600,
-                      letterSpacing: "-0.01em",
-                      lineHeight: 1.3,
-                      color: "var(--text-strong)",
-                    }}
-                  >
-                    {signal.title}
-                  </strong>
-                  <p style={{ margin: "10px 0 14px", fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-                    {signal.finding}
-                  </p>
-                  <SourceChips items={docs} />
-                </Card>
-              );
-            })}
+            {comprehensiveAnalysis.strengths.map((s) => (
+              <Card key={s.title} radius="l" style={{ padding: "20px 22px" }}>
+                <div style={{ marginBottom: 10 }}>
+                  <Badge tone="success">강점</Badge>
+                </div>
+                <strong style={{ display: "block", font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                  {s.title}
+                </strong>
+                <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                  {s.body}
+                </p>
+              </Card>
+            ))}
+            {comprehensiveAnalysis.improvements.map((s) => (
+              <Card key={s.title} radius="l" style={{ padding: "20px 22px" }}>
+                <div style={{ marginBottom: 10 }}>
+                  <Badge tone="warning">보완</Badge>
+                </div>
+                <strong style={{ display: "block", font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                  {s.title}
+                </strong>
+                <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                  {s.body}
+                </p>
+              </Card>
+            ))}
           </div>
-        </Section>
-      )}
 
-      {/* ================= 섹션 5 — 권고 확인 (mist) ================= */}
-      <Section tone="mist">
-        <div style={{ maxWidth: 700, margin: "0 auto", textAlign: "center" }}>
-          <Eyebrow style={{ marginBottom: 14 }}>권고 확인</Eyebrow>
-          <h2
-            style={{
-              margin: "0 0 14px",
-              fontSize: "var(--type-section-size)",
-              fontWeight: 600,
-              lineHeight: "var(--type-section-line)",
-              letterSpacing: "var(--type-section-track)",
-              color: "var(--text-strong)",
-            }}
-          >
-            {recommendationClose.title}
-          </h2>
-          <p style={{ margin: "0 0 28px", fontSize: 16, lineHeight: 1.6, color: "var(--text-secondary)" }}>
-            {recommendationClose.body}
-          </p>
-
-          <div
-            style={{
-              display: "inline-flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 10,
-              marginBottom: 32,
-            }}
-          >
-            <Badge tone="accent">전략 유형 · {strategyType.label}</Badge>
-            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.6, color: "var(--text-secondary)", maxWidth: 620 }}>
-              {strategyType.description}
+          {/* AX 전략 방향 제안 */}
+          <Card radius="2xl" style={{ padding: 28, marginTop: 16, background: "var(--bg-secondary)" }}>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <strong style={{ font: "var(--text-title1)", color: "var(--fg-primary)" }}>
+                AX 전략 방향 제안
+              </strong>
+              <Badge tone="accent">{strategyType.label}</Badge>
+            </div>
+            <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)", maxWidth: 860 }}>
+              {comprehensiveAnalysis.strategyDirection}
             </p>
-          </div>
+            <p style={{ margin: "10px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)", maxWidth: 860 }}>
+              데이터가 한 번만 입력되는 기반과{" "}
+              <TermTooltip term="데이터 관리 체계">
+                {getGlossary("데이터 관리 체계")?.easy}
+              </TermTooltip>
+              가 잡히면, 다음 단계에서{" "}
+              <TermTooltip term="예지보전">{getGlossary("예지보전")?.easy}</TermTooltip>·
+              <TermTooltip term="OEE">{getGlossary("OEE")?.easy}</TermTooltip> 같은 설비 데이터 활용
+              과제로 넓혀 갈 수 있어요.
+            </p>
+          </Card>
 
-          <div>
-            <Button
-              variant="primary"
-              size="lg"
-              onClick={() => {
-                completeStep("result");
-                router.push("/tasks");
-              }}
-            >
-              개선 과제 보기
+          {/* CTA */}
+          <div style={{ textAlign: "center", marginTop: 40 }}>
+            <Button variant="primary" size="xl" onClick={() => goTasks()}>
+              개선 과제 고르러 가기
             </Button>
           </div>
-        </div>
-      </Section>
+        </Inner>
+      </section>
+
+      {/* ================= 팝업 1 — 통계 칩 상세 ================= */}
+      <Modal
+        open={statDetail !== null}
+        onClose={() => setStatDetail(null)}
+        title={statDetail?.label}
+      >
+        {statDetail && (
+          <div style={{ display: "grid", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <span style={{ ...mono, fontSize: 26, fontWeight: 700, color: "var(--fg-primary)" }}>
+                {statDetail.value}
+              </span>
+              {statDetail.basis && (
+                <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                  {statDetail.basis} 기준
+                </span>
+              )}
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
+              {statDetail.detail.map((d) => (
+                <li key={d} style={{ font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                  {d}
+                </li>
+              ))}
+            </ul>
+            {statSource && (
+              <p
+                style={{
+                  margin: 0,
+                  paddingTop: 12,
+                  borderTop: "1px solid var(--line-subtle)",
+                  font: "var(--text-caption)",
+                  color: "var(--grey-500)",
+                }}
+              >
+                출처: {statSource.name} — {statSource.sourceApi} (데모 데이터)
+              </p>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ================= 팝업 2 — 점수 근거 (문항·판정·근거) ================= */}
+      <Modal
+        open={basisAxis !== null}
+        onClose={() => setBasisAxis(null)}
+        title={basisScore ? `${basisScore.name} — 점수 근거` : undefined}
+        wide
+      >
+        {basisAxis && basisScore && (
+          <div>
+            <p
+              style={{
+                margin: "0 0 4px",
+                font: "var(--text-body3)",
+                color: "var(--fg-secondary)",
+              }}
+            >
+              <span style={{ ...mono, fontWeight: 600, color: "var(--fg-primary)" }}>
+                판정 {basisScore.judgedCount}/{basisScore.totalCount} · 자료 충분도{" "}
+                {Math.round(basisScore.coverage * 100)}%
+              </span>
+            </p>
+            <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
+              자료가 부족한 문항은{" "}
+              <TermTooltip term="판정 보류">{getGlossary("판정 보류")?.easy}</TermTooltip>로 두고
+              감점하지 않아요. 판정은 문항별 기준 서술에 분류하는 방식이에요.
+            </p>
+            <div style={{ marginTop: 12 }}>
+              {basisQuestions.map((q) => {
+                const j = judgmentById.get(q.id);
+                const deferred = !j || j.anchor === null;
+                return (
+                  <div
+                    key={q.id}
+                    style={{ borderTop: "1px solid var(--line-subtle)", padding: "16px 0" }}
+                  >
+                    <div style={{ ...mono, fontSize: 11, color: "var(--grey-400)", marginBottom: 4 }}>
+                      {q.id}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                        {q.question}
+                      </strong>
+                      {deferred && <Badge tone="outline">판정 보류</Badge>}
+                    </div>
+                    {!deferred && j?.anchor && (
+                      <p
+                        style={{
+                          margin: "0 0 6px",
+                          font: "var(--text-body3)",
+                          color: "var(--fg-primary)",
+                        }}
+                      >
+                        판정 기준: &ldquo;{q.anchors[j.anchor]}&rdquo;
+                      </p>
+                    )}
+                    {deferred && j?.deferReason && (
+                      <p
+                        style={{
+                          margin: "0 0 6px",
+                          font: "var(--text-body3)",
+                          color: "var(--fg-secondary)",
+                        }}
+                      >
+                        {j.deferReason}
+                      </p>
+                    )}
+                    {j && (
+                      <p
+                        style={{
+                          margin: "0 0 10px",
+                          font: "var(--text-body3)",
+                          color: "var(--fg-secondary)",
+                        }}
+                      >
+                        {j.rationale}
+                      </p>
+                    )}
+                    {j && <EvidenceTextList items={j.evidence} />}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ================= 팝업 3 — 관리 대상 사유 (인과 체인) ================= */}
+      <Modal
+        open={chainArea !== null}
+        onClose={() => setChainArea(null)}
+        title={chainArea ? `${areaName(chainArea.areaId)} — 왜 관리 대상일까요` : undefined}
+        wide
+      >
+        {chainArea && (
+          <div style={{ display: "grid", gap: 16 }}>
+            <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+              {chainArea.asIs}
+            </p>
+            <CauseChain steps={CAUSE_CHAINS[chainArea.areaId] ?? []} />
+            <div style={{ paddingTop: 12, borderTop: "1px solid var(--line-subtle)" }}>
+              <div style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)", marginBottom: 6 }}>
+                근거
+              </div>
+              <EvidenceTextList items={chainArea.evidence} />
+            </div>
+            {chainArea.taskIds.length > 0 && (
+              <div>
+                <Button variant="secondary" size="md" onClick={() => goTasks(chainArea.areaId)}>
+                  이 영역 개선과제 {chainArea.taskIds.length}건 보기
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

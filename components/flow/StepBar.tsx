@@ -7,9 +7,9 @@ import { useDiagnosis } from "./DiagnosisContext";
 import { STEPS } from "./steps";
 
 /**
- * 진행 스텝바 (F-CMN-04) — 6단계 현 위치·완료 체크.
- * 프로스트 서브네브 문법(52px, mist 82% + blur) — 디자인 시스템 레이아웃 규칙.
- * 완료했거나 인접 도달 가능한 단계만 링크 활성.
+ * 상단 스텝 헤더 v2 — 기존 헤더바를 대체한다 (수정요청v1).
+ * 플랫폼 작동 순서 1~6을 화살표(→)로 연결해 표시. 구분자 '/' 사용 금지.
+ * 완료 = 체크, 현재 = 블루 강조, 미도달 = 회색.
  */
 export function StepBar() {
   const pathname = usePathname();
@@ -18,82 +18,108 @@ export function StepBar() {
   const currentIdx = STEPS.findIndex((s) =>
     s.path === "/" ? pathname === "/" : pathname.startsWith(s.path),
   );
+  const firstIncomplete = STEPS.findIndex((s) => !completedSteps.includes(s.id));
 
   return (
-    <nav
-      aria-label="진단 진행 단계"
+    <header
       style={{
         position: "sticky",
-        top: 44,
-        zIndex: 40,
-        height: 52,
+        top: 0,
+        zIndex: 50,
+        height: 56,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        gap: 4,
-        background: "rgba(245,246,248,0.82)",
-        backdropFilter: "var(--blur-frost)",
-        WebkitBackdropFilter: "var(--blur-frost)",
-        borderBottom: "1px solid var(--divider-soft)",
+        gap: 2,
+        background: "rgba(255,255,255,0.86)",
+        backdropFilter: "saturate(180%) blur(16px)",
+        WebkitBackdropFilter: "saturate(180%) blur(16px)",
+        borderBottom: "1px solid var(--line-default)",
       }}
     >
-      {STEPS.map((step, i) => {
-        const done = completedSteps.includes(step.id);
-        const current = i === currentIdx;
-        const reachable = done || i <= STEPS.findIndex((s) => !completedSteps.includes(s.id));
-        const inner = (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "7px 14px",
-              borderRadius: "var(--radius-pill)",
-              fontSize: 13,
-              fontWeight: current ? 600 : 400,
-              letterSpacing: "-0.004em",
-              color: current
-                ? "var(--ax-blue)"
-                : done
-                  ? "var(--slate-700)"
-                  : "var(--slate-400)",
-              background: current ? "var(--ax-blue-wash)" : "transparent",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {done && !current ? (
-              <Icons.check size={13} />
-            ) : (
+      <nav aria-label="진단 진행 단계" style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        {STEPS.map((step, i) => {
+          const done = completedSteps.includes(step.id);
+          const current = i === currentIdx;
+          const reachable = done || (firstIncomplete !== -1 && i <= firstIncomplete);
+          const inner = (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "8px 12px",
+                borderRadius: "var(--radius-full)",
+                fontSize: 13,
+                fontWeight: current ? 700 : 500,
+                letterSpacing: "var(--track-body)",
+                color: current
+                  ? "var(--fg-brand)"
+                  : done
+                    ? "var(--fg-secondary)"
+                    : "var(--fg-quaternary)",
+                background: current ? "var(--bg-brand-weak)" : "transparent",
+                whiteSpace: "nowrap",
+                transition: "background-color var(--dur-base) var(--ease)",
+              }}
+            >
               <span
                 style={{
-                  fontFamily: "var(--font-mono)",
+                  width: 18,
+                  height: 18,
+                  borderRadius: "50%",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flex: "none",
                   fontSize: 11,
-                  opacity: 0.8,
+                  fontWeight: 700,
+                  fontFamily: "var(--font-mono)",
+                  background: current
+                    ? "var(--bg-brand)"
+                    : done
+                      ? "var(--bg-success-weak)"
+                      : "var(--bg-tertiary)",
+                  color: current
+                    ? "var(--fg-inverse)"
+                    : done
+                      ? "var(--fg-success)"
+                      : "var(--fg-quaternary)",
                 }}
               >
-                {i + 1}
+                {done && !current ? <Icons.check size={11} /> : i + 1}
               </span>
-            )}
-            {step.label}
-          </span>
-        );
-        return (
-          <span key={step.id} style={{ display: "inline-flex", alignItems: "center" }}>
-            {i > 0 && (
-              <span aria-hidden style={{ color: "var(--slate-300)", margin: "0 2px", fontSize: 11 }}>
-                /
-              </span>
-            )}
-            {reachable ? (
-              <Link href={step.path} style={{ textDecoration: "none" }} aria-current={current ? "step" : undefined}>
-                {inner}
-              </Link>
-            ) : (
-              inner
-            )}
-          </span>
-        );
-      })}
-    </nav>
+              {step.label}
+            </span>
+          );
+          return (
+            <span key={step.id} style={{ display: "inline-flex", alignItems: "center", gap: 2 }}>
+              {i > 0 && (
+                <span
+                  aria-hidden
+                  style={{
+                    color: i <= currentIdx ? "var(--grey-400)" : "var(--grey-300)",
+                    display: "inline-flex",
+                  }}
+                >
+                  <Icons.chevronRight size={13} />
+                </span>
+              )}
+              {reachable ? (
+                <Link
+                  href={step.path}
+                  style={{ textDecoration: "none" }}
+                  aria-current={current ? "step" : undefined}
+                >
+                  {inner}
+                </Link>
+              ) : (
+                inner
+              )}
+            </span>
+          );
+        })}
+      </nav>
+    </header>
   );
 }

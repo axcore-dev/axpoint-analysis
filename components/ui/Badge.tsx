@@ -12,38 +12,38 @@ export type BadgeTone =
 
 export type BadgeProps = HTMLAttributes<HTMLSpanElement> & { tone?: BadgeTone };
 
+/* washed 배경 + 시맨틱 텍스트 — 22px 높이, 6px 라운드 문법 */
 const tones: Record<BadgeTone, CSSProperties> = {
-  neutral: { background: "var(--slate-100)", color: "var(--slate-700)" },
-  accent: { background: "var(--ax-blue-wash)", color: "var(--ax-blue)" },
-  solid: { background: "var(--ax-blue)", color: "var(--on-primary)" },
-  dark: { background: "var(--slate-900)", color: "var(--on-dark)" },
-  success: { background: "#e7f6ec", color: "#1b7a3d" },
-  /* 진단 등급 표기용 확장 톤 — 채도 낮은 앰버/레드, DS 헤어라인 문법 유지 */
-  warning: { background: "#fdf3e0", color: "#9a6a12" },
-  danger: { background: "#fdecea", color: "#b3261e" },
+  neutral: { background: "var(--bg-tertiary)", color: "var(--fg-secondary)" },
+  accent: { background: "var(--bg-brand-weak)", color: "var(--fg-brand)" },
+  solid: { background: "var(--bg-brand)", color: "var(--fg-inverse)" },
+  dark: { background: "var(--grey-800)", color: "var(--fg-inverse)" },
+  success: { background: "var(--bg-success-weak)", color: "var(--fg-success)" },
+  warning: { background: "var(--bg-warning-weak)", color: "var(--fg-warning)" },
+  danger: { background: "var(--bg-danger-weak)", color: "var(--fg-danger)" },
   outline: {
     background: "transparent",
-    color: "var(--slate-600)",
-    boxShadow: "inset 0 0 0 1px var(--hairline)",
+    color: "var(--fg-secondary)",
+    boxShadow: "inset 0 0 0 1px var(--line-default)",
   },
 };
 
-/** Small status / metadata label. Quiet by default; `accent` carries the blue. */
 export function Badge({ tone = "neutral", className = "", style, children, ...rest }: BadgeProps) {
   return (
     <span
       className={`ax-badge ${className}`}
       style={{
         fontFamily: "var(--font-sans)",
-        fontSize: "12px",
+        fontSize: 12,
         fontWeight: 600,
-        letterSpacing: "-0.004em",
+        letterSpacing: "var(--track-body)",
         lineHeight: 1,
-        padding: "5px 10px",
-        borderRadius: "var(--radius-pill)",
+        height: 22,
+        padding: "0 8px",
+        borderRadius: 6,
         display: "inline-flex",
         alignItems: "center",
-        gap: "6px",
+        gap: 5,
         whiteSpace: "nowrap",
         ...(tones[tone] || tones.neutral),
         ...style,

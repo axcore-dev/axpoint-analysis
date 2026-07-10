@@ -30,7 +30,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d05", label: "재고현황표", snippet: "안전재고·발주점 열 없음" },
       { kind: "upload", refId: "d03", label: "발주서 묶음", snippet: "품목 코드 표기 혼재 (매칭률 28%)" },
     ],
-    taskIds: ["t01", "t04"],
+    taskIds: ["t01", "t04", "t18"],
   },
   {
     areaId: "quality",
@@ -41,7 +41,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d06", label: "검사성적서", snippet: "불량 수량은 있으나 사유·코드 없음" },
       { kind: "upload", refId: "d01", label: "3월 생산일지", snippet: "불량 수량만 기록" },
     ],
-    taskIds: ["t05", "t09"],
+    taskIds: ["t05", "t09", "t13", "t14"],
   },
   {
     areaId: "equipment",
@@ -49,10 +49,10 @@ export const areaAssessments: AreaAssessment[] = [
     priority: 4,
     asIs: "점검표는 정기 운영되나 수기 작성이며 센서 데이터가 관리로 이어지지 않음",
     evidence: [
-      { kind: "upload", refId: "d07", label: "설비점검표", snippet: "월 1회 수기 점검 (HITL 확인)" },
+      { kind: "upload", refId: "d07", label: "설비점검표", snippet: "월 1회 수기 점검 (확인 응답)" },
       { kind: "hitl", refId: "hitl-3", label: "설문: 센서/PLC", snippet: "일부 설비만" },
     ],
-    taskIds: ["t07"],
+    taskIds: ["t07", "t11", "t12"],
   },
   {
     areaId: "sales",
@@ -63,7 +63,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d11", label: "견적서 양식", snippet: "개인 PC 폴더에 파일명으로만 이력 구분" },
       { kind: "upload", refId: "d04", label: "거래명세서", snippet: "집계표와 수량 불일치 2건" },
     ],
-    taskIds: ["t08"],
+    taskIds: ["t08", "t15"],
   },
   {
     areaId: "mgmt",
@@ -74,7 +74,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d09", label: "회계전표(더존 출력)", snippet: "시스템 출력물 확인" },
       { kind: "hitl", refId: "hitl-13", label: "설문: 클라우드", snippet: "네이버웍스 사용 중" },
     ],
-    taskIds: ["t02"],
+    taskIds: ["t02", "t19", "t20"],
   },
   {
     areaId: "design",
@@ -84,7 +84,7 @@ export const areaAssessments: AreaAssessment[] = [
     holdReason:
       "도면 관리 대장·설계 변경 이력 자료가 없어 판단 보류. 도면 관리 방식 자료를 올리면 진단이 가능해집니다.",
     evidence: [{ kind: "upload", refId: "d12", label: "고객사 도면", snippet: "1건 확인 — 관리 체계 미확인" }],
-    taskIds: [],
+    taskIds: ["t16"],
   },
   {
     areaId: "cs",
@@ -94,7 +94,7 @@ export const areaAssessments: AreaAssessment[] = [
     holdReason:
       "클레임 대장·고객 응대 기록이 없어 판단 보류. 관련 자료를 올리면 진단이 가능해집니다.",
     evidence: [],
-    taskIds: [],
+    taskIds: ["t17"],
   },
 ];
 

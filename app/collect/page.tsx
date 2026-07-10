@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { hitlDocs, uploadedDocs } from "@/data/scenario/documents";
@@ -8,186 +8,217 @@ import { publicSources } from "@/data/scenario/publicData";
 import { surveyQuestions } from "@/data/rubric/survey";
 import { hitlResponses } from "@/data/scenario/hitl";
 import { areaCoverages } from "@/data/scenario/areas";
-import { DIGITAL_LEVELS, FUNCTION_AREAS, areaName } from "@/data/rubric/meta";
-import type { DigitalLevel, FunctionAreaId, UploadedDoc } from "@/lib/types";
-import { Badge, Button, Card, Eyebrow, Icons, Tag } from "@/components/ui";
+import { DIGITAL_LEVELS, FUNCTION_AREAS } from "@/data/rubric/meta";
+import type { FunctionAreaId, SurveyQuestion } from "@/lib/types";
+import { Badge, Button, Card, Icons, Input, Loader, Tag } from "@/components/ui";
 
 /**
- * S1 자료 수집·정리 — 수집·분류·확인만 담당 (역할 1개 원칙).
- * 점수·인사이트·등급 등 해석은 절대 노출하지 않는다 (REQ-F-01②).
+ * S1 자료 정리 — 정리된 자료를 보여주는 공간 (수정요청v1).
+ * 수집·분류·확인만 담당한다. 점수·등급·인사이트 등 해석은 노출하지 않는다.
  */
 
-/* 설문: 10번(매출 구간)은 재무 확인되어 조건부 미노출 */
+/* ── 정적 데이터 ── */
+
+/** 10번(매출 구간)은 재무정보가 확인되어 묻지 않는다 → 12문항 */
 const visibleSurvey = surveyQuestions.filter((q) => q.no !== 10);
-const demoAnswers: Record<number, string> = Object.fromEntries(
-  hitlResponses.map((r) => [r.questionNo, r.answer]),
+
+/** 기본 응답 (전 문항 채우기용) */
+const defaultAnswers: Record<number, string[]> = Object.fromEntries(
+  hitlResponses.map((r) => [r.questionNo, [r.answer]]),
 );
 
-const FILE_TYPE_LABEL: Record<UploadedDoc["fileType"], string> = {
-  image: "이미지",
-  pdf: "PDF",
-  xlsx: "XLSX",
-  docx: "DOCX",
-  hwp: "HWP",
+/** 재방문 시 문서 확인 선택 복원값 (시나리오 응답) */
+const DOC_DEFAULT_CHOICE: Record<string, string> = {
+  d07: "현장에서 종이에 수기 작성",
+  d08: "일보를 보고 사무실에서 다시 입력",
 };
 
-/* 수집 시뮬레이션 3단계 */
-const SIM_STEPS = [
-  "공개 데이터 수집 (국세청·DART·특허청 등 6종)",
-  "업로드 자료 분류 — 3축 태깅 (영역 × 디지털화수준 × 문서유형)",
-  "개인정보 마스킹 처리",
+const LOADING_MESSAGES = [
+  "공개 데이터를 모으고 있어요",
+  "올려주신 자료를 읽고 있어요",
+  "8대 영역으로 나누고 있어요",
+  "개인 정보를 가리고 있어요",
 ];
-const SIM_WIDTHS = [14, 46, 80, 100];
 
-const sectionTitle: React.CSSProperties = {
-  margin: "14px 0 0",
-  fontSize: 26,
-  fontWeight: 600,
-  lineHeight: 1.2,
-  letterSpacing: "-0.012em",
-  color: "var(--text-strong)",
-};
+/** 8대 영역별 자료 묶음 (업로드 + 공개) */
+const areaGroups = FUNCTION_AREAS.map((a) => ({
+  id: a.id,
+  name: a.name,
+  docs: uploadedDocs.filter((d) => d.area === a.id),
+  pubs: publicSources.filter((p) => p.area === a.id),
+  coverage: areaCoverages.find((c) => c.areaId === a.id),
+}));
 
-const mono: React.CSSProperties = { fontFamily: "var(--font-mono)" };
+/** 기본 펼침: 자료가 많은 상위 3개 영역 */
+const DEFAULT_OPEN_AREAS: Record<string, boolean> = Object.fromEntries(
+  [...areaGroups]
+    .sort((x, y) => y.docs.length + y.pubs.length - (x.docs.length + x.pubs.length))
+    .slice(0, 3)
+    .map((g) => [g.id, true]),
+);
 
-const selectStyle: React.CSSProperties = {
-  fontFamily: "var(--font-sans)",
-  fontSize: 13,
-  padding: "7px 10px",
-  borderRadius: "var(--radius-sm)",
-  border: "1px solid var(--hairline)",
-  background: "var(--canvas)",
-  color: "var(--text-body)",
-};
-
-/** 작은 분류 칩 (3축 태깅 표기용) */
-function MiniChip({ children, accent = false }: { children: React.ReactNode; accent?: boolean }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "4px 10px",
-        borderRadius: "var(--radius-pill)",
-        border: accent ? "1px solid var(--ax-blue-hairline)" : "1px solid var(--hairline)",
-        background: accent ? "var(--ax-blue-wash)" : "var(--surface-ghost)",
-        color: accent ? "var(--ax-blue)" : "var(--slate-600)",
-        fontSize: 12,
-        letterSpacing: "-0.004em",
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </span>
-  );
+function helperText(q: SurveyQuestion): string | null {
+  if (q.type === "multi") return "여러 개를 고를 수 있어요";
+  if (q.type === "single_text") return "선택한 뒤 내용을 적을 수 있어요";
+  return null;
 }
+
+/* ── 공용 스타일 ── */
+
+const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
+
+const h2Style: CSSProperties = {
+  margin: 0,
+  font: "var(--text-h2)",
+  letterSpacing: "var(--track-heading)",
+  color: "var(--fg-primary)",
+};
+
+const subStyle: CSSProperties = {
+  margin: "8px 0 0",
+  font: "var(--text-body2)",
+  letterSpacing: "var(--track-body)",
+  color: "var(--fg-secondary)",
+};
+
+const captionStyle: CSSProperties = {
+  font: "var(--text-caption)",
+  letterSpacing: "var(--track-body)",
+  color: "var(--fg-tertiary)",
+};
+
+const textBtnStyle: CSSProperties = {
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: "4px 6px",
+  font: "var(--text-caption)",
+  letterSpacing: "var(--track-body)",
+  color: "var(--fg-tertiary)",
+  textDecoration: "underline",
+  textUnderlineOffset: 3,
+  flex: "none",
+};
+
+const detailBtnStyle: CSSProperties = {
+  ...textBtnStyle,
+  color: "var(--fg-brand)",
+};
 
 export default function CollectPage() {
   const router = useRouter();
-  const {
-    companyInput,
-    confirmedDocIds,
-    surveyDone,
-    completedSteps,
-    update,
-    completeStep,
-  } = useDiagnosis();
+  const { companyInput, confirmedDocIds, surveyDone, completedSteps, update, completeStep } =
+    useDiagnosis();
 
   /* sessionStorage 하이드레이션 대기 (가드 오판 방지) */
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
-  /* ── 수집 시뮬레이션 ── */
-  const [simPhase, setSimPhase] = useState(0);
-  const [simDone, setSimDone] = useState(false);
+  /* ── 로딩 화면 (재방문 시 생략) ── */
   const revisit = completedSteps.includes("collect");
+  const [ready, setReady] = useState(false);
+  const [msgIdx, setMsgIdx] = useState(0);
 
   useEffect(() => {
-    if (!hydrated || !companyInput) return;
+    if (!hydrated || !companyInput || ready) return;
     if (revisit) {
-      setSimDone(true);
+      setReady(true);
       return;
     }
-    if (simDone) return;
-    const t1 = setTimeout(() => setSimPhase(1), 850);
-    const t2 = setTimeout(() => setSimPhase(2), 1700);
-    const t3 = setTimeout(() => {
-      setSimPhase(3);
-      setSimDone(true);
-    }, 2500);
+    const iv = window.setInterval(
+      () => setMsgIdx((i) => (i < LOADING_MESSAGES.length - 1 ? i + 1 : i)),
+      1200,
+    );
+    const to = window.setTimeout(() => setReady(true), 4200);
     return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
+      window.clearInterval(iv);
+      window.clearTimeout(to);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, companyInput, revisit]);
+  }, [hydrated, companyInput, revisit, ready]);
 
-  /* ── HITL 문서 원탭 확인 ── */
+  /* ── 문서 확인 (2건) ── */
   const [docChoices, setDocChoices] = useState<Record<string, string>>({});
-  const confirmDoc = (docId: string, option: string) => {
+  const chooseDoc = (docId: string, option: string) => {
     setDocChoices((prev) => ({ ...prev, [docId]: option }));
     if (!confirmedDocIds.includes(docId)) {
       update({ confirmedDocIds: [...confirmedDocIds, docId] });
     }
   };
 
-  /* ── 최소 설문 ── */
-  const [answers, setAnswers] = useState<Record<number, string>>({});
-  useEffect(() => {
-    /* 재방문 시(이미 완료) 데모 응답으로 표시 복원 */
-    if (surveyDone) {
-      setAnswers((prev) => (Object.keys(prev).length > 0 ? prev : demoAnswers));
-    }
-  }, [surveyDone]);
+  /* ── 설문 12문항 ── */
+  const [answers, setAnswers] = useState<Record<number, string[]>>({});
+  const [skipped, setSkipped] = useState<Record<number, boolean>>({});
+  const [otherText, setOtherText] = useState<Record<number, string>>({});
+  const [reasonText, setReasonText] = useState<Record<number, string>>({});
 
-  const answerQuestion = (no: number, option: string) => {
+  /* 재방문 복원: 완료 상태인데 로컬 응답이 비어 있으면 기본 응답으로 표시 */
+  useEffect(() => {
+    if (!hydrated) return;
+    if (surveyDone) {
+      setAnswers((prev) => (Object.keys(prev).length > 0 ? prev : defaultAnswers));
+    }
+    if (confirmedDocIds.length > 0) {
+      setDocChoices((prev) => {
+        const next = { ...prev };
+        for (const id of confirmedDocIds) {
+          if (!next[id] && DOC_DEFAULT_CHOICE[id]) next[id] = DOC_DEFAULT_CHOICE[id];
+        }
+        return next;
+      });
+    }
+  }, [hydrated, surveyDone, confirmedDocIds]);
+
+  const selectOption = (q: SurveyQuestion, option: string) => {
+    setSkipped((prev) => (prev[q.no] ? { ...prev, [q.no]: false } : prev));
     setAnswers((prev) => {
-      const next = { ...prev, [no]: option };
-      if (visibleSurvey.every((q) => next[q.no] !== undefined) && !surveyDone) {
-        update({ surveyDone: true });
+      const cur = prev[q.no] ?? [];
+      if (q.type === "multi") {
+        const next = cur.includes(option) ? cur.filter((o) => o !== option) : [...cur, option];
+        return { ...prev, [q.no]: next };
       }
-      return next;
+      return { ...prev, [q.no]: [option] };
     });
   };
 
-  const fillDemo = () => {
-    setAnswers(demoAnswers);
-    update({ surveyDone: true });
+  const toggleSkip = (no: number) => {
+    const willSkip = !skipped[no];
+    setSkipped((prev) => ({ ...prev, [no]: willSkip }));
+    if (willSkip) setAnswers((prev) => ({ ...prev, [no]: [] }));
   };
 
-  /* ── 공개 데이터 재수집 (시뮬레이션) ── */
-  const [retrying, setRetrying] = useState<Record<string, boolean>>({});
-  const retrySource = (id: string) => {
-    setRetrying((prev) => ({ ...prev, [id]: true }));
-    setTimeout(() => setRetrying((prev) => ({ ...prev, [id]: false })), 1000);
+  const fillDefaults = () => {
+    setAnswers(defaultAnswers);
+    setSkipped({});
   };
 
-  /* ── 업로드 자료 카드 상태 ── */
-  const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
-  const [editingTags, setEditingTags] = useState<Record<string, boolean>>({});
-  const [tagEdits, setTagEdits] = useState<
-    Record<string, { area: FunctionAreaId; level: DigitalLevel; touched: boolean }>
-  >({});
+  const isCompleted = (q: SurveyQuestion) =>
+    Boolean(skipped[q.no]) || (answers[q.no]?.length ?? 0) > 0;
+  const completedCount = visibleSurvey.filter(isCompleted).length;
+  const answeredCount = visibleSurvey.filter(
+    (q) => !skipped[q.no] && (answers[q.no]?.length ?? 0) > 0,
+  ).length;
+  const skippedCount = visibleSurvey.filter((q) => skipped[q.no]).length;
 
-  /* ── 커버리지 추가 업로드 안내 ── */
-  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  /* 12문항 모두 응답 또는 보류되면 완료 (보류 포함) */
+  useEffect(() => {
+    if (!hydrated || surveyDone) return;
+    if (visibleSurvey.every((q) => skipped[q.no] || (answers[q.no]?.length ?? 0) > 0)) {
+      update({ surveyDone: true });
+    }
+  }, [answers, skipped, hydrated, surveyDone, update]);
 
-  const answeredCount = visibleSurvey.filter((q) => answers[q.no] !== undefined).length;
   const docsConfirmed = hitlDocs.every((d) => confirmedDocIds.includes(d.id));
-  const pendingCount =
-    hitlDocs.filter((d) => !confirmedDocIds.includes(d.id)).length +
-    (surveyDone ? 0 : visibleSurvey.length - answeredCount);
-  const canProceed = docsConfirmed && surveyDone;
+  const confirmComplete = docsConfirmed && surveyDone;
+  const canProceed = confirmComplete;
 
-  const coverageByArea = useMemo(
-    () =>
-      FUNCTION_AREAS.map(
-        (a) => areaCoverages.find((c) => c.areaId === a.id),
-      ).filter((c): c is (typeof areaCoverages)[number] => c !== undefined),
-    [],
-  );
+  /* 확인 섹션 접힘 (완료 시 자동 접힘, 다시 펼치기 가능) */
+  const [confirmOpenOverride, setConfirmOpenOverride] = useState<boolean | null>(null);
+  const confirmOpen = confirmOpenOverride ?? !confirmComplete;
+
+  /* ── 공개 데이터 · 영역 아코디언 ── */
+  const [openSources, setOpenSources] = useState<Record<string, boolean>>({});
+  const [openAreas, setOpenAreas] = useState<Record<string, boolean>>(DEFAULT_OPEN_AREAS);
+  const [openDocDetails, setOpenDocDetails] = useState<Record<string, boolean>>({});
 
   const onProceed = () => {
     if (!canProceed) return;
@@ -197,30 +228,27 @@ export default function CollectPage() {
 
   if (!hydrated) return null;
 
-  /* ── 가드: 랜딩 미완 ── */
+  /* ── 가드: 기업 정보 없음 ── */
   if (!companyInput) {
     return (
-      <section style={{ background: "var(--surface-mist)", padding: "var(--space-section) var(--gutter)" }}>
-        <Card style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>
-          <div style={{ color: "var(--slate-400)", display: "flex", justifyContent: "center" }}>
-            <Icons.info size={24} />
+      <section style={{ padding: "96px 24px" }}>
+        <Card radius="l" style={{ maxWidth: 480, margin: "0 auto", textAlign: "center" }}>
+          <div style={{ display: "flex", justifyContent: "center", color: "var(--fg-quaternary)" }}>
+            <Icons.info size={22} />
           </div>
           <h1
             style={{
-              margin: "14px 0 0",
-              fontSize: 22,
-              fontWeight: 600,
-              letterSpacing: "-0.01em",
-              color: "var(--text-strong)",
+              margin: "12px 0 0",
+              font: "var(--text-h4)",
+              letterSpacing: "var(--track-heading)",
+              color: "var(--fg-primary)",
             }}
           >
-            진단 시작 정보가 없습니다
+            진단을 시작할 기업 정보가 없어요
           </h1>
-          <p style={{ margin: "10px 0 0", fontSize: 15, color: "var(--text-secondary)", lineHeight: 1.55 }}>
-            기업명 또는 사업자번호를 입력하면 자료 수집·정리를 시작할 수 있습니다.
-          </p>
+          <p style={subStyle}>기업 이름이나 사업자번호를 먼저 입력해 주세요.</p>
           <div style={{ marginTop: 20 }}>
-            <Button variant="secondary" href="/">
+            <Button variant="secondary" size="md" href="/">
               처음으로
             </Button>
           </div>
@@ -229,589 +257,600 @@ export default function CollectPage() {
     );
   }
 
-  /* ── 수집 시뮬레이션 화면 ── */
-  if (!simDone) {
+  /* ── 로딩 화면 ── */
+  if (!ready) {
     return (
-      <section style={{ background: "var(--surface-mist)", padding: "var(--space-section) var(--gutter)", minHeight: 480 }}>
-        <Card style={{ maxWidth: 640, margin: "0 auto" }}>
-          <Eyebrow>자료 정리</Eyebrow>
-          <h1 style={{ ...sectionTitle, fontSize: 24 }}>
-            {companyInput} 자료를 수집·정리하고 있습니다
-          </h1>
-          <div
-            aria-hidden
-            style={{
-              marginTop: 24,
-              height: 6,
-              borderRadius: "var(--radius-pill)",
-              background: "var(--slate-100)",
-              overflow: "hidden",
-            }}
-          >
-            <div
-              style={{
-                height: "100%",
-                width: `${SIM_WIDTHS[simPhase]}%`,
-                background: "var(--ax-blue)",
-                borderRadius: "var(--radius-pill)",
-                transition: "width .8s ease",
-              }}
-            />
-          </div>
-          <ol style={{ margin: "22px 0 0", padding: 0, listStyle: "none" }}>
-            {SIM_STEPS.map((label, i) => {
-              const done = simPhase > i;
-              const active = simPhase === i;
-              return (
-                <li
-                  key={label}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "9px 0",
-                    fontSize: 15,
-                    color: done
-                      ? "var(--text-body)"
-                      : active
-                        ? "var(--ax-blue)"
-                        : "var(--slate-400)",
-                    fontWeight: active ? 600 : 400,
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 22,
-                      height: 22,
-                      borderRadius: "var(--radius-pill)",
-                      border: done ? "none" : "1px solid var(--hairline)",
-                      background: done ? "var(--ax-blue)" : "var(--canvas)",
-                      color: done ? "var(--on-primary)" : "inherit",
-                      flex: "none",
-                    }}
-                  >
-                    {done ? (
-                      <Icons.check size={12} />
-                    ) : (
-                      <span style={{ ...mono, fontSize: 11 }}>{i + 1}</span>
-                    )}
-                  </span>
-                  {label}
-                </li>
-              );
-            })}
-          </ol>
-        </Card>
+      <section
+        style={{
+          minHeight: "calc(100vh - 220px)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 24,
+          padding: "48px 24px",
+          textAlign: "center",
+        }}
+      >
+        <h1
+          style={{
+            margin: 0,
+            font: "var(--text-h1)",
+            fontSize: 34,
+            letterSpacing: "var(--track-heading)",
+            color: "var(--fg-primary)",
+          }}
+        >
+          {companyInput || "(주)데모기업"}
+        </h1>
+        <Loader style={{ color: "var(--fg-brand)" }} />
+        <p
+          key={msgIdx}
+          className="ax-step-enter"
+          style={{
+            margin: 0,
+            font: "var(--text-body1)",
+            letterSpacing: "var(--track-body)",
+            color: "var(--fg-secondary)",
+          }}
+        >
+          {LOADING_MESSAGES[msgIdx]}
+        </p>
       </section>
     );
   }
 
   /* ── 본문 ── */
   return (
-    <div>
-      {/* 1) [확인 필요] — 페이지 최상단 고정 (F-COL-04) */}
-      <section style={{ background: "var(--canvas)", padding: "var(--space-2xl) var(--gutter) var(--space-section)" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-            <Eyebrow>자료 정리 · {companyInput}</Eyebrow>
-          </div>
-          <h1 style={{ ...sectionTitle, fontSize: 30 }}>수집한 자료를 정리했습니다</h1>
-          <p style={{ margin: "10px 0 0", fontSize: 15, color: "var(--text-secondary)" }}>
-            분류 결과를 확인하고, 아래 확인 필요 항목에 답해 주시면 진단으로 넘어갑니다.
-          </p>
+    <main className="ax-step-enter" style={{ maxWidth: 980, margin: "0 auto", padding: "40px 24px 96px" }}>
+      {/* 1) 확인이 필요해요 — 최상단 */}
+      <section>
+        <h2 style={h2Style}>몇 가지만 확인해 주세요</h2>
+        <p style={subStyle}>응답은 판정 근거와 시스템 현황 데이터로 함께 쓰여요.</p>
 
+        {!confirmOpen ? (
           <Card
+            radius="l"
             style={{
-              marginTop: "var(--space-xl)",
-              border: canProceed ? "1px solid var(--hairline)" : "1px solid var(--ax-blue-hairline)",
+              marginTop: 20,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span
-                  style={{
-                    fontSize: 19,
-                    fontWeight: 600,
-                    letterSpacing: "-0.01em",
-                    color: "var(--text-strong)",
-                  }}
-                >
-                  확인 필요
-                </span>
-                {canProceed ? (
-                  <Badge tone="success">모두 완료</Badge>
-                ) : (
-                  <Badge tone="accent">
-                    남은 항목 <span style={mono}>{pendingCount}</span>건
-                  </Badge>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <Badge tone="success">확인 완료</Badge>
+              <span style={{ font: "var(--text-body2)", color: "var(--fg-primary)" }}>
+                응답 <span style={mono}>{answeredCount}</span>건이 판정에 반영됐어요
+                {skippedCount > 0 && (
+                  <>
+                    {" "}
+                    · <span style={mono}>{skippedCount}</span>건은 판정을 보류했어요
+                  </>
                 )}
-              </div>
-              <span style={{ fontSize: 13, color: "var(--slate-500)" }}>
-                응답은 채점 근거와 시스템 현황 데이터로 재활용됩니다.
               </span>
             </div>
+            <Button variant="ghost" size="sm" onClick={() => setConfirmOpenOverride(true)}>
+              다시 펼치기
+            </Button>
+          </Card>
+        ) : (
+          <div style={{ marginTop: 20 }}>
+            {confirmComplete && (
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmOpenOverride(false)}>
+                  접기
+                </Button>
+              </div>
+            )}
 
-            {/* 문서 원탭 확인 2건 */}
+            {/* 문서 확인 2건 */}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-                gap: "var(--space-md)",
-                marginTop: "var(--space-lg)",
+                gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+                gap: 12,
               }}
             >
               {hitlDocs.map((doc) => {
-                const confirmed = confirmedDocIds.includes(doc.id);
                 const chosen = docChoices[doc.id];
                 return (
-                  <div
-                    key={doc.id}
-                    style={{
-                      border: confirmed ? "1px solid var(--ax-blue-hairline)" : "1px solid var(--hairline)",
-                      background: confirmed ? "var(--ax-blue-wash)" : "var(--surface-ghost)",
-                      borderRadius: "var(--radius-md)",
-                      padding: "16px 18px",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--slate-500)" }}>
-                      <Icons.file size={14} />
-                      {doc.fileName}
-                    </div>
+                  <Card key={doc.id} radius="l">
+                    {/* ① 질문 */}
                     <div
                       style={{
-                        marginTop: 8,
-                        fontSize: 15,
-                        fontWeight: 600,
-                        letterSpacing: "-0.008em",
-                        color: "var(--text-strong)",
+                        font: "var(--text-title2)",
+                        letterSpacing: "var(--track-body)",
+                        color: "var(--fg-primary)",
                       }}
                     >
                       {doc.hitlPrompt?.question}
                     </div>
-                    {confirmed ? (
-                      <div
-                        style={{
-                          marginTop: 12,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 7,
-                          color: "var(--ax-blue)",
-                          fontSize: 14,
-                          fontWeight: 600,
-                        }}
-                      >
-                        <Icons.check size={15} />
-                        확인됨{chosen ? ` — ${chosen}` : ""}
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
-                        {doc.hitlPrompt?.options.map((opt) => (
-                          <Tag key={opt} onClick={() => confirmDoc(doc.id, opt)}>
-                            {opt}
-                          </Tag>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                    {/* ② 출처 */}
+                    <div
+                      style={{
+                        ...captionStyle,
+                        marginTop: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <Icons.file size={13} />
+                      {doc.fileName} · {doc.docType}
+                    </div>
+                    {/* ③ 선택지 */}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 14 }}>
+                      {doc.hitlPrompt?.options.map((opt) => (
+                        <Tag
+                          key={opt}
+                          selected={chosen === opt}
+                          onClick={() => chooseDoc(doc.id, opt)}
+                        >
+                          {opt}
+                        </Tag>
+                      ))}
+                    </div>
+                    <p style={{ ...captionStyle, margin: "10px 0 0" }}>나중에 다시 바꿀 수 있어요</p>
+                  </Card>
                 );
               })}
             </div>
 
-            {/* 최소 설문 12문항 */}
-            <div style={{ marginTop: "var(--space-xl)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ fontSize: 16, fontWeight: 600, color: "var(--text-strong)" }}>
-                    최소 설문
+            {/* 설문 12문항 */}
+            <div style={{ marginTop: 32 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+                  <span
+                    style={{
+                      font: "var(--text-title1)",
+                      letterSpacing: "var(--track-body)",
+                      color: "var(--fg-primary)",
+                    }}
+                  >
+                    이어서 여쭤볼게요
                   </span>
-                  <span style={{ fontSize: 13, color: "var(--slate-500)" }}>
-                    <span style={mono}>{answeredCount}</span>/<span style={mono}>{visibleSurvey.length}</span> 완료
+                  <span style={captionStyle}>
+                    <span style={mono}>{completedCount}</span>/<span style={mono}>12</span>
                   </span>
                 </div>
-                {!surveyDone && (
-                  <Button variant="ghost" size="sm" onClick={fillDemo}>
-                    데모 응답으로 모두 채우기
-                  </Button>
-                )}
+                <Button variant="ghost" size="sm" onClick={fillDefaults}>
+                  기본 응답으로 채우기
+                </Button>
               </div>
-              <p style={{ margin: "6px 0 0", fontSize: "var(--type-fine-size)", color: "var(--slate-400)" }}>
-                10번 문항(연 매출 구간)은 재무 정보가 이미 확인되어 표시하지 않습니다.
+              <p style={{ ...captionStyle, margin: "6px 0 0" }}>
+                매출 구간은 재무정보가 확인되어 묻지 않아요
               </p>
 
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 14 }}>
-                {visibleSurvey.map((q) => {
-                  const selected = answers[q.no];
+                {visibleSurvey.map((q, idx) => {
+                  const sel = answers[q.no] ?? [];
+                  const isSkipped = Boolean(skipped[q.no]);
+                  const helper = helperText(q);
+                  const options = q.allowOther ? [...q.options, "기타"] : q.options;
+                  const otherSelected = sel.includes("기타");
+                  const reasonNeeded = q.reasonOn?.some((r) => sel.includes(r)) ?? false;
+                  const investSelected = q.type === "single_text" && sel.includes("있다");
                   return (
                     <div
                       key={q.no}
                       style={{
-                        border: "1px solid var(--divider-soft)",
-                        borderRadius: "var(--radius-md)",
-                        padding: "13px 16px",
-                        background: selected ? "var(--surface-ghost)" : "var(--canvas)",
+                        border: "1px solid var(--line-default)",
+                        borderRadius: "var(--radius-l)",
+                        padding: "16px 18px",
+                        background: isSkipped ? "var(--bg-secondary)" : "var(--bg-base)",
                       }}
                     >
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                        <span style={{ ...mono, fontSize: 11, color: "var(--slate-400)" }}>
-                          {String(q.no).padStart(2, "0")}
+                      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                        <span style={{ ...mono, ...captionStyle, paddingTop: 3 }}>
+                          {String(idx + 1).padStart(2, "0")}
                         </span>
-                        <span style={{ fontSize: 15, fontWeight: 500, letterSpacing: "-0.008em", color: "var(--text-strong)" }}>
-                          {q.question}
-                        </span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {/* 질문 */}
+                          <div
+                            style={{
+                              font: "var(--text-label-m)",
+                              letterSpacing: "var(--track-body)",
+                              color: "var(--fg-primary)",
+                            }}
+                          >
+                            {q.question}
+                          </div>
+                          {/* 보조설명 */}
+                          {helper && <p style={{ ...captionStyle, margin: "4px 0 0" }}>{helper}</p>}
+                        </div>
+                        <button type="button" style={textBtnStyle} onClick={() => toggleSkip(q.no)}>
+                          {isSkipped ? "다시 답하기" : "건너뛰기"}
+                        </button>
                       </div>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 10 }}>
-                        {q.options.map((opt) => (
+
+                      {isSkipped && (
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            marginTop: 10,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <Badge tone="neutral">이 문항은 판정을 보류해요</Badge>
+                          <span style={captionStyle}>감점은 아니에요 · 아래에서 다시 답할 수 있어요</span>
+                        </div>
+                      )}
+
+                      {/* 선택지 */}
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 8,
+                          marginTop: 12,
+                          opacity: isSkipped ? 0.55 : 1,
+                        }}
+                      >
+                        {options.map((opt) => (
                           <Tag
                             key={opt}
-                            selected={selected === opt}
-                            onClick={() => answerQuestion(q.no, opt)}
-                            style={{ padding: "8px 13px", fontSize: 13 }}
+                            selected={!isSkipped && sel.includes(opt)}
+                            onClick={() => selectOption(q, opt)}
                           >
                             {opt}
                           </Tag>
                         ))}
                       </div>
+
+                      {!isSkipped && otherSelected && (
+                        <div style={{ marginTop: 10, maxWidth: 440 }}>
+                          <Input
+                            value={otherText[q.no] ?? ""}
+                            onChange={(e) =>
+                              setOtherText((p) => ({ ...p, [q.no]: e.target.value }))
+                            }
+                            placeholder="직접 적어 주세요"
+                            aria-label="기타 응답 입력"
+                          />
+                        </div>
+                      )}
+                      {!isSkipped && investSelected && (
+                        <div style={{ marginTop: 10, maxWidth: 440 }}>
+                          <Input
+                            value={otherText[q.no] ?? ""}
+                            onChange={(e) =>
+                              setOtherText((p) => ({ ...p, [q.no]: e.target.value }))
+                            }
+                            placeholder="내역을 간단히 적어 주시면 판정 근거로 써요 (선택)"
+                            aria-label="투자 내역 입력"
+                          />
+                        </div>
+                      )}
+                      {!isSkipped && reasonNeeded && (
+                        <div style={{ marginTop: 10, maxWidth: 440 }}>
+                          <Input
+                            value={reasonText[q.no] ?? ""}
+                            onChange={(e) =>
+                              setReasonText((p) => ({ ...p, [q.no]: e.target.value }))
+                            }
+                            placeholder="사유를 적어 주시면 배포 방식 설계에 반영해요 (선택)"
+                            aria-label="불가 사유 입력"
+                          />
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
             </div>
-          </Card>
-        </div>
+          </div>
+        )}
       </section>
 
       {/* 2) 공개 데이터 수집 결과 */}
-      <section style={{ background: "var(--surface-mist)", padding: "var(--space-section) var(--gutter)" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <Eyebrow>공개 데이터</Eyebrow>
-          <h2 style={sectionTitle}>공개 데이터 수집 결과 — 6종</h2>
-          <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--slate-500)" }}>
-            기업 정보 기준: DART
-          </p>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: "var(--space-md)",
-              marginTop: "var(--space-xl)",
-            }}
-          >
-            {publicSources.map((src) => (
-              <Card key={src.id}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <span style={{ fontSize: 16, fontWeight: 600, letterSpacing: "-0.008em", color: "var(--text-strong)" }}>
-                    {src.name}
-                  </span>
-                  <Badge tone={src.status === "done" ? "success" : "warning"}>
-                    {src.status === "done" ? "수집 완료" : "일부 수집"}
-                  </Badge>
-                </div>
-                <div style={{ marginTop: 6, fontSize: 13, color: "var(--slate-500)" }}>
-                  수집 <span style={{ ...mono, color: "var(--text-strong)" }}>{src.count}</span>건
-                </div>
-                <ul style={{ margin: "12px 0 0", padding: 0, listStyle: "none" }}>
-                  {src.items.map((item) => (
-                    <li
-                      key={item}
-                      style={{
-                        display: "flex",
-                        gap: 8,
-                        fontSize: 14,
-                        lineHeight: 1.5,
-                        color: "var(--text-secondary)",
-                        padding: "3px 0",
-                      }}
-                    >
-                      <span aria-hidden style={{ color: "var(--slate-300)", flex: "none" }}>
-                        ·
-                      </span>
-                      {item}
-                    </li>
-                  ))}
-                </ul>
-                {src.note && (
-                  <p style={{ margin: "10px 0 0", fontSize: "var(--type-fine-size)", color: "var(--slate-400)" }}>
-                    {src.note}
-                  </p>
-                )}
-                {src.status === "partial" && (
-                  <div style={{ marginTop: 12 }}>
-                    <Button variant="ghost" size="sm" onClick={() => retrySource(src.id)} disabled={retrying[src.id]}>
-                      {retrying[src.id] ? "다시 수집 중…" : "다시 수집"}
-                    </Button>
-                  </div>
-                )}
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
+      <section style={{ marginTop: 64 }}>
+        <h2 style={h2Style}>이런 공개 데이터를 모았어요</h2>
+        <p style={subStyle}>행을 누르면 수집한 내용을 볼 수 있어요.</p>
 
-      {/* 3) 업로드 자료 분류 (3축 태깅) */}
-      <section style={{ background: "var(--canvas)", padding: "var(--space-section) var(--gutter)" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <Eyebrow>업로드 자료</Eyebrow>
-          <h2 style={sectionTitle}>
-            업로드 자료 분류 — <span style={mono}>12</span>건, 3축 태깅
-          </h2>
-          <p style={{ margin: "8px 0 0", fontSize: 14, color: "var(--text-secondary)" }}>
-            업무영역 × 디지털화수준 × 문서유형으로 자동 분류했습니다. 태그가 다르면 바로
-            고칠 수 있습니다.
-          </p>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)", marginTop: "var(--space-xl)" }}>
-            {uploadedDocs.map((doc) => {
-              const edit = tagEdits[doc.id];
-              const area = edit?.area ?? doc.area;
-              const level = edit?.level ?? doc.level;
-              const lowConf = doc.confidence < 0.7;
-              const detailOpen = openDetails[doc.id];
-              const editing = editingTags[doc.id];
-              return (
-                <Card key={doc.id} style={{ padding: "18px 22px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <span style={{ display: "inline-flex", color: "var(--slate-400)" }}>
-                      <Icons.file size={16} />
-                    </span>
-                    <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "-0.008em", color: "var(--text-strong)" }}>
-                      {doc.fileName}
-                    </span>
-                    <Badge tone="outline">{FILE_TYPE_LABEL[doc.fileType]}</Badge>
-                    {doc.masked && <Badge tone="neutral">개인정보 마스킹</Badge>}
-                    <span
-                      style={{
-                        ...mono,
-                        marginLeft: "auto",
-                        fontSize: 13,
-                        color: lowConf ? "#9a6a12" : "var(--slate-500)",
-                      }}
-                    >
-                      신뢰도 {Math.round(doc.confidence * 100)}%
-                      {lowConf ? " · 확인 필요" : ""}
-                    </span>
-                  </div>
-
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 12 }}>
-                    <MiniChip accent>{areaName(area)}</MiniChip>
-                    <MiniChip>{DIGITAL_LEVELS[level]}</MiniChip>
-                    <MiniChip>{doc.docType}</MiniChip>
-                  </div>
-
-                  <p style={{ margin: "10px 0 0", fontSize: 14, lineHeight: 1.5, color: "var(--text-secondary)" }}>
-                    {doc.summaryTeaser}
-                  </p>
-
-                  <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setOpenDetails((p) => ({ ...p, [doc.id]: !p[doc.id] }))}
-                      aria-expanded={!!detailOpen}
-                    >
-                      판독 상세 {detailOpen ? "접기" : "보기"}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditingTags((p) => ({ ...p, [doc.id]: !p[doc.id] }))}
-                    >
-                      태그 수정
-                    </Button>
-                  </div>
-
-                  {detailOpen && (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        padding: "13px 16px",
-                        borderRadius: "var(--radius-sm)",
-                        background: "var(--surface-ghost)",
-                        border: "1px solid var(--divider-soft)",
-                        fontSize: 14,
-                        lineHeight: 1.55,
-                        color: "var(--text-secondary)",
-                      }}
-                    >
-                      {doc.extractedDetail}
-                    </div>
-                  )}
-
-                  {editing && (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        padding: "13px 16px",
-                        borderRadius: "var(--radius-sm)",
-                        border: "1px solid var(--ax-blue-hairline)",
-                        background: "var(--ax-blue-wash)",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 12,
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--slate-600)" }}>
-                        영역
-                        <select
-                          value={area}
-                          onChange={(e) =>
-                            setTagEdits((p) => ({
-                              ...p,
-                              [doc.id]: {
-                                area: e.target.value as FunctionAreaId,
-                                level,
-                                touched: true,
-                              },
-                            }))
-                          }
-                          style={selectStyle}
-                        >
-                          {FUNCTION_AREAS.map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--slate-600)" }}>
-                        수준
-                        <select
-                          value={level}
-                          onChange={(e) =>
-                            setTagEdits((p) => ({
-                              ...p,
-                              [doc.id]: {
-                                area,
-                                level: e.target.value as DigitalLevel,
-                                touched: true,
-                              },
-                            }))
-                          }
-                          style={selectStyle}
-                        >
-                          {Object.entries(DIGITAL_LEVELS).map(([k, label]) => (
-                            <option key={k} value={k}>
-                              {label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {edit?.touched && (
-                        <span style={{ fontSize: "var(--type-fine-size)", color: "var(--ax-blue)" }}>
-                          수정 이력이 저장되어 분류 개선에 사용됩니다
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
-        </div>
-      </section>
-
-      {/* 4) 8영역 커버리지 (F-COL-06) */}
-      <section style={{ background: "var(--surface-mist)", padding: "var(--space-section) var(--gutter)" }}>
-        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-          <Eyebrow>자료 커버리지</Eyebrow>
-          <h2 style={sectionTitle}>8영역 자료 커버리지</h2>
-          <p style={{ margin: "8px 0 0", fontSize: 14, color: "var(--text-secondary)" }}>
-            영역별로 진단에 필요한 자료 대비 보유율입니다. 부족 영역은 자료를 더 올리면
-            진단이 정확해집니다.
-          </p>
-
-          <Card style={{ marginTop: "var(--space-xl)" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              {coverageByArea.map((cov) => (
-                <div
-                  key={cov.areaId}
+        <Card padded={false} radius="l" style={{ marginTop: 20, overflow: "hidden" }}>
+          {publicSources.map((src, i) => {
+            const open = Boolean(openSources[src.id]);
+            return (
+              <div key={src.id} style={{ borderTop: i > 0 ? "1px solid var(--line-subtle)" : "none" }}>
+                <button
+                  type="button"
+                  onClick={() => setOpenSources((p) => ({ ...p, [src.id]: !p[src.id] }))}
+                  aria-expanded={open}
                   style={{
+                    width: "100%",
                     display: "grid",
-                    gridTemplateColumns: "88px 1fr auto",
+                    gridTemplateColumns: "minmax(130px, 190px) 1fr auto 20px",
                     alignItems: "center",
-                    gap: 14,
+                    gap: 12,
+                    padding: "13px 20px",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    fontFamily: "var(--font-sans)",
                   }}
                 >
-                  <span style={{ fontSize: 14, fontWeight: 500, color: "var(--text-strong)", whiteSpace: "nowrap" }}>
-                    {areaName(cov.areaId)}
+                  <span
+                    style={{
+                      font: "var(--text-label-m)",
+                      letterSpacing: "var(--track-body)",
+                      color: "var(--fg-primary)",
+                    }}
+                  >
+                    {src.name}
                   </span>
-                  <div>
-                    <div
-                      style={{
-                        height: 8,
-                        borderRadius: "var(--radius-pill)",
-                        background: "var(--slate-100)",
-                        overflow: "hidden",
-                      }}
-                      role="img"
-                      aria-label={`${areaName(cov.areaId)} 자료 보유율 ${Math.round(cov.ratio * 100)}%`}
-                    >
-                      <div
+                  <span style={{ ...captionStyle, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {src.sourceApi}
+                  </span>
+                  <span
+                    style={{
+                      ...mono,
+                      fontSize: 13,
+                      color: "var(--fg-secondary)",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      justifySelf: "end",
+                    }}
+                  >
+                    {src.count}건
+                    {src.status === "partial" && (
+                      <span
+                        title="일부만 수집했어요"
+                        aria-label="일부만 수집했어요"
                         style={{
-                          height: "100%",
-                          width: `${Math.max(cov.ratio * 100, cov.ratio > 0 ? 3 : 0)}%`,
-                          background: cov.insufficient ? "var(--slate-300)" : "var(--ax-blue)",
-                          borderRadius: "var(--radius-pill)",
+                          display: "inline-block",
+                          width: 6,
+                          height: 6,
+                          borderRadius: "var(--radius-full)",
+                          background: "var(--orange-500)",
                         }}
                       />
-                    </div>
-                    {cov.insufficient && (
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          flexWrap: "wrap",
-                          marginTop: 7,
-                        }}
-                      >
-                        <Badge tone="warning">자료 부족</Badge>
-                        {cov.missingHint && (
-                          <span style={{ fontSize: 13, color: "var(--slate-500)" }}>
-                            필요: {cov.missingHint}
-                          </span>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setUploadNotice(cov.areaId)}
+                    )}
+                  </span>
+                  <span
+                    aria-hidden
+                    style={{
+                      display: "inline-flex",
+                      color: "var(--fg-quaternary)",
+                      transition: "transform var(--dur-base) var(--ease)",
+                      transform: open ? "rotate(180deg)" : "none",
+                    }}
+                  >
+                    <Icons.chevronDown size={16} />
+                  </span>
+                </button>
+                {open && (
+                  <div style={{ padding: "2px 20px 16px 20px" }}>
+                    <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
+                      {src.items.map((item) => (
+                        <li
+                          key={item}
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            font: "var(--text-body3)",
+                            letterSpacing: "var(--track-body)",
+                            color: "var(--fg-secondary)",
+                            padding: "3px 0",
+                          }}
                         >
-                          자료 추가 업로드 (선택)
-                        </Button>
-                        {uploadNotice === cov.areaId && (
-                          <span style={{ fontSize: "var(--type-fine-size)", color: "var(--slate-500)" }}>
-                            데모에서는 추가 업로드를 지원하지 않습니다
+                          <span aria-hidden style={{ color: "var(--grey-300)", flex: "none" }}>
+                            ·
                           </span>
-                        )}
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                    {src.note && <p style={{ ...captionStyle, margin: "8px 0 0" }}>{src.note}</p>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </Card>
+      </section>
+
+      {/* 3) 8대 영역 자료 분류 */}
+      <section style={{ marginTop: 64 }}>
+        <h2 style={h2Style}>자료를 8대 영역으로 나눴어요</h2>
+        <p style={subStyle}>
+          올려주신 자료와 공개 데이터를 영역별로 정리했어요. 자료가 부족한 영역은 따로 표시했어요.
+        </p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 20 }}>
+          {areaGroups.map((group) => {
+            const open = Boolean(openAreas[group.id]);
+            const insufficient = group.coverage?.insufficient ?? false;
+            return (
+              <Card key={group.id} padded={false} radius="l" style={{ overflow: "hidden" }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setOpenAreas((p: Record<FunctionAreaId | string, boolean>) => ({
+                      ...p,
+                      [group.id]: !p[group.id],
+                    }))
+                  }
+                  aria-expanded={open}
+                  style={{
+                    width: "100%",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    textAlign: "left",
+                    padding: "16px 20px",
+                    fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    <span
+                      style={{
+                        font: "var(--text-title1)",
+                        letterSpacing: "var(--track-body)",
+                        color: "var(--fg-primary)",
+                      }}
+                    >
+                      {group.name}
+                    </span>
+                    <span style={{ ...captionStyle, ...mono }}>
+                      업로드 {group.docs.length} · 공개 {group.pubs.length}
+                    </span>
+                    {insufficient && <Badge tone="warning">자료가 부족해요</Badge>}
+                    <span
+                      aria-hidden
+                      style={{
+                        marginLeft: "auto",
+                        display: "inline-flex",
+                        color: "var(--fg-quaternary)",
+                        transition: "transform var(--dur-base) var(--ease)",
+                        transform: open ? "rotate(180deg)" : "none",
+                      }}
+                    >
+                      <Icons.chevronDown size={16} />
+                    </span>
+                  </div>
+                  {insufficient && group.coverage?.missingHint && (
+                    <p style={{ ...captionStyle, margin: "6px 0 0" }}>
+                      {group.coverage.missingHint} 자료를 올리면 진단이 더 정확해져요
+                    </p>
+                  )}
+                </button>
+
+                {open && (
+                  <div>
+                    {group.docs.map((doc) => {
+                      const detailOpen = Boolean(openDocDetails[doc.id]);
+                      return (
+                        <div
+                          key={doc.id}
+                          style={{ borderTop: "1px solid var(--line-subtle)", padding: "12px 20px" }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <span style={{ display: "inline-flex", color: "var(--fg-quaternary)" }}>
+                              <Icons.file size={14} />
+                            </span>
+                            <span
+                              style={{
+                                font: "var(--text-label-m)",
+                                letterSpacing: "var(--track-body)",
+                                color: "var(--fg-primary)",
+                              }}
+                            >
+                              {doc.fileName}
+                            </span>
+                            <Badge tone="neutral">{DIGITAL_LEVELS[doc.level]}</Badge>
+                            <Badge tone="outline">{doc.docType}</Badge>
+                            {doc.masked && <Badge tone="success">개인정보 가림</Badge>}
+                            <button
+                              type="button"
+                              style={{ ...detailBtnStyle, marginLeft: "auto" }}
+                              aria-expanded={detailOpen}
+                              onClick={() =>
+                                setOpenDocDetails((p) => ({ ...p, [doc.id]: !p[doc.id] }))
+                              }
+                            >
+                              상세 {detailOpen ? "접기" : "보기"}
+                            </button>
+                          </div>
+                          {detailOpen && (
+                            <div
+                              style={{
+                                marginTop: 10,
+                                padding: "12px 14px",
+                                borderRadius: "var(--radius-s)",
+                                background: "var(--bg-secondary)",
+                              }}
+                            >
+                              <p
+                                style={{
+                                  margin: 0,
+                                  font: "var(--text-body3)",
+                                  letterSpacing: "var(--track-body)",
+                                  color: "var(--fg-secondary)",
+                                }}
+                              >
+                                {doc.extractedDetail}
+                              </p>
+                              <p style={{ ...captionStyle, margin: "8px 0 0" }}>
+                                근거 — {doc.summaryTeaser}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {group.pubs.map((pub) => (
+                      <div
+                        key={pub.id}
+                        style={{ borderTop: "1px solid var(--line-subtle)", padding: "12px 20px" }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ display: "inline-flex", color: "var(--fg-quaternary)" }}>
+                            <Icons.globe size={14} />
+                          </span>
+                          <span
+                            style={{
+                              font: "var(--text-label-m)",
+                              letterSpacing: "var(--track-body)",
+                              color: "var(--fg-primary)",
+                            }}
+                          >
+                            {pub.name}
+                          </span>
+                          <Badge tone="neutral">{DIGITAL_LEVELS[pub.digitalLevel]}</Badge>
+                          <Badge tone="outline">{pub.sourceApi}</Badge>
+                          <span style={{ ...mono, ...captionStyle, marginLeft: "auto" }}>
+                            {pub.count}건
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+
+                    {group.docs.length === 0 && group.pubs.length === 0 && (
+                      <div style={{ borderTop: "1px solid var(--line-subtle)", padding: "12px 20px" }}>
+                        <span style={captionStyle}>이 영역에서 확인된 자료가 아직 없어요</span>
                       </div>
                     )}
                   </div>
-                  <span style={{ ...mono, fontSize: 13, color: "var(--slate-500)", whiteSpace: "nowrap" }}>
-                    {cov.docCount}건
-                  </span>
-                </div>
-              ))}
-            </div>
-          </Card>
+                )}
+              </Card>
+            );
+          })}
         </div>
       </section>
 
-      {/* 5) CTA */}
-      <section style={{ background: "var(--canvas)", padding: "var(--space-section) var(--gutter)" }}>
-        <div style={{ maxWidth: 560, margin: "0 auto", textAlign: "center" }}>
-          <Button variant="primary" size="lg" full disabled={!canProceed} onClick={onProceed}>
-            진단 결과 보기
-          </Button>
-          {!canProceed && (
-            <p style={{ margin: "12px 0 0", fontSize: 13, color: "var(--slate-500)" }}>
-              확인 필요 항목을 완료하면 진단 결과를 볼 수 있습니다
-            </p>
-          )}
-        </div>
+      {/* 4) CTA */}
+      <section style={{ marginTop: 64, textAlign: "center" }}>
+        <Button
+          variant="primary"
+          size="xl"
+          disabled={!canProceed}
+          onClick={onProceed}
+          style={{ minWidth: 280 }}
+        >
+          진단 결과 보기
+        </Button>
+        {!canProceed && (
+          <p style={{ ...captionStyle, margin: "12px 0 0" }}>
+            위 확인을 마치면 진단으로 넘어갈 수 있어요
+          </p>
+        )}
       </section>
-    </div>
+    </main>
   );
 }

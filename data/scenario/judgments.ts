@@ -62,7 +62,7 @@ export const judgments: Judgment[] = [
     questionId: "ICS-05",
     anchor: "A2",
     rationale:
-      "설비점검표를 월 1회 종이에 수기 작성(HITL 확인), 일부 설비에 센서 있으나 수치 관리로 이어지지 않음 — \"점검표를 정기 수기 작성\"에 해당. A3(엑셀 수치 관리)와 애매하나 낮은 쪽 판정 원칙 적용.",
+      "설비점검표를 월 1회 종이에 수기 작성(확인 응답), 일부 설비에 센서 있으나 수치 관리로 이어지지 않음 — \"점검표를 정기 수기 작성\"에 해당. A3(엑셀 수치 관리)와 애매하나 낮은 쪽 판정 원칙 적용.",
     evidence: [
       { kind: "upload", refId: "d07", label: "설비점검표", snippet: "월 1회 정기 점검 항목 체크 기록 (수기 작성 확인)" },
       { kind: "hitl", refId: "hitl-3", label: "설문 3: 센서/PLC", snippet: "일부 설비만" },
@@ -95,7 +95,7 @@ export const judgments: Judgment[] = [
     questionId: "AOS-03",
     anchor: "A2",
     rationale:
-      "수기 생산일지를 사무실에서 엑셀 집계표에 재입력(HITL 확인) — \"수기 일보를 엑셀에 재입력해 집계\"에 해당. 집계표에 수식 없음(값 직접 입력).",
+      "수기 생산일지를 사무실에서 엑셀 집계표에 재입력(확인 응답) — \"수기 일보를 엑셀에 재입력해 집계\"에 해당. 집계표에 수식 없음(값 직접 입력).",
     evidence: [
       { kind: "upload", refId: "d08", label: "월생산집계", snippet: "월별 생산 합계를 값으로 직접 입력(수식 없음)" },
       { kind: "hitl", refId: "d08", label: "원탭 확인: 집계 방식", snippet: "일보를 보고 사무실에서 다시 입력" },
@@ -116,7 +116,7 @@ export const judgments: Judgment[] = [
     anchor: null,
     deferReason:
       "발주서가 최근 2개월분(8건)뿐이라 소진 패턴 분석에 필요한 기간(3개월 이상) 미달 — 재고·발주 시점 대조 불가로 판정 보류. 3개월 이상 발주 이력 업로드 시 판정 가능.",
-    rationale: "판정 보류 — 감점이 아닌 커버리지 하락으로 처리 (REQ-N-02).",
+    rationale: "판정 보류 — 감점이 아닌 자료 충분도 하락으로 처리 (REQ-N-02).",
     evidence: [
       { kind: "upload", refId: "d03", label: "발주서 묶음", snippet: "5~6월 2개월분 8건" },
       { kind: "upload", refId: "d05", label: "재고현황표", snippet: "안전재고·발주점 열 없음" },
@@ -188,7 +188,7 @@ export const judgments: Judgment[] = [
     rationale:
       "CNC 증설·용접 로봇 등 설비 도입 경험은 있으나 SW(바코드 재고관리)는 6개월 만에 중단 — \"설비 위주 도입(SW 경험 없음)\"에 해당.",
     evidence: [
-      { kind: "hitl", refId: "hitl-8", label: "설문 8: 도입 경험", snippet: "CNC 2대 증설. 바코드 재고관리 앱 도입 시도 후 6개월 만에 중단" },
+      { kind: "hitl", refId: "hitl-8", label: "설문 8: 도입 경험", snippet: "장비 위주로 도입해 봤어요 — CNC 2대 증설, 바코드 재고관리 앱은 6개월 만에 중단" },
       { kind: "public", refId: "pub-pps", label: "조달 이력", snippet: "낙찰 2건 (2023, 2025)" },
     ],
   },
@@ -196,10 +196,11 @@ export const judgments: Judgment[] = [
     questionId: "TAS-03",
     anchor: "A3",
     rationale:
-      "자동화 설비 투자 협약(2023)·대표의 디지털 전환 교육 수료(2025)·최근 특허 출원(2025) — \"정부사업 참여·교육 이수 등 능동 신호\"에 해당.",
+      "정부 R&D 참여(2024 지역 뿌리기업 공정개선)·자동화 설비 투자 협약(2023)·대표의 디지털 전환 교육 수료(2025)·최근 특허 출원(2025) — \"정부사업 참여·교육 이수 등 능동 신호\"에 해당.",
     evidence: [
+      { kind: "public", refId: "pub-rnd", label: "R&D 프로젝트", snippet: "2024 지역 뿌리기업 공정개선 R&D 참여" },
       { kind: "public", refId: "pub-news", label: "뉴스", snippet: "자동화 설비 투자 협약 · 대표 디지털 전환 교육 수료" },
-      { kind: "public", refId: "pub-kipo", label: "특허청", snippet: "최근 3년 출원 1건 (2025)" },
+      { kind: "public", refId: "pub-kipo", label: "특허·실용신안", snippet: "최근 3년 출원 1건 (2025)" },
     ],
   },
   {
@@ -209,7 +210,7 @@ export const judgments: Judgment[] = [
       "자기보고는 '회의적'이나 젊은 직원층은 수용적 — \"일부 젊은 층만 수용적\"에 해당. 리뷰 데이터 5건 미만으로 설문을 필수 근거로 사용.",
     evidence: [
       { kind: "hitl", refId: "hitl-9", label: "설문 9: 직원 수용 분위기", snippet: "회의적 (젊은 직원들은 해보자는 분위기)" },
-      { kind: "public", refId: "pub-news", label: "SNS·커뮤니티", snippet: "언급 5건 미만 — 보조 근거로만 사용" },
+      { kind: "public", refId: "pub-sns", label: "커뮤니티/SNS", snippet: "언급 3건 (5건 미만) — 보조 근거로만 사용" },
     ],
   },
 
@@ -229,7 +230,7 @@ export const judgments: Judgment[] = [
     rationale:
       "중소 제조(45인)로 스마트공장 등 주요 사업 대상이며, 금속가공(뿌리산업)·비수도권(광주) 우대 요건 보유 — \"대상 + 우대 요건(뿌리산업·지역 등) 보유\"에 해당.",
     evidence: [
-      { kind: "public", refId: "pub-nts", label: "국세청", snippet: "업종: 금속가공제품 제조업 (C259) — 뿌리산업" },
+      { kind: "public", refId: "pub-disclosure", label: "전자공시(DART)", snippet: "업종: 금속가공제품 제조업 (C259) — 뿌리산업" },
       { kind: "public", refId: "pub-emp", label: "고용정보", snippet: "피보험자 45명 (중소기업 요건)" },
     ],
   },
@@ -262,7 +263,7 @@ export const judgments: Judgment[] = [
     rationale:
       "일반 금속가공 제조(자동차 부품)로 강한 규제 산업 아님 — \"일반 제조(경미한 제약)\"에 해당.",
     evidence: [
-      { kind: "public", refId: "pub-nts", label: "국세청", snippet: "업종: 금속가공제품 제조업 (C259)" },
+      { kind: "public", refId: "pub-disclosure", label: "전자공시(DART)", snippet: "업종: 금속가공제품 제조업 (C259)" },
     ],
   },
   {

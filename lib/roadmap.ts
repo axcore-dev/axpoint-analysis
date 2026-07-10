@@ -109,6 +109,6 @@ export function generateRoadmap(selectedIds: string[]): Roadmap {
     stages,
     totalMonths: cursor,
     goalLine:
-      "6개월 뒤, 데이터가 한 번만 입력되고 스스로 흐르는 공장 — 전국 중소 제조 상위 20% 진입이 목표입니다",
+      "6개월 뒤, 데이터가 한 번만 입력되고 스스로 흐르는 현장 — 전국 중소 제조 상위 20% 진입이 목표예요",
   };
 }
