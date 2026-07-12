@@ -17,6 +17,7 @@ import {
   Card,
   DotProgress,
   FlowStepper,
+  ForwardIconButton,
   Icons,
   Input,
   Modal,
@@ -331,6 +332,17 @@ export default function CollectPage() {
     else finishChain();
   };
 
+  /** 앞으로 가기 (v4) — 확인을 이미 마친 경우 원하는 구간으로 빠르게 이동 */
+  const goForward = () => {
+    if (wizard === "docs") {
+      if (docIdx + 1 < hitlDocs.length) setDocIdx(docIdx + 1);
+      else setWizard("survey");
+    } else if (wizard === "survey") {
+      if (surveyIdx < visibleSurvey.length - 1) setSurveyIdx(surveyIdx + 1);
+      else setWizard(null); /* 이미 완료 상태 — 재로딩 없이 완료 카드로 */
+    }
+  };
+
   const openSourceCard = (src: PublicSource) => {
     setSourceCard(src);
     setSourceTab("info");
@@ -401,6 +413,7 @@ export default function CollectPage() {
                   label="이전으로"
                   onClick={() => (docIdx > 0 ? setDocIdx(docIdx - 1) : setWizard(null))}
                 />
+                {confirmComplete && <ForwardIconButton label="다음으로" onClick={goForward} />}
                 <DotProgress step={1} total={2} />
                 <h2 className="ax-heading mt-4 mb-0 text-center [font:var(--text-h4)] tracking-[var(--track-heading)] text-ink">
                   {currentDoc.hitlPrompt?.question}
@@ -444,6 +457,7 @@ export default function CollectPage() {
                         surveyIdx > 0 ? setSurveyIdx(surveyIdx - 1) : setWizard("docs")
                       }
                     />
+                    {confirmComplete && <ForwardIconButton label="다음으로" onClick={goForward} />}
                     <DotProgress step={2} total={2} />
                     <h2 className="ax-heading mt-4 mb-0 text-center [font:var(--text-h4)] tracking-[var(--track-heading)] text-ink">
                       {currentQ.question}
@@ -571,7 +585,7 @@ export default function CollectPage() {
           <div key="classify" className="ax-step-enter">
             <header className="mt-10">
               <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
-                총{" "}
+                <b>{companyInput.trim()}</b>에 대해 총{" "}
                 <b>
                   <span className="[font-family:var(--font-mono)]">{totalCollected}</span>건
                 </b>
@@ -640,16 +654,23 @@ export default function CollectPage() {
                 </Tabs.List>
 
                 {areaGroups.map((g) => (
-                  <Tabs.Content key={g.id} value={g.id} className="ax-step-enter mt-1">
+                  <Tabs.Content
+                    key={g.id}
+                    value={g.id}
+                    className="ax-scrollbar-none ax-step-enter mt-1 overflow-y-auto"
+                    /* 높이 고정(자료 약 10행 기준) — 개수와 무관하게 일정, 초과분은 내부 스크롤 (v4) */
+                    style={{ height: 460 }}
+                  >
                     {/* L별 그룹 — 낮은 순 */}
                     {LEVEL_ORDER.map((lv) => {
                       const rows = g.entries.filter((e) => e.level === lv);
                       if (rows.length === 0) return null;
                       return (
                         <div key={lv} className="mt-5">
-                          <div className="[font:var(--text-caption)] tracking-[var(--track-body)] text-ink-4">
+                          {/* 디지털화 수준 강조 (v4) */}
+                          <span className="inline-flex items-center rounded-[var(--radius-s)] bg-surface-3 px-2 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] text-ink-2">
                             {DIGITAL_LEVELS[lv]}
-                          </div>
+                          </span>
                           <div className="mt-1">
                             {rows.map((row) => {
                               const open = Boolean(openDetails[row.key]);

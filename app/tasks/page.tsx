@@ -2,17 +2,17 @@
 
 import { useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
 import { useRouter } from "next/navigation";
-import type { ImprovementTask } from "@/lib/types";
+import type { FunctionAreaId, ImprovementTask } from "@/lib/types";
 import { getTask, taskCatalog } from "@/data/catalog/tasks";
-import { METHOD_STEPS, getMethodStep } from "@/data/catalog/method";
+import { FUNCTION_AREAS, areaName } from "@/data/rubric/meta";
 import { areaAssessments } from "@/data/scenario/areas";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { Badge, Button, Card, Icons, Tag } from "@/components/ui";
 
 /**
- * S3 개선 과제 후보 — F-TSK-01~07 (2026-07-10 수정요청v3)
- * - 카테고리 = AX 7단계 방법론 단계, 맨 앞에 ★추천 (기본 선택)
- * - 뱃지는 카테고리(단계)·추천만. 기본 담기 없음. 기대효과는 추천 과제만.
+ * S3 개선 과제 후보 — F-TSK-01~07 (2026-07-12 수정요청v4)
+ * - 카테고리 = 8대 기능영역(원상복귀), 맨 앞에 ★추천 (기본 선택)
+ * - 뱃지는 카테고리(영역)·추천만. 기본 담기 없음. 기대효과는 추천 과제만.
  * - 사용 중인 프로그램으로 이미 갖춰진 과제는 선택 불가.
  * - 하단 고정 바: 밝은 서피스 + 그림자 구분.
  */
@@ -49,11 +49,11 @@ const TOTAL_COUNT = taskCatalog.length;
 const PRIORITY_AREA_COUNT = areaAssessments.filter((a) => a.grade === "critical").length;
 const RECOMMENDED_COUNT = taskCatalog.filter((t) => t.recommended).length;
 
-/** 카테고리 칩 — ★추천 맨 앞 + 방법론 2~7단계 (v3) */
-type Filter = "recommended" | "all" | number;
+/** 카테고리 칩 — ★추천 맨 앞 + 8대 기능영역 (v4 원상복귀) */
+type Filter = "recommended" | "all" | FunctionAreaId;
 
-const STEP_FILTERS = METHOD_STEPS.filter(
-  (s) => s.no !== 1 && taskCatalog.some((t) => t.methodStep === s.no),
+const AREA_FILTERS = FUNCTION_AREAS.filter((a) =>
+  taskCatalog.some((t) => t.areaId === a.id),
 );
 
 /* 추천순 정렬: 추천 먼저, 이후 구축 우선순위 */
@@ -118,7 +118,7 @@ function TaskCard({
         }}
       >
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          <Badge tone="neutral">{getMethodStep(task.methodStep).shortLabel}</Badge>
+          <Badge tone="neutral">{areaName(task.areaId)}</Badge>
           {task.recommended && <Badge tone="accent">★ 추천</Badge>}
         </div>
         {!disabled && (
@@ -273,7 +273,7 @@ export default function TasksPage() {
   const filtered = useMemo(() => {
     if (filter === "recommended") return SORTED_TASKS.filter((t) => t.recommended);
     if (filter === "all") return SORTED_TASKS;
-    return SORTED_TASKS.filter((t) => t.methodStep === filter);
+    return SORTED_TASKS.filter((t) => t.areaId === filter);
   }, [filter]);
 
   /* 가드: 진단 결과 미완료 */
@@ -435,11 +435,11 @@ export default function TasksPage() {
           <Tag selected={filter === "all"} onClick={() => setFilter("all")}>
             전체 <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>{TOTAL_COUNT}</span>
           </Tag>
-          {STEP_FILTERS.map((s) => (
-            <Tag key={s.no} selected={filter === s.no} onClick={() => setFilter(s.no)}>
-              {s.shortLabel}{" "}
+          {AREA_FILTERS.map((a) => (
+            <Tag key={a.id} selected={filter === a.id} onClick={() => setFilter(a.id)}>
+              {a.name}{" "}
               <span style={{ ...mono, fontSize: 13, fontWeight: 600 }}>
-                {taskCatalog.filter((t) => t.methodStep === s.no).length}
+                {taskCatalog.filter((t) => t.areaId === a.id).length}
               </span>
             </Tag>
           ))}
@@ -551,35 +551,38 @@ export default function TasksPage() {
             }}
           >
             <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column", gap: 4 }}>
-              <div
-                style={{
-                  fontSize: 16,
-                  fontWeight: 700,
-                  lineHeight: 1.3,
-                  color: "var(--fg-primary)",
-                }}
-              >
-                과제 <span style={{ ...mono }}>{count}</span>개 담음
+              <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <span
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 700,
+                    lineHeight: 1.3,
+                    color: "var(--fg-primary)",
+                  }}
+                >
+                  과제 <span style={{ ...mono }}>{count}</span>개 담음
+                </span>
+                {/* 초과 경고 — 담음 카운트 바로 오른쪽 (v4) */}
+                {overLimit && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      font: "var(--text-caption)",
+                      color: "var(--fg-warning)",
+                    }}
+                  >
+                    <span style={{ flex: "none", display: "inline-flex" }}>
+                      <Icons.alert size={13} />
+                    </span>
+                    우선순위 높은 2~3개를 권해요
+                  </span>
+                )}
               </div>
               <div style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
                 정부 지원사업 1회 신청 단위: 2~3개
               </div>
-              {overLimit && (
-                <div
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    font: "var(--text-caption)",
-                    color: "var(--fg-warning)",
-                  }}
-                >
-                  <span style={{ flex: "none", display: "inline-flex" }}>
-                    <Icons.alert size={13} />
-                  </span>
-                  우선순위 높은 2~3개를 권해요
-                </div>
-              )}
             </div>
             <div style={{ flex: "none", marginLeft: "auto" }}>
               <Button variant="primary" size="lg" onClick={goRoadmap} disabled={count === 0}>

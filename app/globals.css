@@ -620,17 +620,19 @@ body {
   display: none;
 }
 
-/* ---- 툴팁 — 소형 · 밝은 서피스 + 어두운 텍스트 (수정요청v3, Radix Tooltip 콘텐츠) ---- */
+/* ---- 툴팁 — 소형 · 반투명 회색 서피스 (수정요청v4, Radix Tooltip 콘텐츠) ---- */
 .ax-tooltip {
   display: block;
   z-index: 120; /* 모달(100) 안에서도 위 */
   width: max-content;
   max-width: 220px;
-  background: var(--bg-elevated);
-  color: var(--fg-primary);
-  border: 1px solid var(--line-default);
+  background: rgba(78, 89, 104, 0.86); /* grey-700 반투명 — 읽기에 방해되지 않는 선 */
+  color: var(--white);
+  border: none;
   border-radius: var(--radius-s);
   box-shadow: var(--shadow-2);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 500;

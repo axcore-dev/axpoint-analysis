@@ -33,9 +33,13 @@ export function SiteFooter() {
           padding: "48px var(--gutter) 0",
         }}
       >
-        {/* 로고 블록 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <Image src={logo} alt="AXCORE" height={30} style={{ width: "auto", height: 30 }} />
+        {/* 로고 블록 — 원본 비율 유지, 큼직하게 (수정요청v4: 크기 깨짐 수정) */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <Image
+            src={logo}
+            alt="AXCORE"
+            style={{ width: "min(420px, 100%)", height: "auto" }}
+          />
           <span style={{ font: "var(--text-label-m)", letterSpacing: "0.35em" }}>
             (주)에이엑스코어
           </span>

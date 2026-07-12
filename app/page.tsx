@@ -50,6 +50,8 @@ const stepCardStyle: CSSProperties = {
   maxWidth: 520,
   position: "relative",
   padding: "var(--space-8)",
+  /* margin auto — 카드가 뷰포트보다 길어져도 위가 잘리지 않는 중앙 정렬 (v4) */
+  margin: "auto",
 };
 
 const cardHeadingStyle: CSSProperties = {
@@ -217,10 +219,10 @@ export default function LandingPage() {
   const canStart = systems.length > 0 && interestAreas.length > 0;
 
   return (
-    <div className="flex min-h-[calc(100vh-56px)] flex-col items-center justify-center bg-surface px-[var(--gutter)] py-12">
+    <div className="flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
       {/* ─── phase: search — 검색바가 수직 중앙, 헤드라인은 그 위에 부착 ── */}
       {phase === "search" && (
-        <div key="search" className="ax-step-enter relative w-full max-w-[560px]">
+        <div key="search" className="ax-step-enter relative m-auto w-full max-w-[560px]">
           <div className="absolute bottom-full left-1/2 mb-10 flex w-max max-w-[calc(100vw-48px)] -translate-x-1/2 flex-col items-center text-center">
             <h1 className="flex-col ax-heading mt-4 [font:var(--text-display2)] tracking-[var(--track-display)] text-ink">
               제조 AX 첫걸음, AX<b className="text-brand">point</b>

@@ -304,14 +304,16 @@ function RadarChart({
             </text>
           );
         })}
-        {/* 호버 툴팁 — 소형 · 밝은 서피스 · 평균 병기 (v3) */}
+        {/* 호버 툴팁 — 2줄(자사/평균), 평균은 회색 저채도 (v4) */}
         {hover !== null &&
           (() => {
-            const label = `${fmtScore(axes[hover].score)} · 평균 ${axes[hover].industryAvg}`;
+            const ownLine = `자사 ${fmtScore(axes[hover].score)}`;
+            const avgLine = `평균 ${axes[hover].industryAvg}`;
             const [x, y] = pt(hover, ownVals[hover]);
-            const w = label.length * 6 + 16;
+            const w = Math.max(ownLine.length, avgLine.length) * 7 + 22;
+            const h = 40;
             const tx = Math.min(Math.max(x, w / 2 + 4), 360 - w / 2 - 4);
-            const ty = Math.max(y - 32, 4);
+            const ty = Math.max(y - h - 10, 4);
             return (
               <g
                 pointerEvents="none"
@@ -321,7 +323,7 @@ function RadarChart({
                   x={tx - w / 2}
                   y={ty}
                   width={w}
-                  height={21}
+                  height={h}
                   rx={6}
                   fill="var(--bg-elevated)"
                   stroke="var(--line-default)"
@@ -329,15 +331,26 @@ function RadarChart({
                   style={{ filter: "drop-shadow(0 2px 6px rgba(2,9,19,0.1))" }}
                 />
                 <text
-                  x={tx}
-                  y={ty + 14.5}
-                  textAnchor="middle"
+                  x={tx - w / 2 + 11}
+                  y={ty + 16}
+                  textAnchor="start"
                   fontSize={11}
                   fontWeight={600}
                   fill="var(--fg-primary)"
                   fontFamily="var(--font-mono)"
                 >
-                  {label}
+                  {ownLine}
+                </text>
+                <text
+                  x={tx - w / 2 + 11}
+                  y={ty + 31}
+                  textAnchor="start"
+                  fontSize={11}
+                  fontWeight={500}
+                  fill="var(--grey-500)"
+                  fontFamily="var(--font-mono)"
+                >
+                  {avgLine}
                 </text>
               </g>
             );
@@ -521,12 +534,14 @@ const STOCK_ROWS: {
   turn: string;
   action: string;
   actionTone: "danger" | "strong" | "plain";
+  /** 이 행이 근거가 되는 가치사슬 신호 id — 태그 호버 시 하이라이트 (v4) */
+  signals: string[];
 }[] = [
-  { item: "기어 D", stock: "15", safety: "80", daily: "5", days: 3, tone: "danger", turn: "1.4회", action: "즉시 발주", actionTone: "danger" },
-  { item: "샤프트 B", stock: "40", safety: "120", daily: "8", days: 5, tone: "danger", turn: "1.1회", action: "즉시 발주", actionTone: "danger" },
-  { item: "핀 F", stock: "60", safety: "150", daily: "9", days: 7, tone: "warning", turn: "0.9회", action: "이번 주 발주", actionTone: "strong" },
-  { item: "하우징 C", stock: "560", safety: "400", daily: "22", days: 25, tone: "success", turn: "0.4회", action: "정상", actionTone: "plain" },
-  { item: "브라켓 B-102", stock: "1,240", safety: "800", daily: "45", days: 27, tone: "success", turn: "0.3회", action: "정상 · 과잉 주의", actionTone: "strong" },
+  { item: "기어 D", stock: "15", safety: "80", daily: "5", days: 3, tone: "danger", turn: "1.4회", action: "즉시 발주", actionTone: "danger", signals: ["vc3"] },
+  { item: "샤프트 B", stock: "40", safety: "120", daily: "8", days: 5, tone: "danger", turn: "1.1회", action: "즉시 발주", actionTone: "danger", signals: ["vc3"] },
+  { item: "핀 F", stock: "60", safety: "150", daily: "9", days: 7, tone: "warning", turn: "0.9회", action: "이번 주 발주", actionTone: "strong", signals: [] },
+  { item: "하우징 C", stock: "560", safety: "400", daily: "22", days: 25, tone: "success", turn: "0.4회", action: "정상", actionTone: "plain", signals: [] },
+  { item: "브라켓 B-102", stock: "1,240", safety: "800", daily: "45", days: 27, tone: "success", turn: "0.3회", action: "정상 · 과잉 주의", actionTone: "strong", signals: ["vc1", "vc2"] },
 ];
 
 const STOCK_TONE_COLOR: Record<StockTone, string> = {
@@ -560,6 +575,8 @@ export default function ResultPage() {
   const [chainArea, setChainArea] = useState<AreaAssessment | null>(null);
   /** 가치사슬 신호 아코디언 — 디폴트 접힘 (v3) */
   const [vcOpen, setVcOpen] = useState(false);
+  /** 호버 중인 가치사슬 신호 태그 — 표의 관련 행을 브랜드 컬러로 연동 (v4) */
+  const [hoverSignal, setHoverSignal] = useState<string | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
 
   const collectDone = completedSteps.includes("collect");
@@ -649,8 +666,9 @@ export default function ResultPage() {
     sub: i === targetIdx ? "목표 단계" : undefined,
   }));
 
+  /** 축 선택 — 같은 축 재클릭 시 해제 (v4) */
   const selectAxis = (id: AxisId) => {
-    setSelectedAxis(id);
+    setSelectedAxis((prev) => (prev === id ? null : id));
     setShowAllAxes(false);
   };
 
@@ -696,22 +714,25 @@ export default function ResultPage() {
                 {demoCompany.infoSource}
               </p>
 
-              {/* 현재 단계 — 메인 카피 크게 */}
+              {/* 현재 단계 — 라벨 · 큰 레벨 · 서브 (v4) */}
               <div style={{ marginTop: 30 }}>
+                <div style={{ font: "var(--text-label-s)", color: "var(--fg-tertiary)" }}>
+                  현재
+                </div>
                 <h3
-                  className="ax-heading"
                   style={{
-                    margin: 0,
-                    font: "var(--text-h2)",
-                    letterSpacing: "var(--track-heading)",
+                    margin: "8px 0 0",
+                    font: "var(--text-display2)",
+                    letterSpacing: "var(--track-display)",
                     color: "var(--fg-primary)",
                   }}
                 >
-                  현재 <b style={{ color: "var(--fg-brand)" }}>{overall.level.label}</b> 단계예요
+                  <b style={{ color: "var(--fg-brand)" }}>Lv.{overall.level.level}</b>{" "}
+                  {overall.level.label.replace(/^Lv\.\d+\s*/, "")}
                 </h3>
                 <p
                   style={{
-                    margin: "8px 0 0",
+                    margin: "10px 0 0",
                     font: "var(--text-body2)",
                     color: "var(--fg-secondary)",
                   }}
@@ -816,18 +837,31 @@ export default function ResultPage() {
                   <Icons.chevronRight size={16} />
                 </button>
               </div>
+            </Card>
 
-              {/* 뭐부터 해야 할지 한 줄 */}
+            {/* 뭐부터 해야 할지 — 별도 블록 (v4: 섹션 분리) */}
+            <Card radius="2xl" style={{ padding: "22px 28px" }}>
+              <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)" }}>
+                지금 당장은
+              </div>
               <p
                 style={{
-                  margin: "16px 0 0",
-                  font: "var(--text-body2)",
-                  color: "var(--fg-secondary)",
+                  margin: "8px 0 0",
+                  font: "var(--text-title1)",
+                  letterSpacing: "var(--track-heading)",
+                  color: "var(--fg-primary)",
                 }}
               >
-                첫 단추는 <b style={{ fontWeight: 700 }}>품목 코드 표준화</b>와{" "}
-                <b style={{ fontWeight: 700 }}>모바일 작업일보</b> — 보유하신 자료로 바로 시작할 수
-                있어요.
+                품목 코드 표준화 · 재고·발주점 자동 알림
+              </p>
+              <p
+                style={{
+                  margin: "6px 0 0",
+                  font: "var(--text-body3)",
+                  color: "var(--fg-tertiary)",
+                }}
+              >
+                보유하신 자료로 바로 시작할 수 있어요
               </p>
             </Card>
           </div>
@@ -863,6 +897,53 @@ export default function ResultPage() {
                   {showAllAxes ? "접기" : "모두 보기"}
                 </Button>
               </div>
+              {showAllAxes ? (
+                /* 전체 보기 — 상세 카드 대신 6개 카드 그대로 노출 (v4: 박스인박스 제거) */
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+                    gap: 12,
+                  }}
+                >
+                  {axesByBottleneck.map((a) => (
+                    <Card key={a.axis} radius="l" style={{ padding: "16px 18px" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          justifyContent: "space-between",
+                          gap: 8,
+                        }}
+                      >
+                        <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                          {a.name}
+                        </span>
+                        <span style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}>
+                          {fmtScore(a.score)}
+                          <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>점</span>
+                        </span>
+                      </div>
+                      <ScoreBar score={a.score ?? 0} avg={a.industryAvg} />
+                      <p
+                        style={{
+                          margin: 0,
+                          font: "var(--text-body3)",
+                          color: "var(--fg-tertiary)",
+                          ...clamp2,
+                        }}
+                      >
+                        {axisFindings[a.axis]}
+                      </p>
+                      <div style={{ marginTop: 10 }}>
+                        <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.axis)}>
+                          점수 근거
+                        </Button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              ) : (
               <Card radius="2xl" style={{ padding: 26 }}>
               <div
                 style={{
@@ -872,7 +953,7 @@ export default function ResultPage() {
                   marginBottom: 16,
                 }}
               >
-                {selectedAxis && !showAllAxes && (
+                {selectedAxis && (
                   <button
                     type="button"
                     aria-label="요약으로 돌아가기"
@@ -910,66 +991,11 @@ export default function ResultPage() {
                     color: "var(--fg-primary)",
                   }}
                 >
-                  {selectedAxis && selectedScore && !showAllAxes
-                    ? selectedScore.name
-                    : "AX 진단 결과 상세"}
+                  {selectedAxis && selectedScore ? selectedScore.name : "AX 진단 결과 상세"}
                 </strong>
               </div>
 
-              {showAllAxes ? (
-                /* 전체 그리드 모드 — 병목 축 우선 정렬 */
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-                    gap: 12,
-                  }}
-                >
-                  {axesByBottleneck.map((a) => (
-                    <div
-                      key={a.axis}
-                      style={{
-                        border: "1px solid var(--line-default)",
-                        borderRadius: "var(--radius-l)",
-                        padding: "16px 18px",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "baseline",
-                          justifyContent: "space-between",
-                          gap: 8,
-                        }}
-                      >
-                        <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                          {a.name}
-                        </span>
-                        <span style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}>
-                          {fmtScore(a.score)}
-                          <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>점</span>
-                        </span>
-                      </div>
-                      <ScoreBar score={a.score ?? 0} avg={a.industryAvg} />
-                      <p
-                        style={{
-                          margin: 0,
-                          font: "var(--text-body3)",
-                          color: "var(--fg-tertiary)",
-                          ...clamp2,
-                        }}
-                      >
-                        {axisFindings[a.axis]}
-                      </p>
-                      <div style={{ marginTop: 10 }}>
-                        <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.axis)}>
-                          점수 근거
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : selectedAxis && selectedScore ? (
+              {selectedAxis && selectedScore ? (
                 /* 카테고리 선택 상태 */
                 <div>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -999,6 +1025,30 @@ export default function ResultPage() {
                     점이에요. 분포는 &ldquo;{overall.balanceLabel}&rdquo; 유형으로, 강점과 병목이
                     뚜렷하게 갈려요.
                   </p>
+                  {/* 종합 점수 vs 업종 평균 비교 (v4) */}
+                  <div>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                      <span style={{ ...mono, fontSize: 28, fontWeight: 700, color: "var(--fg-primary)" }}>
+                        {overall.score}
+                      </span>
+                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>종합</span>
+                      <span
+                        style={{
+                          ...mono,
+                          fontSize: 16,
+                          fontWeight: 600,
+                          color: "var(--grey-500)",
+                          marginLeft: "auto",
+                        }}
+                      >
+                        {Math.round(industryAvgScore)}
+                      </span>
+                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                        업종 평균
+                      </span>
+                    </div>
+                    <ScoreBar score={overall.score} avg={Math.round(industryAvgScore)} />
+                  </div>
                   <div>
                     <Badge tone="accent">전략 유형 · {strategyType.label}</Badge>
                     <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
@@ -1033,6 +1083,7 @@ export default function ResultPage() {
                 </div>
               )}
               </Card>
+              )}
             </div>
           </div>
         </Inner>
@@ -1150,24 +1201,31 @@ export default function ResultPage() {
                   가치사슬 신호
                 </strong>
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 6, flex: "1 1 auto" }}>
-                  {valueChainAnalysis.signals.map((signal) => (
-                    <span
-                      key={signal.id}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        padding: "4px 10px",
-                        borderRadius: "var(--radius-full)",
-                        background: "var(--bg-tertiary)",
-                        font: "var(--text-caption)",
-                        fontWeight: 600,
-                        color: "var(--fg-secondary)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      #{signal.title}
-                    </span>
-                  ))}
+                  {valueChainAnalysis.signals.map((signal) => {
+                    const hovered = hoverSignal === signal.id;
+                    return (
+                      <span
+                        key={signal.id}
+                        onMouseEnter={() => setHoverSignal(signal.id)}
+                        onMouseLeave={() => setHoverSignal(null)}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          padding: "4px 10px",
+                          borderRadius: "var(--radius-full)",
+                          background: hovered ? "var(--bg-brand-weak)" : "var(--bg-tertiary)",
+                          font: "var(--text-caption)",
+                          fontWeight: 600,
+                          color: hovered ? "var(--fg-brand)" : "var(--fg-secondary)",
+                          whiteSpace: "nowrap",
+                          transition:
+                            "background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+                        }}
+                      >
+                        #{signal.title}
+                      </span>
+                    );
+                  })}
                 </span>
                 <span
                   aria-hidden
@@ -1186,6 +1244,68 @@ export default function ResultPage() {
 
               <Collapsible.Content>
                 <div className="ax-step-enter" style={{ borderTop: "1px solid var(--line-subtle)" }}>
+              {/* 어떤 자료를 결합해서 나온 결과인지 (v4) */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  padding: "16px 22px 4px",
+                }}
+              >
+                <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                  올려주신 자료를 결합했어요
+                </span>
+                {valueChainAnalysis.usedDocTypes.map((docType, i) => (
+                  <span key={docType} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    {i > 0 && (
+                      <span
+                        aria-hidden
+                        style={{ color: "var(--grey-400)", fontSize: 12, fontWeight: 600 }}
+                      >
+                        +
+                      </span>
+                    )}
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "4px 10px",
+                        borderRadius: "var(--radius-full)",
+                        border: "1px solid var(--line-default)",
+                        background: "var(--bg-secondary)",
+                        font: "var(--text-caption)",
+                        fontWeight: 600,
+                        color: "var(--fg-secondary)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <Icons.file size={12} />
+                      {docType}
+                    </span>
+                  </span>
+                ))}
+                <span aria-hidden style={{ display: "inline-flex", color: "var(--grey-400)" }}>
+                  <Icons.arrow size={13} />
+                </span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    padding: "4px 10px",
+                    borderRadius: "var(--radius-full)",
+                    background: "var(--bg-brand-weak)",
+                    font: "var(--text-caption)",
+                    fontWeight: 700,
+                    color: "var(--fg-brand)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  품목별 재고 흐름
+                </span>
+              </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", minWidth: 720, borderCollapse: "collapse" }}>
                   <thead>
@@ -1216,11 +1336,19 @@ export default function ResultPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {STOCK_ROWS.map((r, idx) => (
+                    {STOCK_ROWS.map((r, idx) => {
+                      /* 태그 호버 시 근거 행을 브랜드 컬러로 (v4) */
+                      const linked = hoverSignal !== null && r.signals.includes(hoverSignal);
+                      return (
                       <tr
                         key={r.item}
                         style={{
-                          background: r.tone === "danger" ? "var(--bg-danger-weak)" : "transparent",
+                          background: linked
+                            ? "var(--bg-brand-weak)"
+                            : r.tone === "danger"
+                              ? "var(--bg-danger-weak)"
+                              : "transparent",
+                          transition: "background-color var(--dur-fast) var(--ease)",
                         }}
                       >
                         <td
@@ -1228,7 +1356,8 @@ export default function ResultPage() {
                             padding: "13px 18px",
                             fontSize: 14,
                             fontWeight: 600,
-                            color: "var(--fg-primary)",
+                            color: linked ? "var(--fg-brand)" : "var(--fg-primary)",
+                            transition: "color var(--dur-fast) var(--ease)",
                             borderBottom:
                               idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
                             whiteSpace: "nowrap",
@@ -1298,7 +1427,8 @@ export default function ResultPage() {
                           {r.action}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1358,20 +1488,45 @@ export default function ResultPage() {
                   >
                     {group.label}
                   </div>
-                  <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8 }}>
+                  {/* 동그라미 불릿 + 제목/본문 개행 (v4) */}
+                  <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 12 }}>
                     {group.items.map((it) => (
                       <li
                         key={it.title}
-                        style={{
-                          font: "var(--text-body2)",
-                          color: "var(--fg-secondary)",
-                          maxWidth: 860,
-                        }}
+                        style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: 860 }}
                       >
-                        <strong style={{ fontWeight: 600, color: "var(--fg-primary)" }}>
-                          {it.title}
-                        </strong>{" "}
-                        — {it.body}
+                        <span
+                          aria-hidden
+                          style={{
+                            flex: "none",
+                            width: 5,
+                            height: 5,
+                            borderRadius: "50%",
+                            background: group.color,
+                            marginTop: 8,
+                          }}
+                        />
+                        <span style={{ minWidth: 0 }}>
+                          <strong
+                            style={{
+                              display: "block",
+                              font: "var(--text-label-m)",
+                              color: "var(--fg-primary)",
+                            }}
+                          >
+                            {it.title}
+                          </strong>
+                          <span
+                            style={{
+                              display: "block",
+                              marginTop: 3,
+                              font: "var(--text-body3)",
+                              color: "var(--fg-secondary)",
+                            }}
+                          >
+                            {it.body}
+                          </span>
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -1534,7 +1689,7 @@ export default function ResultPage() {
       <Modal
         open={chainArea !== null}
         onClose={() => setChainArea(null)}
-        title={chainArea ? `${areaName(chainArea.areaId)} — 왜 관리 대상일까요` : undefined}
+        title={chainArea ? areaName(chainArea.areaId) : undefined}
         wide
       >
         {chainArea && (

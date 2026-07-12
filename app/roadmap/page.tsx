@@ -12,7 +12,7 @@ import { Badge, Button, Card, Icons } from "@/components/ui";
 
 /**
  * S4 실행 로드맵 — F-RMP-01~05 (2026-07-10 수정요청v3)
- * 단계 축 = AX 7단계 방법론 (1단계 경영문제 정의는 진단으로 완료 표시).
+ * 단계 축 = AX 7단계 방법론 — 담은 과제로만 구성, 단계 순서가 곧 우선순위 (v4).
  * 세로 타임라인: 좌측 레일(도트 + '약 N개월' 마커) + 우측 단계 카드.
  * 스크롤 중앙 포커스 — 뷰포트 중앙 카드만 선명, 나머지는 은은하게.
  * 귀사/AXpoint 할 일은 단일 리스트로 통합, 진행 기준(게이트) 카드는 폐지.
@@ -25,7 +25,7 @@ function range([min, max]: [number, number], unit: string): string {
   return min === max ? `${fmt(min)}${unit}` : `${fmt(min)}~${fmt(max)}${unit}`;
 }
 
-/* 비완료 단계 도트 톤 — 블루 농도 변화 (첫 실행 단계가 가장 진함) */
+/* 단계 도트 톤 — 블루 농도 변화 (첫 단계가 가장 진함) */
 const STAGE_ACCENTS = ["var(--blue-500)", "var(--blue-100)", "var(--grey-300)"];
 
 /* ---------- 스크롤 중앙 포커스 래퍼 (v3) ---------- */
@@ -52,30 +52,6 @@ function FocusRow({ children, style }: { children: ReactNode; style?: CSSPropert
 
 function StageCard({ stage }: { stage: RoadmapStage }) {
   const autoReasons = new Map(stage.autoInserted.map((a) => [a.taskId, a.reason]));
-
-  /* 1단계 경영문제 정의 — 이번 진단으로 완료 */
-  if (stage.done) {
-    return (
-      <Card radius="2xl" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <h3
-            style={{
-              margin: 0,
-              font: "var(--text-h4)",
-              letterSpacing: "var(--track-heading)",
-              color: "var(--fg-primary)",
-            }}
-          >
-            단계 {stage.methodStepNo} · {stage.title}
-          </h3>
-          <Badge tone="success">완료</Badge>
-        </div>
-        <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-          {stage.purpose} — 이번 AXpoint 진단으로 마쳤어요.
-        </p>
-      </Card>
-    );
-  }
 
   return (
     <Card radius="2xl" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
@@ -270,9 +246,6 @@ export default function RoadmapPage() {
     router.push("/report");
   };
 
-  /* 비완료 단계 도트 톤 인덱스 */
-  let accentIdx = 0;
-
   return (
     <div className="ax-step-enter" style={{ padding: "48px var(--gutter) 80px" }}>
       <style>{`
@@ -364,9 +337,7 @@ export default function RoadmapPage() {
             }}
           />
           {roadmap.stages.map((stage, i) => {
-            const accent = stage.done
-              ? "var(--green-500)"
-              : STAGE_ACCENTS[Math.min(accentIdx++, STAGE_ACCENTS.length - 1)];
+            const accent = STAGE_ACCENTS[Math.min(i, STAGE_ACCENTS.length - 1)];
             return (
               <FocusRow
                 key={stage.order}
@@ -387,7 +358,7 @@ export default function RoadmapPage() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {stage.done ? "완료" : `약 ${stage.durationMonths}개월`}
+                    {`약 ${stage.durationMonths}개월`}
                   </div>
                   {/* 도트 */}
                   <div style={{ display: "flex", justifyContent: "center" }}>

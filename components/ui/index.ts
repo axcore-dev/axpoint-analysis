@@ -12,4 +12,4 @@ export { TermTooltip } from "./Tooltip";
 export { DotStepper, type StepperStep } from "./Stepper";
 export { Autocomplete, type AutocompleteItem } from "./Autocomplete";
 export { FlowStepper, type FlowStep } from "./Stepper";
-export { BackIconButton, DotProgress } from "./CardNav";
+export { BackIconButton, ForwardIconButton, DotProgress } from "./CardNav";

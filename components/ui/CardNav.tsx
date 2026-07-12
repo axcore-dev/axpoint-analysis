@@ -58,6 +58,56 @@ export function BackIconButton({
   );
 }
 
+/** 앞으로 가기 — BackIconButton 오른쪽에 나란히 배치 (완료 후 재열람 시 빠른 이동, v4) */
+export function ForwardIconButton({
+  onClick,
+  label,
+  style,
+}: {
+  onClick: () => void;
+  label: string;
+  style?: CSSProperties;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = "var(--hover-overlay)";
+        e.currentTarget.style.color = "var(--fg-secondary)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+        e.currentTarget.style.color = "var(--fg-tertiary)";
+      }}
+      style={{
+        position: "absolute",
+        top: 14,
+        left: 48,
+        width: 32,
+        height: 32,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        border: "none",
+        borderRadius: "var(--radius-s)",
+        background: "transparent",
+        color: "var(--fg-tertiary)",
+        cursor: "pointer",
+        transition:
+          "background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
+        ...style,
+      }}
+    >
+      <span aria-hidden style={{ display: "inline-flex" }}>
+        <Icons.chevronRight size={18} />
+      </span>
+    </button>
+  );
+}
+
 export function DotProgress({ step, total }: { step: number; total: number }) {
   return (
     <div

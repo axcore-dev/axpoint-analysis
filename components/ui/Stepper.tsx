@@ -84,15 +84,16 @@ export function FlowStepper({
               <span
                 aria-hidden
                 style={{
-                  width: 32,
-                  height: 32,
+                  /* 콤팩트 번호 원 (수정요청v4) */
+                  width: 24,
+                  height: 24,
                   borderRadius: "50%",
                   boxSizing: "border-box",
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 13,
+                  fontSize: 11.5,
                   fontWeight: 700,
                   background: done
                     ? "var(--bg-brand)"
@@ -109,7 +110,7 @@ export function FlowStepper({
                     "background-color var(--dur-base) var(--ease), border-color var(--dur-base) var(--ease), color var(--dur-base) var(--ease)",
                 }}
               >
-                {done ? <Icons.check size={15} /> : i + 1}
+                {done ? <Icons.check size={12} /> : i + 1}
               </span>
               <span style={{ textAlign: "left" }}>
                 <span

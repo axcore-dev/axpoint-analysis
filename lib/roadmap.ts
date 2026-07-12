@@ -3,12 +3,12 @@ import { getTask } from "@/data/catalog/tasks";
 import { METHOD_STEPS, type MethodStepNo } from "@/data/catalog/method";
 
 /**
- * 과제 기반 로드맵 자동 생성 (F-RMP-02, REQ-F-16 · 2026-07-10 수정요청v3)
+ * 과제 기반 로드맵 자동 생성 (F-RMP-02, REQ-F-16 · 2026-07-12 수정요청v4)
  *
  * 단계 축 = AX 7단계 방법론 (docs/참고자료/중소 제조기업 AX 7단계 방법론.xlsx)
- * - 1단계 경영문제 정의: 이번 AXpoint 진단으로 완료 (done)
+ * - 로드맵은 담은 과제로만 구성 (v4: '경영문제 정의 완료' 단계 제거 — 진단 결과 영역의 몫)
  * - 2~7단계: 담은 과제(+선행 기반과제 자동 삽입)를 methodStep으로 배치,
- *   과제가 없는 단계는 제거. 결정론적: 같은 담기 → 같은 로드맵.
+ *   과제가 없는 단계는 제거. 단계 순서 = 우선순위. 결정론적: 같은 담기 → 같은 로드맵.
  * - 기간은 단계 내 병렬 진행 가정(단계 내 최장 과제), 비용은 자부담 합산 (F-RMP-04)
  */
 
@@ -59,22 +59,8 @@ export function generateRoadmap(selectedIds: string[]): Roadmap {
 
   const tasks = [...included.values()].sort((a, b) => a.buildOrder - b.buildOrder);
 
-  /* 2) 단계 배치 — 1단계는 진단으로 완료, 2~7단계는 methodStep 그룹 */
-  const stages: RoadmapStage[] = [
-    {
-      order: 1,
-      methodStepNo: 1,
-      title: METHOD_STEPS[0].title,
-      purpose: METHOD_STEPS[0].purpose,
-      done: true,
-      taskIds: [],
-      autoInserted: [],
-      startMonth: 0,
-      durationMonths: 0,
-      costBand: { selfPay: [0, 0], note: "이번 AXpoint 진단으로 완료" },
-      todos: [],
-    },
-  ];
+  /* 2) 단계 배치 — 담은 과제를 methodStep(2~7) 그룹으로, 순서가 곧 우선순위 */
+  const stages: RoadmapStage[] = [];
 
   let cursor = 0;
   for (const step of METHOD_STEPS) {

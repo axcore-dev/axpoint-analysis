@@ -239,17 +239,22 @@ export default function ReportPage() {
               marginTop: "var(--space-8)",
             }}
           >
-            {/* ① 현재 단계 — Lv 라벨만 (서술 문구 제거, v3) */}
+            {/* ① 현재 단계 — Lv 라벨만, 브랜드 컬러 (v4) */}
             <Card>
               <SummaryLabel>현재 단계</SummaryLabel>
-              <SummaryValue>{overall.level.label}</SummaryValue>
+              <SummaryValue>
+                <span style={{ color: "var(--fg-brand)" }}>{overall.level.label}</span>
+              </SummaryValue>
             </Card>
 
             {/* ② 포지션 — 업종 평균 대비 (런타임 계산) */}
             <Card>
               <SummaryLabel>포지션</SummaryLabel>
               <SummaryValue>
-                업종 평균보다 <span style={mono}>{diffLabel}</span>
+                <span style={{ ...mono, color: "var(--fg-brand)" }}>{diffLabel}</span>{" "}
+                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-tertiary)" }}>
+                  (업종 평균보다)
+                </span>
               </SummaryValue>
               <SummaryCaption>
                 중소 금속가공 표본 평균 <span style={mono}>{Math.round(industryMean)}</span>점
@@ -277,10 +282,11 @@ export default function ReportPage() {
             >
               <SummaryLabel>예상 연 효과</SummaryLabel>
               <SummaryValue>
-                <span style={mono}>
+                <span style={{ ...mono, color: "var(--fg-brand)" }}>
                   {roi.totalAnnualSaving > 0 ? `${fmt(roi.totalAnnualSaving)}만원` : "—"}
                 </span>
               </SummaryValue>
+              {/* 산출 내역 보기 — 회색 + → (v4) */}
               <div
                 style={{
                   marginTop: 10,
@@ -288,18 +294,12 @@ export default function ReportPage() {
                   alignItems: "center",
                   gap: 5,
                   font: "var(--text-label-s)",
-                  color: "var(--fg-brand)",
+                  color: "var(--fg-tertiary)",
                 }}
               >
                 산출 내역 보기
-                <span
-                  style={{
-                    display: "inline-flex",
-                    transform: drill === "roi" ? "rotate(180deg)" : "none",
-                    transition: "transform var(--dur-fast) var(--ease)",
-                  }}
-                >
-                  <Icons.chevronDown size={15} />
+                <span style={{ display: "inline-flex" }}>
+                  <Icons.arrow size={14} />
                 </span>
               </div>
             </Card>
@@ -324,10 +324,11 @@ export default function ReportPage() {
             >
               <SummaryLabel>투자 회수</SummaryLabel>
               <SummaryValue>
-                <span style={mono}>
+                <span style={{ ...mono, color: "var(--fg-brand)" }}>
                   {roi.totalAnnualSaving > 0 ? `약 ${roi.paybackMonths}개월` : "—"}
                 </span>
               </SummaryValue>
+              {/* 산출 내역 보기 — 회색 + → (v4) */}
               <div
                 style={{
                   marginTop: 10,
@@ -335,18 +336,12 @@ export default function ReportPage() {
                   alignItems: "center",
                   gap: 5,
                   font: "var(--text-label-s)",
-                  color: "var(--fg-brand)",
+                  color: "var(--fg-tertiary)",
                 }}
               >
                 산출 내역 보기
-                <span
-                  style={{
-                    display: "inline-flex",
-                    transform: drill === "payback" ? "rotate(180deg)" : "none",
-                    transition: "transform var(--dur-fast) var(--ease)",
-                  }}
-                >
-                  <Icons.chevronDown size={15} />
+                <span style={{ display: "inline-flex" }}>
+                  <Icons.arrow size={14} />
                 </span>
               </div>
             </Card>
