@@ -50,7 +50,7 @@ export function StepBar() {
                 gap: 7,
                 padding: "8px 12px",
                 borderRadius: "var(--radius-full)",
-                fontSize: 13,
+                fontSize: 15,
                 fontWeight: current ? 700 : 500,
                 letterSpacing: "var(--track-body)",
                 color: current
@@ -66,14 +66,14 @@ export function StepBar() {
             >
               <span
                 style={{
-                  width: 18,
-                  height: 18,
+                  width: 21,
+                  height: 21,
                   borderRadius: "50%",
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
                   flex: "none",
-                  fontSize: 11,
+                  fontSize: 12.5,
                   fontWeight: 700,
                   fontFamily: "var(--font-mono)",
                   background: current

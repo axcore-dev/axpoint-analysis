@@ -8,7 +8,7 @@ export { publicSources } from "./publicData";
 export { hitlResponses, getHitlResponse } from "./hitl";
 export { judgments } from "./judgments";
 export { areaAssessments, areaCoverages } from "./areas";
-export { valueChainAnalysis } from "./valueChain";
+export { valueChainAnalysis, stockFlowRows, type StockFlowRow } from "./valueChain";
 export { roiAssumptions } from "./roi";
 export {
   overallOpinion,
@@ -16,4 +16,5 @@ export {
   axisFindings,
   comprehensiveAnalysis,
   strategyType,
+  keyPoint,
 } from "./narrative";

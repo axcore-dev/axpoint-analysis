@@ -6,6 +6,34 @@ import type { ValueChainAnalysis } from "@/lib/types";
  * 3종 모두 보유. "귀사 자료로만 산출" 명시(공개 데이터 미사용).
  * 필요 문서 부족 시 이 섹션은 미노출된다 (빈 껍데기 금지).
  */
+/**
+ * 품목별 재고 흐름 표 (가치사슬 신호의 근거 데이터 — 화면·PDF 공유, v5)
+ * vc2 신호와 정합: 브라켓 B-102 계열 과잉(회전 0.3회) · 발주점 부재.
+ * signals = 이 행이 근거가 되는 신호 id (태그 호버 하이라이트 연동)
+ */
+export type StockTone = "danger" | "warning" | "success";
+
+export interface StockFlowRow {
+  item: string;
+  stock: string;
+  safety: string;
+  daily: string;
+  days: number;
+  tone: StockTone;
+  turn: string;
+  action: string;
+  actionTone: "danger" | "strong" | "plain";
+  signals: string[];
+}
+
+export const stockFlowRows: StockFlowRow[] = [
+  { item: "기어 D", stock: "15", safety: "80", daily: "5", days: 3, tone: "danger", turn: "1.4회", action: "즉시 발주", actionTone: "danger", signals: ["vc3"] },
+  { item: "샤프트 B", stock: "40", safety: "120", daily: "8", days: 5, tone: "danger", turn: "1.1회", action: "즉시 발주", actionTone: "danger", signals: ["vc3"] },
+  { item: "핀 F", stock: "60", safety: "150", daily: "9", days: 7, tone: "warning", turn: "0.9회", action: "이번 주 발주", actionTone: "strong", signals: [] },
+  { item: "하우징 C", stock: "560", safety: "400", daily: "22", days: 25, tone: "success", turn: "0.4회", action: "정상", actionTone: "plain", signals: [] },
+  { item: "브라켓 B-102", stock: "1,240", safety: "800", daily: "45", days: 27, tone: "success", turn: "0.3회", action: "정상 · 과잉 주의", actionTone: "strong", signals: ["vc1", "vc2"] },
+];
+
 export const valueChainAnalysis: ValueChainAnalysis = {
   available: true,
   usedDocTypes: ["발주서", "생산일지·작업일보", "재고표", "거래명세서"],

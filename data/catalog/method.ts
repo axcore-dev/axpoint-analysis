@@ -67,3 +67,8 @@ export function getMethodStep(no: MethodStepNo): MethodStep {
   if (!s) throw new Error(`방법론에 없는 단계: ${no}`);
   return s;
 }
+
+/*
+ * (v5) 7단계 → 5단계 재편은 진단 결과 Lv 체계에 적용됨 — data/rubric/meta.ts LEVELS 참조.
+ * 로드맵은 이 파일의 METHOD_STEPS(2~7단계)를 그대로 사용한다.
+ */

@@ -19,7 +19,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d08", label: "월생산집계", snippet: "값 직접 입력(수식 없음)" },
       { kind: "hitl", refId: "hitl-6", label: "설문: 현장 전달 방식", snippet: "단톡·사진" },
     ],
-    taskIds: ["t03", "t06", "t10", "t21"],
+    taskIds: ["t03", "t06", "t10", "t21", "t25"],
   },
   {
     areaId: "logistics",
@@ -74,7 +74,7 @@ export const areaAssessments: AreaAssessment[] = [
       { kind: "upload", refId: "d09", label: "회계전표(더존 출력)", snippet: "시스템 출력물 확인" },
       { kind: "hitl", refId: "hitl-13", label: "설문: 클라우드", snippet: "네이버웍스 사용 중" },
     ],
-    taskIds: ["t02", "t19"],
+    taskIds: ["t02", "t19", "t22"],
   },
   {
     areaId: "design",

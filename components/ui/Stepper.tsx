@@ -199,16 +199,29 @@ export function DotStepper({
           );
         })}
       </div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+      {/* 라벨 — 각 도트 위치(i/(n-1))에 절대 배치해 도트와 정확히 정렬 (v5 수정) */}
+      <div
+        style={{
+          position: "relative",
+          marginTop: 10,
+          height: steps.some((s) => s.sub) ? 40 : 20,
+        }}
+      >
         {steps.map((s, i) => {
           const emphasized = i === current || i === target;
+          const last = steps.length - 1;
           return (
             <div
               key={i}
               style={{
-                flex: 1,
-                textAlign: i === 0 ? "left" : i === steps.length - 1 ? "right" : "center",
-                fontSize: 12,
+                position: "absolute",
+                top: 0,
+                left: `${(i / last) * 100}%`,
+                transform:
+                  i === 0 ? "none" : i === last ? "translateX(-100%)" : "translateX(-50%)",
+                textAlign: i === 0 ? "left" : i === last ? "right" : "center",
+                whiteSpace: "nowrap",
+                fontSize: 13,
                 fontWeight: emphasized ? 700 : 500,
                 color: i === current ? accent : i === target ? "var(--fg-primary)" : i < current ? "var(--fg-secondary)" : "var(--fg-quaternary)",
                 letterSpacing: "var(--track-body)",
@@ -216,7 +229,7 @@ export function DotStepper({
               }}
             >
               <div>{s.label}</div>
-              {s.sub && <div style={{ fontWeight: 400, fontSize: 11, marginTop: 2 }}>{s.sub}</div>}
+              {s.sub && <div style={{ fontWeight: 400, fontSize: 12, marginTop: 2 }}>{s.sub}</div>}
             </div>
           );
         })}

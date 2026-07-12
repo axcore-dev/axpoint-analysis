@@ -568,8 +568,9 @@ export default function CollectPage() {
                   <b>딱 맞는 결과</b>를 위해 몇 가지만 알려주세요
                 </h2>
                 <p className="mt-2 mb-0 [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-2">
-                  확인 <span className="[font-family:var(--font-mono)]">2</span>건과 짧은 설문이
-                  있어요
+                  확인 <span className="[font-family:var(--font-mono)]">2</span>건과{" "}
+                  <span className="[font-family:var(--font-mono)]">{visibleSurvey.length}</span>건
+                  설문이 있어요
                 </p>
                 <div className="mt-6">
                   <Button variant="primary" size="lg" onClick={openChain} className="min-w-[200px]">

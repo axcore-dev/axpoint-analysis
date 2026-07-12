@@ -37,7 +37,11 @@ import { AXES, INDUSTRY_AVG, LEVELS, areaName } from "@/data/rubric/meta";
 import { rubricQuestions } from "@/data/rubric/questions";
 import { judgments } from "@/data/scenario/judgments";
 import { areaAssessments } from "@/data/scenario/areas";
-import { valueChainAnalysis } from "@/data/scenario/valueChain";
+import {
+  stockFlowRows,
+  valueChainAnalysis,
+  type StockTone,
+} from "@/data/scenario/valueChain";
 import { uploadedDocs } from "@/data/scenario/documents";
 import { companyStats, demoCompany } from "@/data/scenario/company";
 import { publicSources } from "@/data/scenario/publicData";
@@ -45,6 +49,7 @@ import { getGlossary } from "@/data/glossary";
 import {
   axisFindings,
   comprehensiveAnalysis,
+  keyPoint,
   strategyType,
 } from "@/data/scenario/narrative";
 
@@ -520,29 +525,9 @@ function CauseChain({ steps }: { steps: string[] }) {
 }
 
 /* ============================================================
-   섹션 4 보조 — 품목별 재고 흐름 표 (가치사슬.png 문법, 화면 로컬 상수)
-   vc2 신호와 정합: 브라켓 B-102 계열 과잉(회전 0.3회) · 발주점 부재
+   섹션 4 보조 — 품목별 재고 흐름 표 (데이터는 valueChain.ts 공유 — 화면·PDF 정합, v5)
    ============================================================ */
-type StockTone = "danger" | "warning" | "success";
-const STOCK_ROWS: {
-  item: string;
-  stock: string;
-  safety: string;
-  daily: string;
-  days: number;
-  tone: StockTone;
-  turn: string;
-  action: string;
-  actionTone: "danger" | "strong" | "plain";
-  /** 이 행이 근거가 되는 가치사슬 신호 id — 태그 호버 시 하이라이트 (v4) */
-  signals: string[];
-}[] = [
-  { item: "기어 D", stock: "15", safety: "80", daily: "5", days: 3, tone: "danger", turn: "1.4회", action: "즉시 발주", actionTone: "danger", signals: ["vc3"] },
-  { item: "샤프트 B", stock: "40", safety: "120", daily: "8", days: 5, tone: "danger", turn: "1.1회", action: "즉시 발주", actionTone: "danger", signals: ["vc3"] },
-  { item: "핀 F", stock: "60", safety: "150", daily: "9", days: 7, tone: "warning", turn: "0.9회", action: "이번 주 발주", actionTone: "strong", signals: [] },
-  { item: "하우징 C", stock: "560", safety: "400", daily: "22", days: 25, tone: "success", turn: "0.4회", action: "정상", actionTone: "plain", signals: [] },
-  { item: "브라켓 B-102", stock: "1,240", safety: "800", daily: "45", days: 27, tone: "success", turn: "0.3회", action: "정상 · 과잉 주의", actionTone: "strong", signals: ["vc1", "vc2"] },
-];
+const STOCK_ROWS = stockFlowRows;
 
 const STOCK_TONE_COLOR: Record<StockTone, string> = {
   danger: "var(--fg-danger)",
@@ -692,26 +677,52 @@ export default function ResultPage() {
         <Inner>
           <div style={{ display: "grid", gap: 16 }}>
             <Card radius="2xl" style={{ padding: 28 }}>
-              {/* 기업 식별 */}
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
-                <h2
+              {/* 기업 식별 — 출처는 우측에 캡션 스타일로 (v5+) */}
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "baseline",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
+                <span style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
+                  <h2
+                    style={{
+                      margin: 0,
+                      font: "var(--text-title1)",
+                      letterSpacing: "var(--track-heading)",
+                      color: "var(--fg-primary)",
+                    }}
+                  >
+                    {companyName}
+                  </h2>
+                  <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
+                    {demoCompany.bizNo}
+                  </span>
+                </span>
+                <span
                   style={{
-                    margin: 0,
-                    font: "var(--text-title1)",
-                    letterSpacing: "var(--track-heading)",
-                    color: "var(--fg-primary)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "3px 10px",
+                    borderRadius: "var(--radius-full)",
+                    background: "var(--bg-secondary)",
+                    border: "1px solid var(--line-subtle)",
+                    font: "var(--text-caption)",
+                    color: "var(--grey-500)",
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  {companyName}
-                </h2>
-                <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
-                  {demoCompany.bizNo}
+                  <Icons.globe size={12} />
+                  {demoCompany.infoSource.replace("기업 정보 기준: ", "출처 · ")}
                 </span>
               </div>
               <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
                 대표 {demoCompany.ceo} · 설립 <span style={mono}>{foundedYear}</span>년 (업력{" "}
-                <span style={mono}>{yearsInBusiness}</span>년) · {region} ·{" "}
-                {demoCompany.infoSource}
+                <span style={mono}>{yearsInBusiness}</span>년) · {region}
               </p>
 
               {/* 현재 단계 — 라벨 · 큰 레벨 · 서브 (v4) */}
@@ -839,29 +850,27 @@ export default function ResultPage() {
               </div>
             </Card>
 
-            {/* 뭐부터 해야 할지 — 별도 블록 (v4: 섹션 분리) */}
-            <Card radius="2xl" style={{ padding: "22px 28px" }}>
-              <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)" }}>
-                지금 당장은
+            {/* Key Point — 시작점 라벨 + 당장 무엇부터 할지 중앙에 크게 (v5) */}
+            <Card radius="2xl" style={{ padding: "26px 28px 30px" }}>
+              <div
+                style={{
+                  font: "var(--text-label-s)",
+                  color: "var(--fg-brand)",
+                  textAlign: "center",
+                }}
+              >
+                시작점
               </div>
               <p
                 style={{
-                  margin: "8px 0 0",
-                  font: "var(--text-title1)",
+                  margin: "10px 0 0",
+                  font: "var(--text-h3)",
                   letterSpacing: "var(--track-heading)",
                   color: "var(--fg-primary)",
+                  textAlign: "center",
                 }}
               >
-                품목 코드 표준화 · 재고·발주점 자동 알림
-              </p>
-              <p
-                style={{
-                  margin: "6px 0 0",
-                  font: "var(--text-body3)",
-                  color: "var(--fg-tertiary)",
-                }}
-              >
-                보유하신 자료로 바로 시작할 수 있어요
+                {keyPoint}
               </p>
             </Card>
           </div>
@@ -871,7 +880,17 @@ export default function ResultPage() {
       {/* ================= 섹션 2 — 카테고리별 준비도 ================= */}
       <section style={{ padding: "56px 0" }}>
         <Inner>
-          <SectionHead label="카테고리별 준비도" title="어디가 강하고, 어디가 병목일까요" />
+          {/* 타이틀 — 업계 평균 ±10 기준 3구간, 직관 문구 (v5) */}
+          <SectionHead
+            label="카테고리별 준비도"
+            title={
+              overall.score < Math.round(industryAvgScore) - 10
+                ? `${overall.score}점은 업계 평균(${Math.round(industryAvgScore)}점)보다 낮은 점수예요`
+                : overall.score <= Math.round(industryAvgScore) + 10
+                  ? `${overall.score}점은 업계 대비 평균 점수예요`
+                  : `${overall.score}점은 업계 평균(${Math.round(industryAvgScore)}점)보다 높은 점수예요`
+            }
+          />
           <div
             style={{
               display: "grid",
@@ -898,14 +917,8 @@ export default function ResultPage() {
                 </Button>
               </div>
               {showAllAxes ? (
-                /* 전체 보기 — 상세 카드 대신 6개 카드 그대로 노출 (v4: 박스인박스 제거) */
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-                    gap: 12,
-                  }}
-                >
+                /* 전체 보기 — 6개 카드 1열 구성 (v5) */
+                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
                   {axesByBottleneck.map((a) => (
                     <Card key={a.axis} radius="l" style={{ padding: "16px 18px" }}>
                       <div
@@ -1063,8 +1076,7 @@ export default function ResultPage() {
                           const a = axisById.get(id);
                           return `${a?.name} ${fmtScore(a?.score ?? null)}점`;
                         })
-                        .join(" · ")}{" "}
-                      — 여기부터 채우면 효과가 빨라요.
+                        .join(" · ")}
                     </p>
                     <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
                       <strong style={{ color: "var(--fg-success)", fontWeight: 600 }}>강점</strong> ·{" "}
@@ -1073,8 +1085,7 @@ export default function ResultPage() {
                           const a = axisById.get(id);
                           return `${a?.name} ${fmtScore(a?.score ?? null)}점`;
                         })
-                        .join(" · ")}{" "}
-                      — 도입을 감당할 체력이에요.
+                        .join(" · ")}
                     </p>
                   </div>
                   <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>

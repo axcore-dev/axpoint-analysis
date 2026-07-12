@@ -47,12 +47,12 @@ const ALL_DOC_IDS = uploadedDocs.map((d) => d.id);
 
 const stepCardStyle: CSSProperties = {
   width: "100%",
-  /* 카드 사이즈 10% 확대: 520 → 572, 패딩 32 → 36 */
-  maxWidth: 572,
+  /* 카드 사이즈 확대 (v5: 더 키움): 572 → 640, 패딩 40 */
+  maxWidth: 640,
   position: "relative",
-  /* 중앙보다 살짝 위로 */
-  top: -28,
-  padding: 36,
+  /* 중앙보다 위로 — v5: 15% 추가 상향 */
+  top: "calc(-28px - 10vh)",
+  padding: 40,
   /* margin auto — 카드가 뷰포트보다 길어져도 위가 잘리지 않는 중앙 정렬 (v4) */
   margin: "auto",
 };

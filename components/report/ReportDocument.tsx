@@ -11,9 +11,11 @@ import { rubricQuestions } from "@/data/rubric/questions";
 import { areaName } from "@/data/rubric/meta";
 import {
   areaAssessments,
+  comprehensiveAnalysis,
   hitlResponses,
-  overallOpinion,
+  keyPoint,
   publicSources,
+  stockFlowRows,
   strategyType,
   uploadedDocs,
   valueChainAnalysis,
@@ -214,7 +216,7 @@ export function ReportDocument({
         <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", color: BLUE }}>
           AXpoint
         </span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: MUTED }}>by AXCORE 에이엑스코어</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: MUTED }}>by 주식회사 에이엑스코어</span>
       </div>
 
       <div style={{ marginTop: 130 }}>
@@ -275,6 +277,10 @@ export function ReportDocument({
             전략 유형 — {strategyType.label}
           </span>
         </div>
+        {/* Key Point — 진단 결과 화면과 동일 (v5) */}
+        <div style={{ marginTop: 14, fontSize: 14, fontWeight: 600, color: INK }}>
+          지금 당장은 — {keyPoint}
+        </div>
       </div>
 
       <div style={{ marginTop: "auto", paddingBottom: 24, fontSize: 11, lineHeight: 1.7, color: MUTED }}>
@@ -287,7 +293,8 @@ export function ReportDocument({
   /* ── ② 종합 소견(3단) + 업종 대비 포지션 ── */
   bodies.push(
     <div>
-      <SectionTitle no="1">종합 소견</SectionTitle>
+      <SectionTitle no="1">종합 분석 결과</SectionTitle>
+      {/* 진단 결과 화면과 동일한 내용 (v5) — 결론 + 강점/보완/AX 전략 제안 불릿 */}
       <div
         style={{
           fontSize: 19,
@@ -297,29 +304,51 @@ export function ReportDocument({
           color: INK,
         }}
       >
-        &ldquo;{overallOpinion.oneLiner}&rdquo;
+        {comprehensiveAnalysis.conclusion}
       </div>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 16 }}>
-        <tbody>
-          <tr>
-            <td style={{ ...td, width: 92, fontWeight: 600, color: BLUE, whiteSpace: "nowrap" }}>
-              그래서
-            </td>
-            <td style={td}>{overallOpinion.soWhat}</td>
-          </tr>
-          <tr>
-            <td style={{ ...td, fontWeight: 600, color: BLUE, whiteSpace: "nowrap" }}>권고</td>
-            <td style={td}>{overallOpinion.recommendation}</td>
-          </tr>
-          <tr>
-            <td style={{ ...td, fontWeight: 600, color: BLUE, whiteSpace: "nowrap" }}>전략 유형</td>
-            <td style={td}>
-              <span style={{ fontWeight: 600 }}>{strategyType.label}</span> —{" "}
-              {strategyType.description}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <div style={{ marginTop: 20, display: "grid", gap: 16 }}>
+        {(
+          [
+            { label: "강점", color: "#0F9D58", items: comprehensiveAnalysis.strengths },
+            { label: "보완", color: "#B45608", items: comprehensiveAnalysis.improvements },
+            {
+              label: "AX 전략 제안",
+              color: BLUE,
+              items: [
+                { title: strategyType.label, body: comprehensiveAnalysis.strategyDirection },
+              ],
+            },
+          ] as const
+        ).map((group) => (
+          <div key={group.label}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: group.color, marginBottom: 6 }}>
+              {group.label}
+            </div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {group.items.map((it) => (
+                <div key={it.title} style={{ display: "flex", gap: 8 }}>
+                  <span
+                    style={{
+                      flex: "none",
+                      width: 4,
+                      height: 4,
+                      borderRadius: "50%",
+                      background: group.color,
+                      marginTop: 7,
+                    }}
+                  />
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>{it.title}</div>
+                    <div style={{ marginTop: 2, fontSize: 11.5, lineHeight: 1.55, color: SECONDARY }}>
+                      {it.body}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
 
       <div style={{ marginTop: 40 }}>
         <SectionTitle no="2">업종 대비 포지션</SectionTitle>
@@ -377,9 +406,10 @@ export function ReportDocument({
           ))}
         </div>
         <div style={note}>
-          성숙도 기준: KSMS(스마트공장 수준확인) 계열 5단계 단일 기준. 업종 평균은 중소
-          금속가공 표본의 데모 벤치마크 값으로, 실서비스에서는 진단 사례 축적 데이터로
-          대체됩니다.
+          성숙도 기준: AX 실행 5단계(경영문제 정의 → 데이터화·표준화 → 생산 모니터링 →
+          운영 안정화 → 공정 최적화·확산). 국내 중소 제조 대부분이 Lv.1~2 구간에
+          분포합니다. 업종 평균은 중소 금속가공 표본의 데모 벤치마크 값으로, 실서비스에서는
+          진단 사례 축적 데이터로 대체됩니다.
         </div>
       </div>
     </div>,
@@ -529,54 +559,106 @@ export function ReportDocument({
         낮은 등급이 개선 과제 추천의 우선 대상입니다.
       </div>
 
-      {valueChainAnalysis.available && (
-        <div style={{ marginTop: 36 }}>
-          <div
-            style={{
-              fontSize: 15,
-              fontWeight: 700,
-              color: INK,
-              paddingBottom: 8,
-              borderBottom: `1px solid ${HAIRLINE}`,
-              marginBottom: 12,
-            }}
-          >
-            가치사슬 신호 요약
-          </div>
-          <div style={{ fontSize: 11.5, color: MUTED, marginBottom: 12 }}>
-            귀사 업로드 자료만으로 교차 분석한 신호예요 (사용 문서:{" "}
-            {valueChainAnalysis.usedDocTypes.join(" · ")})
-          </div>
-          {valueChainAnalysis.signals.map((sig) => (
-            <div key={sig.id} style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-              <span
-                style={{
-                  flex: "none",
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  marginTop: 5,
-                  background: sig.severity === "warning" ? "#E8710A" : "#B0B8C1",
-                }}
-              />
-              <div>
-                <div style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>{sig.title}</div>
-                <div style={{ marginTop: 2, fontSize: 11.5, lineHeight: 1.55, color: SECONDARY }}>
-                  {sig.finding}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>,
   );
 
-  /* ── ⑤ 담은 과제 (6건 초과 시 페이지 분할) ── */
+  /* ── ⑤ 가치사슬 신호 + 품목별 재고 흐름 표 (화면과 동일, v5) ── */
+  if (valueChainAnalysis.available) {
+    bodies.push(
+      <div>
+        <SectionTitle no="5">가치사슬 신호</SectionTitle>
+        <div style={{ fontSize: 11.5, color: MUTED, marginBottom: 12 }}>
+          귀사 업로드 자료만으로 교차 분석한 신호예요 (결합 자료:{" "}
+          {valueChainAnalysis.usedDocTypes.join(" + ")} → 품목별 재고 흐름)
+        </div>
+        {valueChainAnalysis.signals.map((sig) => (
+          <div key={sig.id} style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+            <span
+              style={{
+                flex: "none",
+                width: 7,
+                height: 7,
+                borderRadius: "50%",
+                marginTop: 5,
+                background: sig.severity === "warning" ? "#E8710A" : "#B0B8C1",
+              }}
+            />
+            <div>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>{sig.title}</div>
+              <div style={{ marginTop: 2, fontSize: 11.5, lineHeight: 1.55, color: SECONDARY }}>
+                {sig.finding}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        <div
+          style={{
+            marginTop: 24,
+            fontSize: 15,
+            fontWeight: 700,
+            color: INK,
+            paddingBottom: 8,
+            borderBottom: `1px solid ${HAIRLINE}`,
+            marginBottom: 4,
+          }}
+        >
+          품목별 재고 흐름
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th style={th}>자재/품목</th>
+              <th style={{ ...th, textAlign: "right" }}>현재고</th>
+              <th style={{ ...th, textAlign: "right" }}>안전재고</th>
+              <th style={{ ...th, textAlign: "right" }}>일평균 소진</th>
+              <th style={{ ...th, textAlign: "right" }}>재고 소진일</th>
+              <th style={{ ...th, textAlign: "right" }}>월 회전</th>
+              <th style={th}>권장 조치</th>
+            </tr>
+          </thead>
+          <tbody>
+            {stockFlowRows.map((r) => {
+              const dayColor =
+                r.tone === "danger" ? "#F04452" : r.tone === "warning" ? "#B45608" : "#0F9D58";
+              return (
+                <tr key={r.item} style={{ background: r.tone === "danger" ? "#FDECEE" : "transparent" }}>
+                  <td style={{ ...td, fontWeight: 600, whiteSpace: "nowrap" }}>{r.item}</td>
+                  <td style={{ ...tdMono, textAlign: "right" }}>{r.stock}</td>
+                  <td style={{ ...tdMono, textAlign: "right" }}>{r.safety}</td>
+                  <td style={{ ...tdMono, textAlign: "right" }}>{r.daily}</td>
+                  <td style={{ ...tdMono, textAlign: "right", fontWeight: 700, color: dayColor }}>
+                    D-{r.days}
+                  </td>
+                  <td style={{ ...tdMono, textAlign: "right" }}>{r.turn}</td>
+                  <td
+                    style={{
+                      ...td,
+                      whiteSpace: "nowrap",
+                      fontWeight: r.actionTone === "plain" ? 400 : 700,
+                      color: r.actionTone === "danger" ? "#F04452" : r.actionTone === "strong" ? INK : SECONDARY,
+                    }}
+                  >
+                    {r.action}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div style={note}>
+          재고 소진일은 일평균 소진 기준의 예상이에요. 발주점 기준이 없어 지금은 사람
+          기억으로 발주 시점을 잡고 있어요. (데모 수치 — 발주서·생산 기록·재고표 기준)
+        </div>
+      </div>,
+    );
+  }
+
+  /* ── ⑥ 담은 과제 (6건 초과 시 페이지 분할) ── */
   taskChunks.forEach((tasks, chunkIdx) => {
     bodies.push(
       <div>
-        <SectionTitle no="5">
+        <SectionTitle no="6">
           담은 과제 <span style={{ fontFamily: MONO }}>{selectedTasks.length}</span>건
           {taskChunks.length > 1 && (
             <span style={{ fontSize: 13, fontWeight: 400, color: MUTED }}>
@@ -639,7 +721,7 @@ export function ReportDocument({
   /* ── ⑥ 실행 로드맵 (기간·게이트·역할) ── */
   bodies.push(
     <div>
-      <SectionTitle no="6">
+      <SectionTitle no="7">
         실행 로드맵 — 총 <span style={{ fontFamily: MONO }}>{roadmap.totalMonths}</span>개월
       </SectionTitle>
       {roadmap.stages.length === 0 ? (
@@ -658,7 +740,7 @@ export function ReportDocument({
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: INK }}>
                 <span style={{ fontFamily: MONO, fontSize: 12, color: BLUE }}>
-                  {stage.methodStepNo}단계
+                  단계 {stage.order}
                 </span>{" "}
                 {stage.title}
               </div>
@@ -708,7 +790,7 @@ export function ReportDocument({
   /* ── ⑦ 예상 효과 산출 + 진단 방법·한계 고지 (말미 고정 블록) ── */
   bodies.push(
     <div>
-      <SectionTitle no="7">예상 효과 산출 내역</SectionTitle>
+      <SectionTitle no="8">예상 효과 산출 내역</SectionTitle>
       {roi.items.length === 0 ? (
         <div style={{ fontSize: 13, color: MUTED }}>
           정량 효과 산출 대상 과제가 없어요 (기반 과제는 정성 효과로 분류돼요).

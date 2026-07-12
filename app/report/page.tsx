@@ -212,6 +212,11 @@ export default function ReportPage() {
 
   return (
     <div className="ax-step-enter">
+      {/* 드릴다운 카드 호버 시 '산출 내역 보기' 브랜드 컬러 (v5) */}
+      <style>{`
+        .axp-drill:hover .axp-drill-link { color: var(--fg-brand); }
+        .axp-drill-link { transition: color var(--dur-fast) var(--ease); }
+      `}</style>
       {/* ══ 요약 4칸 (F-RPT-01) — 흰 캔버스 단일 흐름 ══════════ */}
       <section style={{ padding: "var(--space-16) var(--gutter) 0" }}>
         <div style={{ maxWidth: "var(--container-content)", margin: "0 auto" }}>
@@ -264,6 +269,7 @@ export default function ReportPage() {
 
             {/* ③ 예상 연 효과 — 클릭 드릴다운 */}
             <Card
+              className="axp-drill"
               interactive
               role="button"
               tabIndex={0}
@@ -286,8 +292,9 @@ export default function ReportPage() {
                   {roi.totalAnnualSaving > 0 ? `${fmt(roi.totalAnnualSaving)}만원` : "—"}
                 </span>
               </SummaryValue>
-              {/* 산출 내역 보기 — 회색 + → (v4) */}
+              {/* 산출 내역 보기 — 회색 + →, 카드 호버 시 브랜드 컬러 (v4·v5) */}
               <div
+                className="axp-drill-link"
                 style={{
                   marginTop: 10,
                   display: "inline-flex",
@@ -306,6 +313,7 @@ export default function ReportPage() {
 
             {/* ④ 투자 회수 — 클릭 드릴다운 */}
             <Card
+              className="axp-drill"
               interactive
               role="button"
               tabIndex={0}
@@ -328,8 +336,9 @@ export default function ReportPage() {
                   {roi.totalAnnualSaving > 0 ? `약 ${roi.paybackMonths}개월` : "—"}
                 </span>
               </SummaryValue>
-              {/* 산출 내역 보기 — 회색 + → (v4) */}
+              {/* 산출 내역 보기 — 회색 + →, 카드 호버 시 브랜드 컬러 (v4·v5) */}
               <div
+                className="axp-drill-link"
                 style={{
                   marginTop: 10,
                   display: "inline-flex",

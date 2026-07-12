@@ -165,27 +165,29 @@ function StageCard({ stage }: { stage: RoadmapStage }) {
               color: "var(--fg-secondary)",
             }}
           >
+            {/* 도트 불릿 + 주체 볼드 (v5: 태그 → 불릿) */}
             {stage.todos.map((todo) => (
               <li
                 key={`${todo.owner}-${todo.text}`}
-                style={{ display: "flex", gap: 8, alignItems: "flex-start" }}
+                style={{ display: "flex", gap: 9, alignItems: "flex-start" }}
               >
                 <span
+                  aria-hidden
                   style={{
                     flex: "none",
-                    marginTop: 1,
-                    display: "inline-flex",
-                    padding: "2px 8px",
-                    borderRadius: "var(--radius-full)",
-                    background: todo.owner === "AXpoint" ? "var(--bg-brand-weak)" : "var(--bg-tertiary)",
-                    font: "var(--text-caption)",
-                    fontWeight: 600,
-                    color: todo.owner === "AXpoint" ? "var(--fg-brand)" : "var(--fg-secondary)",
+                    width: 4,
+                    height: 4,
+                    borderRadius: "50%",
+                    background: "var(--grey-400)",
+                    marginTop: 9,
                   }}
-                >
-                  {todo.owner}
+                />
+                <span>
+                  <strong style={{ fontWeight: 600, color: "var(--fg-primary)" }}>
+                    {todo.owner}
+                  </strong>{" "}
+                  {todo.text}
                 </span>
-                {todo.text}
               </li>
             ))}
           </ul>

@@ -3,11 +3,11 @@ import { getTask } from "@/data/catalog/tasks";
 import { METHOD_STEPS, type MethodStepNo } from "@/data/catalog/method";
 
 /**
- * 과제 기반 로드맵 자동 생성 (F-RMP-02, REQ-F-16 · 2026-07-12 수정요청v4)
+ * 과제 기반 로드맵 자동 생성 (F-RMP-02, REQ-F-16 · 2026-07-12 수정요청v5 원복)
  *
  * 단계 축 = AX 7단계 방법론 (docs/참고자료/중소 제조기업 AX 7단계 방법론.xlsx)
- * - 로드맵은 담은 과제로만 구성 (v4: '경영문제 정의 완료' 단계 제거 — 진단 결과 영역의 몫)
- * - 2~7단계: 담은 과제(+선행 기반과제 자동 삽입)를 methodStep으로 배치,
+ * ※ 5단계 재편은 진단 결과 Lv 체계(data/rubric/meta.ts LEVELS)에 적용 — 로드맵은 v4 유지.
+ * - 로드맵은 담은 과제로만 구성: 담은 과제(+선행 기반과제 자동 삽입)를 methodStep으로 배치,
  *   과제가 없는 단계는 제거. 단계 순서 = 우선순위. 결정론적: 같은 담기 → 같은 로드맵.
  * - 기간은 단계 내 병렬 진행 가정(단계 내 최장 과제), 비용은 자부담 합산 (F-RMP-04)
  */
