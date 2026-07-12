@@ -26,13 +26,8 @@ export function SiteFooter() {
 
   return (
     <footer style={{ background: "var(--grey-900)", color: "var(--white)" }}>
-      <div
-        style={{
-          maxWidth: "var(--container-wide)",
-          margin: "0 auto",
-          padding: "48px var(--gutter) 0",
-        }}
-      >
+      {/* 가로 너비 꽉 채움 (v4 추가 요청) */}
+      <div style={{ width: "100%", boxSizing: "border-box", padding: "48px 40px 0" }}>
         {/* 로고 블록 — 원본 비율 유지, 큼직하게 (수정요청v4: 크기 깨짐 수정) */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           <Image

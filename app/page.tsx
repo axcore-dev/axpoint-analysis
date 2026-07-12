@@ -47,9 +47,12 @@ const ALL_DOC_IDS = uploadedDocs.map((d) => d.id);
 
 const stepCardStyle: CSSProperties = {
   width: "100%",
-  maxWidth: 520,
+  /* 카드 사이즈 10% 확대: 520 → 572, 패딩 32 → 36 */
+  maxWidth: 572,
   position: "relative",
-  padding: "var(--space-8)",
+  /* 중앙보다 살짝 위로 */
+  top: -28,
+  padding: 36,
   /* margin auto — 카드가 뷰포트보다 길어져도 위가 잘리지 않는 중앙 정렬 (v4) */
   margin: "auto",
 };
@@ -219,10 +222,24 @@ export default function LandingPage() {
   const canStart = systems.length > 0 && interestAreas.length > 0;
 
   return (
-    <div className="flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
+    <div className="axp-landing flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
+      {/* 자료 올리기 페이지 한정 타이포 20% 확대 — 페이지 스코프 토큰 재정의 */}
+      <style>{`
+        .axp-landing {
+          --text-display2: 700 48px/1.2 var(--font-sans);
+          --text-h2: 700 29px/1.3 var(--font-sans);
+          --text-h3: 700 26px/1.3 var(--font-sans);
+          --text-body1: 400 20px/1.55 var(--font-sans);
+          --text-body2: 400 18px/1.55 var(--font-sans);
+          --text-body3: 400 16px/1.5 var(--font-sans);
+          --text-label-m: 600 18px/1.25 var(--font-sans);
+          --text-label-s: 600 16px/1.25 var(--font-sans);
+          --text-caption: 500 14px/1.4 var(--font-sans);
+        }
+      `}</style>
       {/* ─── phase: search — 검색바가 수직 중앙, 헤드라인은 그 위에 부착 ── */}
       {phase === "search" && (
-        <div key="search" className="ax-step-enter relative m-auto w-full max-w-[560px]">
+        <div key="search" className="ax-step-enter relative m-auto w-full max-w-[640px]">
           <div className="absolute bottom-full left-1/2 mb-10 flex w-max max-w-[calc(100vw-48px)] -translate-x-1/2 flex-col items-center text-center">
             <h1 className="flex-col ax-heading mt-4 [font:var(--text-display2)] tracking-[var(--track-display)] text-ink">
               제조 AX 첫걸음, AX<b className="text-brand">point</b>
@@ -247,18 +264,18 @@ export default function LandingPage() {
               placeholder={placeholder}
               aria-label="기업명 또는 사업자번호"
               onFocus={() => setTouched(true)}
-              leading={<Icons.search size={20} />}
+              leading={<Icons.search size={22} />}
               fieldClassName="ax-field--pill"
-              fieldStyle={{ height: 58, paddingLeft: 24, paddingRight: 8, gap: 12 }}
-              inputStyle={{ fontSize: 16 }}
+              fieldStyle={{ height: 66, paddingLeft: 26, paddingRight: 9, gap: 12 }}
+              inputStyle={{ fontSize: 19 }}
               trailing={
                 <Button
                   type="submit"
                   variant="primary"
-                  size="md"
+                  size="lg"
                   disabled={!canSubmit}
                   aria-label="진단 시작"
-                  style={{ borderRadius: "var(--radius-full)", flex: "none", height: 42 }}
+                  style={{ borderRadius: "var(--radius-full)", flex: "none", height: 50 }}
                 >
                   진단 시작
                   <Icons.arrow size={16} />
