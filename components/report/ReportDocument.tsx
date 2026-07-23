@@ -39,7 +39,7 @@ import {
  * 페이지 구성 (6~7p, 담은 과제 수에 따라 가변):
  *   ① 표지  ② 종합 소견 + 업종 대비 포지션  ③ 카테고리별 준비도(6축)
  *   ④ 기능영역 8곳 등급 + 가치사슬 신호  ⑤ 담은 과제(6건 초과 시 분할)
- *   ⑥ 실행 로드맵  ⑦ 예상 효과 산출 + 진단 방법·한계 고지
+ *   ⑥ AX 로드맵  ⑦ 예상 효과 산출 + 진단 방법·한계 고지
  */
 
 /* ---- 색 상수 (전부 hex — 디자인 시스템 v2 토큰과 동일 값) ---- */
@@ -718,11 +718,11 @@ export function ReportDocument({
     );
   });
 
-  /* ── ⑥ 실행 로드맵 (기간·게이트·역할) ── */
+  /* ── ⑥ AX 로드맵 (기간·게이트·역할) ── */
   bodies.push(
     <div>
       <SectionTitle no="7">
-        실행 로드맵 — 총 <span style={{ fontFamily: MONO }}>{roadmap.totalMonths}</span>개월
+        AX 로드맵 — 총 <span style={{ fontFamily: MONO }}>{roadmap.totalMonths}</span>개월
       </SectionTitle>
       {roadmap.stages.length === 0 ? (
         <div style={{ fontSize: 13, color: MUTED }}>담은 과제가 없어 로드맵이 비어 있어요.</div>

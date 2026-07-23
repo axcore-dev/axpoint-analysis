@@ -197,7 +197,7 @@ export default function ReportPage() {
             보고서는 로드맵 확인 후 열려요
           </h1>
           <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            담으신 과제로 실행 로드맵을 먼저 확인하시면, 예상 효과와 투자 회수까지 담은
+            담으신 과제로 AX 로드맵을 먼저 확인하시면, 예상 효과와 투자 회수까지 담은
             보고서가 준비돼요.
           </p>
           <div style={{ marginTop: 22 }}>

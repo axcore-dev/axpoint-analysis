@@ -11,7 +11,7 @@ import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { Badge, Button, Card, Icons } from "@/components/ui";
 
 /**
- * S4 실행 로드맵 — F-RMP-01~05 (2026-07-10 수정요청v3)
+ * S4 AX 로드맵 — F-RMP-01~05 (2026-07-10 수정요청v3)
  * 단계 축 = AX 7단계 방법론 — 담은 과제로만 구성, 단계 순서가 곧 우선순위 (v4).
  * 세로 타임라인: 좌측 레일(도트 + '약 N개월' 마커) + 우측 단계 카드.
  * 스크롤 중앙 포커스 — 뷰포트 중앙 카드만 선명, 나머지는 은은하게.
@@ -227,10 +227,10 @@ export default function RoadmapPage() {
               color: "var(--fg-primary)",
             }}
           >
-            실행 로드맵
+            AX 로드맵
           </h2>
           <p style={{ margin: "0 0 20px", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            담은 과제가 아직 없어요. 개선 과제를 먼저 담으면 실행 로드맵이 만들어져요.
+            담은 과제가 아직 없어요. 개선 과제를 먼저 담으면 AX 로드맵이 만들어져요.
           </p>
           <Button variant="primary" href="/tasks">
             개선 과제 담으러 가기
@@ -270,7 +270,7 @@ export default function RoadmapPage() {
               color: "var(--fg-primary)",
             }}
           >
-            실행 로드맵
+            AX 로드맵
           </h2>
           <p
             style={{

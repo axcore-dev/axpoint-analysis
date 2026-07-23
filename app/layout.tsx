@@ -6,9 +6,9 @@ import { SiteFooter } from "@/components/flow/SiteFooter";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AXpoint™",
+  title: "AXCORE",
   description:
-    "자료만 올리면 제조 기업의 AX 단계·개선 과제·로드맵·예상 효과까지 — 즉시, 무료로, 근거와 함께 확인할 수 있어요.",
+    "자료만 올리면 제조 기업의 AX 조사·분석·진단·설계까지",
 };
 
 export default function RootLayout({
