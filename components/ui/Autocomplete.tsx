@@ -103,23 +103,22 @@ export function Autocomplete({
     inputValue: query,
     selectedItem: null,
     itemToString: (it) => it?.value ?? "",
-    /* blur·Esc 시 입력값을 비우는 기본 동작 방지 — 입력값 유지 (DOM은 비제어).
-       항목 선택 시엔 controlled selectedItem(null) 때문에 inputValue가 ""로 리셋되므로
-       선택 항목 문자열로 고정한다 (v7 버그 수정). */
+    /* 입력값 보존 가드 (v7 버그 수정) — controlled selectedItem(null) 탓에 blur·Esc·
+       항목 선택·모달 오픈 등 여러 내부 전이가 inputValue를 ""로 리셋한다.
+       직접 타이핑(InputChange) 외에는 입력값 변경을 불허하고, 선택 전이는 선택 항목
+       문자열로만 바꾼다. */
     stateReducer: (state, { type, changes }) => {
-      switch (type) {
-        case useCombobox.stateChangeTypes.InputBlur:
-        case useCombobox.stateChangeTypes.InputKeyDownEscape:
-          return { ...changes, inputValue: state.inputValue };
-        case useCombobox.stateChangeTypes.ItemClick:
-        case useCombobox.stateChangeTypes.InputKeyDownEnter:
-          return {
-            ...changes,
-            inputValue: changes.selectedItem ? changes.selectedItem.value : state.inputValue,
-          };
-        default:
-          return changes;
+      if (
+        type !== useCombobox.stateChangeTypes.InputChange &&
+        changes.inputValue !== undefined &&
+        changes.inputValue !== state.inputValue
+      ) {
+        return {
+          ...changes,
+          inputValue: changes.selectedItem ? changes.selectedItem.value : state.inputValue,
+        };
       }
+      return changes;
     },
     onInputValueChange: ({ inputValue }) => {
       const next = inputValue ?? "";

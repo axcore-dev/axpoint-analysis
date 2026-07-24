@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
@@ -168,8 +175,91 @@ function CheckRow({
   );
 }
 
-/** 부서 카드 본문 — 부서명 · 업무 리스트 · 업로드 문서 리스트(디지털화 수준 명시) (수정요청v6) */
-function DeptCardBody({ dept, mismatch }: { dept: WorkflowDept; mismatch: boolean }) {
+/**
+ * 가로 스크롤 래퍼 + 좌우 화살표 버튼 (v7+)
+ * 마우스 휠로는 가로 스크롤이 안 되므로 끝에 닿기 전까지 양쪽에 화살표를 띄운다.
+ * children이 자체 flex 컨테이너를 제공한다.
+ */
+function HScroller({
+  children,
+  className = "",
+  scrollbarHidden = true,
+}: {
+  children: ReactNode;
+  className?: string;
+  scrollbarHidden?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [can, setCan] = useState({ left: false, right: false });
+
+  const update = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const left = el.scrollLeft > 4;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+    setCan((p) => (p.left === left && p.right === right ? p : { left, right }));
+  }, []);
+
+  useEffect(() => {
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [update]);
+
+  const scrollBy = (dir: 1 | -1) => {
+    /* 카드 2장 폭 정도씩 이동 */
+    ref.current?.scrollBy({ left: dir * 560, behavior: "smooth" });
+  };
+
+  const arrowClass =
+    "absolute top-1/2 z-10 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-solid border-line bg-surface text-ink-2 shadow-[var(--shadow-2)] transition-colors duration-[var(--dur-fast)] hover:bg-surface-2";
+
+  return (
+    <div className={`relative ${className}`}>
+      {can.left && (
+        <button
+          type="button"
+          aria-label="왼쪽으로 이동"
+          onClick={() => scrollBy(-1)}
+          className={`${arrowClass} left-1`}
+        >
+          <span aria-hidden className="inline-flex rotate-180">
+            <Icons.chevronRight size={17} />
+          </span>
+        </button>
+      )}
+      <div
+        ref={ref}
+        onScroll={update}
+        className={`${scrollbarHidden ? "ax-scrollbar-none" : ""} overflow-x-auto pb-2`}
+      >
+        {children}
+      </div>
+      {can.right && (
+        <button
+          type="button"
+          aria-label="오른쪽으로 이동"
+          onClick={() => scrollBy(1)}
+          className={`${arrowClass} right-1`}
+        >
+          <Icons.chevronRight size={17} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 부서 카드 본문 — 부서명 · 업무 리스트 · 업로드 문서 리스트(디지털화 수준 명시) (수정요청v6)
+ *  showDocs=false: 표준 상세 팝업용 — 표준 흐름에는 업로드 문서가 없으므로 업무만 표시 (v7+) */
+function DeptCardBody({
+  dept,
+  mismatch,
+  showDocs = true,
+}: {
+  dept: WorkflowDept;
+  mismatch: boolean;
+  showDocs?: boolean;
+}) {
   const docs = dept.docIds
     .map((id) => docById.get(id))
     .filter((d): d is NonNullable<typeof d> => Boolean(d));
@@ -203,6 +293,7 @@ function DeptCardBody({ dept, mismatch }: { dept: WorkflowDept; mismatch: boolea
       </ul>
 
       {/* 업로드 문서 리스트 — 디지털화 수준 명시 유지 */}
+      {showDocs && (
       <div className="mt-2.5 border-t border-[var(--line-subtle)] pt-2">
         {docs.length > 0 ? (
           <ul className="m-0 list-none p-0">
@@ -224,6 +315,7 @@ function DeptCardBody({ dept, mismatch }: { dept: WorkflowDept; mismatch: boolea
           <p className="m-0 py-1 [font:var(--text-caption)] text-ink-4">확인된 문서 없음</p>
         )}
       </div>
+      )}
     </>
   );
 }
@@ -720,21 +812,29 @@ export default function CollectPage() {
 
             {/* 워크플로우 — 8대 영역 탭 대체 (수정요청v6). 분류 자체는 데이터 계층에서 유지 */}
             {/* v7: 흐름 잘림 방지 — 가운데 컨테이너를 벗어나 화면 최대 너비 사용 */}
-            <section className="mx-[calc(50%-50vw)] mt-12 px-[var(--gutter)]">
+            {/* v7+: 기존 컨테이너 너비·정렬 유지, 카드 행은 줄바꿈으로 잘림 방지 */}
+            <section className="mt-12">
               <h3 className="ax-heading m-0 [font:var(--text-title1)] tracking-[var(--track-heading)] text-ink">
                 <b>워크플로우</b>로 정리했어요
               </h3>
-              {/* v7: 설명 문구 대신 비교 현황 한 줄 — 숫자에만 색상 */}
-              <p className="mt-1 mb-0 [font:var(--text-caption)] tracking-[var(--track-body)] text-ink-3">
-                표준과 순서가 다른 부서{" "}
+              {/* v7: 설명 문구 대신 비교 현황 한 줄 — 숫자에만 색상.
+                  v7+: 앞의 도트가 카드·필의 경고 마커 범례 역할 */}
+              <p className="mt-1 mb-0 flex items-center gap-1.5 [font:var(--text-caption)] tracking-[var(--track-body)] text-ink-3">
                 <span
-                  className={`[font-family:var(--font-mono)] font-bold ${
-                    mismatchCount > 0 ? "text-[color:var(--fg-warning)]" : "text-ink-2"
-                  }`}
-                >
-                  {mismatchCount}
+                  aria-hidden
+                  className="size-2.5 flex-none rounded-full bg-[color:var(--fg-warning)]"
+                />
+                <span>
+                  표준과 순서가 다른 부서{" "}
+                  <span
+                    className={`[font-family:var(--font-mono)] font-bold ${
+                      mismatchCount > 0 ? "text-[color:var(--fg-warning)]" : "text-ink-2"
+                    }`}
+                  >
+                    {mismatchCount}
+                  </span>
+                  곳
                 </span>
-                곳
               </p>
 
               {/* {업종} 제조 표준 — 고정 참조 행 + 상세 팝업 (v7) */}
@@ -801,8 +901,9 @@ export default function CollectPage() {
                 })}
               </div>
 
-              {/* 자사 상세 카드 행 — 간략 흐름과 같은 순서 (드래그 연동) */}
-              <div className="ax-scrollbar-none mt-4 flex items-stretch gap-1.5 overflow-x-auto pb-2">
+              {/* 자사 상세 카드 행 — 간략 흐름과 같은 순서 (드래그 연동), 화살표 가로 스크롤 */}
+              <HScroller className="mt-4">
+                <div className="flex items-stretch gap-1.5">
                 {companyFlow.map((id, i) => {
                   const mismatch = STANDARD_FLOW[i] !== id;
                   return (
@@ -831,7 +932,8 @@ export default function CollectPage() {
                     </div>
                   );
                 })}
-              </div>
+                </div>
+              </HScroller>
 
               {/* 지원 부서 — 흐름(체인) 밖 별도 표기 */}
               <div className="mt-5 flex flex-wrap items-start gap-2">
@@ -935,35 +1037,34 @@ export default function CollectPage() {
         )}
       </Modal>
 
-      {/* ── 표준 상세 흐름 팝업 (수정요청v7) — 업종별 제조 표준, 추후 업종 추가 구축 예정 ── */}
+      {/* ── 표준 상세 흐름 팝업 (수정요청v7) — 자사 상세와 같은 부서 카드 흐름 표시 (v7+).
+           표준에는 업로드 문서가 없으므로 업무 리스트만. 추후 업종별 표준 추가 구축 예정 ── */}
       <Modal
         open={stdOpen}
         onClose={() => setStdOpen(false)}
         title={`${industryShort} 제조 표준`}
+        wide
       >
-        <ol className="m-0 list-none p-0">
-          {STANDARD_FLOW.map((id, i) => {
-            const dept = getDept(id);
-            return (
-              <li
-                key={id}
-                className="flex items-start gap-3 border-t border-[var(--line-subtle)] py-3 first:border-t-0"
-              >
-                <span className="mt-0.5 inline-flex size-[22px] flex-none items-center justify-center rounded-full bg-surface-3 text-[13px] font-bold [font-family:var(--font-mono)] text-ink-2">
-                  {i + 1}
-                </span>
-                <span className="min-w-0">
-                  <span className="block [font:var(--text-label-m)] tracking-[var(--track-heading)] text-ink">
-                    {dept.name}
+        {/* 화살표 가로 스크롤 + 스크롤바 노출로 흐름 계속됨을 표시 (v7+) */}
+        <HScroller scrollbarHidden={false}>
+          <div className="mx-auto flex w-max items-stretch gap-1.5">
+            {STANDARD_FLOW.map((id, i) => (
+              <div key={id} className="flex flex-none items-center gap-1.5">
+                {i > 0 && (
+                  <span
+                    aria-hidden
+                    className="inline-flex flex-none text-[color:var(--grey-400)]"
+                  >
+                    <Icons.chevronRight size={14} />
                   </span>
-                  <span className="mt-0.5 block [font:var(--text-body3)] tracking-[var(--track-body)] text-ink-2">
-                    {dept.tasks.join(" · ")}
-                  </span>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
+                )}
+                <div className="w-[210px] flex-none rounded-[var(--radius-l)] border border-solid border-line bg-surface p-3.5">
+                  <DeptCardBody dept={getDept(id)} mismatch={false} showDocs={false} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </HScroller>
       </Modal>
     </>
   );

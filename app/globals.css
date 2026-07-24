@@ -336,12 +336,6 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
-
-/* 풀블리드(100vw) 섹션의 스크롤바 폭 초과분 가로 스크롤 방지 (수정요청v7 — 워크플로우) */
-html {
-  overflow-x: clip;
-}
-
 ::selection {
   background: var(--bg-brand-weak);
   color: var(--fg-brand);
