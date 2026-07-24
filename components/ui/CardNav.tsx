@@ -58,7 +58,7 @@ export function BackIconButton({
   );
 }
 
-/** 앞으로 가기 — BackIconButton 오른쪽에 나란히 배치 (완료 후 재열람 시 빠른 이동, v4) */
+/** 앞으로 가기 — 카드 우상단, 뒤로 가기 반대편 배치 (수정요청v6) */
 export function ForwardIconButton({
   onClick,
   label,
@@ -85,7 +85,7 @@ export function ForwardIconButton({
       style={{
         position: "absolute",
         top: 14,
-        left: 48,
+        right: 14,
         width: 32,
         height: 32,
         display: "inline-flex",

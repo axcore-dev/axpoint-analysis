@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import logo from "@/public/assets/axcore-mono-white.png";
 
 /**
- * 사이트 푸터 — 첫 페이지(자료 올리기 "/")와 마지막 페이지(보고서 "/report")에만 노출.
+ * 사이트 푸터 — 첫 페이지(자료 올리기 "/"), 마지막 페이지(보고서 "/report"),
+ * 내 정보("/mypage" 하위 포함, 수정요청v7)에만 노출.
  * 레이아웃 참고: docs/참고자료/footer레이아웃만 참고.png
  * (로고 블록 + 4컬럼 정보 + 하단 카피라이트 행 — 컬러는 디자인 시스템 grey-900 사용)
  */
@@ -22,7 +23,7 @@ const COLUMNS: { title: string; lines: string[] }[] = [
 
 export function SiteFooter() {
   const pathname = usePathname();
-  if (pathname !== "/" && pathname !== "/report") return null;
+  if (pathname !== "/" && pathname !== "/report" && !pathname.startsWith("/mypage")) return null;
 
   return (
     <footer style={{ background: "var(--grey-900)", color: "var(--white)" }}>

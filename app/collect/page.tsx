@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import * as Tabs from "@radix-ui/react-tabs";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
@@ -9,8 +9,16 @@ import { hitlDocs, uploadedDocs } from "@/data/scenario/documents";
 import { publicSources } from "@/data/scenario/publicData";
 import { surveyQuestions } from "@/data/rubric/survey";
 import { hitlResponses } from "@/data/scenario/hitl";
-import { DIGITAL_LEVELS, FUNCTION_AREAS } from "@/data/rubric/meta";
-import type { DigitalLevel, FunctionAreaId, PublicSource, SurveyQuestion } from "@/lib/types";
+import { DIGITAL_LEVELS } from "@/data/rubric/meta";
+import {
+  COMPANY_FLOW,
+  STANDARD_FLOW,
+  SUPPORT_DEPT_IDS,
+  getDept,
+  type WorkflowDept,
+} from "@/data/scenario/workflow";
+import { COMPANY_DIRECTORY, findCompany } from "@/data/scenario/companies";
+import type { PublicSource, SurveyQuestion } from "@/lib/types";
 import {
   BackIconButton,
   Button,
@@ -26,7 +34,8 @@ import {
 /**
  * S1 자료 정리 — 상단 FlowStepper(자료 확인 → 자료 분류) 가운데 정렬 (수정요청v3).
  * 자료 확인은 팝업 대신 자료 올리기와 같은 카드 위저드로 통합(자료확인 → 설문 2개 흐름),
- * 설문은 체크+행(row) UI. 자료 분류는 공개 데이터(팝업 탭: 정보/출처) + 8대 영역 탭.
+ * 설문은 체크+행(row) UI. 자료 분류는 공개 데이터(팝업 탭: 정보/출처) +
+ * 워크플로우 비교(수정요청v6 — 8대 영역 탭 대체, 8대 영역 분류는 데이터 계층에서 유지).
  * 점수·등급 등 해석은 노출하지 않는다.
  */
 
@@ -107,47 +116,12 @@ const pubTotal = publicSources.reduce((sum, p) => sum + p.count, 0);
 /** 총 수집 건수 = 업로드 12 + 공개 데이터 count 합 (런타임 계산) */
 const totalCollected = uploadedDocs.length + pubTotal;
 
-const LEVEL_ORDER: DigitalLevel[] = ["L1", "L2", "L3", "L4"];
-
-interface AreaEntry {
-  key: string;
-  kind: "doc" | "pub";
-  title: string;
-  /** 문서유형 또는 출처 표기 — 배경 없는 텍스트로만 표기 */
-  sub: string;
-  level: DigitalLevel;
-  count?: number;
-  detail?: string;
-  teaser?: string;
-}
-
-/** 8대 영역별 자료 묶음 — 디지털화 수준(L) 낮은 순 정렬 */
-const areaGroups = FUNCTION_AREAS.map((a) => {
-  const entries: AreaEntry[] = [
-    ...uploadedDocs
-      .filter((d) => d.area === a.id)
-      .map<AreaEntry>((d) => ({
-        key: d.id,
-        kind: "doc",
-        title: d.fileName,
-        sub: d.docType,
-        level: d.level,
-        detail: d.extractedDetail,
-        teaser: d.summaryTeaser,
-      })),
-    ...publicSources
-      .filter((p) => p.area === a.id)
-      .map<AreaEntry>((p) => ({
-        key: p.id,
-        kind: "pub",
-        title: p.name,
-        sub: sourceLabel(p.sourceApi),
-        level: p.digitalLevel,
-        count: p.count,
-      })),
-  ].sort((x, y) => LEVEL_ORDER.indexOf(x.level) - LEVEL_ORDER.indexOf(y.level));
-  return { id: a.id, name: a.name, entries };
-});
+/**
+ * 워크플로우 표시용 문서 참조 (수정요청v6)
+ * 8대 영역 분류는 데이터 계층(documents.ts의 area 태깅)에서 그대로 유지되고,
+ * 화면은 부서 단위 워크플로우로 표시한다.
+ */
+const docById = new Map(uploadedDocs.map((d) => [d.id, d]));
 
 function helperText(q: SurveyQuestion): string | null {
   if (q.type === "multi") return "여러 개를 고를 수 있어요";
@@ -194,6 +168,66 @@ function CheckRow({
   );
 }
 
+/** 부서 카드 본문 — 부서명 · 업무 리스트 · 업로드 문서 리스트(디지털화 수준 명시) (수정요청v6) */
+function DeptCardBody({ dept, mismatch }: { dept: WorkflowDept; mismatch: boolean }) {
+  const docs = dept.docIds
+    .map((id) => docById.get(id))
+    .filter((d): d is NonNullable<typeof d> => Boolean(d));
+  return (
+    <>
+      <div className="flex items-center justify-between gap-2">
+        <strong className="[font:var(--text-label-m)] tracking-[var(--track-heading)] text-ink">
+          {dept.name}
+        </strong>
+        {/* v7: 문구 중복 제거 — 우상단 경고색 마커로만 표시 (호버 시 설명) */}
+        {mismatch && (
+          <span
+            title="표준과 순서가 달라요"
+            aria-label="표준과 순서가 달라요"
+            className="size-2.5 flex-none rounded-full bg-[color:var(--fg-warning)]"
+          />
+        )}
+      </div>
+
+      {/* 업무 리스트 */}
+      <ul className="m-0 mt-2.5 list-none p-0">
+        {dept.tasks.map((task) => (
+          <li
+            key={task}
+            className="flex items-start gap-2 py-0.5 [font:var(--text-body3)] tracking-[var(--track-body)] text-ink-2"
+          >
+            <span aria-hidden className="mt-[9px] size-[3.5px] flex-none rounded-full bg-[var(--grey-400)]" />
+            {task}
+          </li>
+        ))}
+      </ul>
+
+      {/* 업로드 문서 리스트 — 디지털화 수준 명시 유지 */}
+      <div className="mt-2.5 border-t border-[var(--line-subtle)] pt-2">
+        {docs.length > 0 ? (
+          <ul className="m-0 list-none p-0">
+            {docs.map((d) => (
+              <li key={d.id} className="flex items-center gap-1.5 py-1">
+                <span className="flex-none text-ink-4">
+                  <Icons.file size={12} />
+                </span>
+                <span className="min-w-0 flex-1 truncate [font:var(--text-caption)] tracking-[var(--track-body)] text-ink-2">
+                  {d.fileName}
+                </span>
+                <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-3">
+                  {DIGITAL_LEVELS[d.level]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="m-0 py-1 [font:var(--text-caption)] text-ink-4">확인된 문서 없음</p>
+        )}
+      </div>
+    </>
+  );
+}
+
 export default function CollectPage() {
   const router = useRouter();
   const { companyInput, confirmedDocIds, surveyDone, completedSteps, update, completeStep } =
@@ -227,10 +261,14 @@ export default function CollectPage() {
   const [classifyLoading, setClassifyLoading] = useState(false);
 
   /* ── 자료 분류 화면 상태 ── */
-  const [activeArea, setActiveArea] = useState<FunctionAreaId>(FUNCTION_AREAS[0].id);
-  const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
   const [sourceCard, setSourceCard] = useState<PublicSource | null>(null);
   const [sourceTab, setSourceTab] = useState<"info" | "origin">("info");
+  /* 자사 워크플로우 순서 — 표준과 다르면 드래그앤드롭으로 수정 (수정요청v6) */
+  const [companyFlow, setCompanyFlow] = useState<string[]>(COMPANY_FLOW);
+  const dragFrom = useRef<number | null>(null);
+  const [dragOver, setDragOver] = useState<number | null>(null);
+  /* 표준 상세 흐름 팝업 (수정요청v7) */
+  const [stdOpen, setStdOpen] = useState(false);
 
   /* 재방문 복원: 완료 상태인데 로컬 응답이 비어 있으면 기본 응답으로 표시 */
   useEffect(() => {
@@ -262,11 +300,23 @@ export default function CollectPage() {
 
   /* ── 핸들러 ── */
 
-  const openChain = () => {
+  /** 처음부터 시작 — 안내 카드의 시작하기 */
+  const startChain = () => {
     setDocIdx(0);
     setSurveyIdx(0);
     setStageOverride("confirm");
     setWizard("docs");
+  };
+
+  /**
+   * 완료 카드에서 뒤로 가기 — 처음이 아니라 마지막 설문으로 (수정요청v6 버그 수정:
+   * 뒤로가기가 아예 처음(문서 확인 1번)으로 가던 문제)
+   */
+  const reopenChain = () => {
+    setDocIdx(hitlDocs.length - 1);
+    setSurveyIdx(visibleSurvey.length - 1);
+    setStageOverride("confirm");
+    setWizard("survey");
   };
 
   const chooseDocAt = (idx: number, docId: string, option: string) => {
@@ -332,16 +382,51 @@ export default function CollectPage() {
     else finishChain();
   };
 
-  /** 앞으로 가기 (v4) — 확인을 이미 마친 경우 원하는 구간으로 빠르게 이동 */
+  /** 앞으로 가기 (v6) — 이미 응답한 구간은 다시 응답하지 않고 앞으로 이동 */
   const goForward = () => {
     if (wizard === "docs") {
       if (docIdx + 1 < hitlDocs.length) setDocIdx(docIdx + 1);
       else setWizard("survey");
     } else if (wizard === "survey") {
       if (surveyIdx < visibleSurvey.length - 1) setSurveyIdx(surveyIdx + 1);
-      else setWizard(null); /* 이미 완료 상태 — 재로딩 없이 완료 카드로 */
+      else if (confirmComplete) setWizard(null); /* 이미 완료 상태 — 재로딩 없이 완료 카드로 */
+      else finishChain(); /* 마지막 문항까지 응답된 상태로 도달 → 완료 처리 */
     }
   };
+
+  /** 자사 워크플로우 부서 순서 이동 (드래그앤드롭, 수정요청v6) */
+  const moveDept = (from: number, to: number) => {
+    if (from === to || from < 0 || to < 0) return;
+    setCompanyFlow((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      return next;
+    });
+  };
+
+  /** 간략 흐름 필과 상세 카드가 공유하는 드래그 핸들러 — 두 줄이 같은 순서로 연동 (v7) */
+  const dragProps = (i: number) => ({
+    draggable: true,
+    onDragStart: () => {
+      dragFrom.current = i;
+    },
+    onDragOver: (e: DragEvent) => {
+      e.preventDefault();
+      setDragOver(i);
+    },
+    onDragLeave: () => setDragOver((v) => (v === i ? null : v)),
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      if (dragFrom.current !== null) moveDept(dragFrom.current, i);
+      dragFrom.current = null;
+      setDragOver(null);
+    },
+    onDragEnd: () => {
+      dragFrom.current = null;
+      setDragOver(null);
+    },
+  });
 
   const openSourceCard = (src: PublicSource) => {
     setSourceCard(src);
@@ -385,6 +470,10 @@ export default function CollectPage() {
 
   const currentDoc = hitlDocs[docIdx];
   const currentQ = visibleSurvey[surveyIdx];
+  /* 표준 대비 순서가 다른 부서 수 — 비교 현황 표기 (수정요청v6) */
+  const mismatchCount = companyFlow.filter((id, i) => id !== STANDARD_FLOW[i]).length;
+  /* "{업종} 제조 표준" 라벨 — 검색 기업의 업종, 미등록 기업은 데모 기본값 (수정요청v7) */
+  const industryShort = (findCompany(companyInput) ?? COMPANY_DIRECTORY[0]).industryShort;
 
   return (
     <>
@@ -413,7 +502,10 @@ export default function CollectPage() {
                   label="이전으로"
                   onClick={() => (docIdx > 0 ? setDocIdx(docIdx - 1) : setWizard(null))}
                 />
-                {confirmComplete && <ForwardIconButton label="다음으로" onClick={goForward} />}
+                {/* 이미 응답한 문서는 앞으로 가기 허용 — 우측 배치 (수정요청v6) */}
+                {(confirmComplete || Boolean(docChoices[currentDoc.id])) && (
+                  <ForwardIconButton label="다음으로" onClick={goForward} />
+                )}
                 <DotProgress step={1} total={2} />
                 <h2 className="ax-heading mt-4 mb-0 text-center [font:var(--text-h4)] tracking-[var(--track-heading)] text-ink">
                   {currentDoc.hitlPrompt?.question}
@@ -457,7 +549,10 @@ export default function CollectPage() {
                         surveyIdx > 0 ? setSurveyIdx(surveyIdx - 1) : setWizard("docs")
                       }
                     />
-                    {confirmComplete && <ForwardIconButton label="다음으로" onClick={goForward} />}
+                    {/* 이미 응답한 문항은 앞으로 가기 허용 — 우측 배치 (수정요청v6) */}
+                    {(confirmComplete || answered(currentQ)) && (
+                      <ForwardIconButton label="다음으로" onClick={goForward} />
+                    )}
                     <DotProgress step={2} total={2} />
                     <h2 className="ax-heading mt-4 mb-0 text-center [font:var(--text-h4)] tracking-[var(--track-heading)] text-ink">
                       {currentQ.question}
@@ -538,9 +633,9 @@ export default function CollectPage() {
                 );
               })()
             ) : confirmComplete ? (
-              /* 확인을 이미 마친 경우 — 완료 카드 (뒤로 가기 = 다시 열기) */
+              /* 확인을 이미 마친 경우 — 완료 카드 (뒤로 가기 = 마지막 설문으로, 수정요청v6) */
               <Card radius="2xl" className="relative w-full max-w-[520px] p-[var(--space-8)] text-center">
-                <BackIconButton label="다시 열기" onClick={openChain} />
+                <BackIconButton label="다시 열기" onClick={reopenChain} />
                 <div className="flex justify-center">
                   <span className="inline-flex size-12 items-center justify-center rounded-full bg-success-weak text-success">
                     <Icons.check size={24} />
@@ -573,7 +668,7 @@ export default function CollectPage() {
                   설문이 있어요
                 </p>
                 <div className="mt-6">
-                  <Button variant="primary" size="lg" onClick={openChain} className="min-w-[200px]">
+                  <Button variant="primary" size="lg" onClick={startChain} className="min-w-[200px]">
                     시작하기
                     <Icons.arrow size={16} />
                   </Button>
@@ -623,122 +718,135 @@ export default function CollectPage() {
               </div>
             </section>
 
-            {/* 8대 영역 — 가로 탭 (스크롤바 숨김) */}
-            <section className="mt-12">
+            {/* 워크플로우 — 8대 영역 탭 대체 (수정요청v6). 분류 자체는 데이터 계층에서 유지 */}
+            {/* v7: 흐름 잘림 방지 — 가운데 컨테이너를 벗어나 화면 최대 너비 사용 */}
+            <section className="mx-[calc(50%-50vw)] mt-12 px-[var(--gutter)]">
               <h3 className="ax-heading m-0 [font:var(--text-title1)] tracking-[var(--track-heading)] text-ink">
-                <b>8대 영역</b>으로 나눴어요
+                <b>워크플로우</b>로 정리했어요
               </h3>
+              {/* v7: 설명 문구 대신 비교 현황 한 줄 — 숫자에만 색상 */}
               <p className="mt-1 mb-0 [font:var(--text-caption)] tracking-[var(--track-body)] text-ink-3">
-                디지털화 수준이 낮은 자료부터 보여드려요.
+                표준과 순서가 다른 부서{" "}
+                <span
+                  className={`[font-family:var(--font-mono)] font-bold ${
+                    mismatchCount > 0 ? "text-[color:var(--fg-warning)]" : "text-ink-2"
+                  }`}
+                >
+                  {mismatchCount}
+                </span>
+                곳
               </p>
 
-              <Tabs.Root
-                value={activeArea}
-                onValueChange={(v) => setActiveArea(v as FunctionAreaId)}
-              >
-                <Tabs.List
-                  aria-label="8대 영역"
-                  className="ax-scrollbar-none mt-4 flex gap-0.5 overflow-x-auto border-b border-line"
-                >
-                  {areaGroups.map((g) => (
-                    <Tabs.Trigger
-                      key={g.id}
-                      value={g.id}
-                      className="group -mb-px flex flex-none cursor-pointer items-center gap-1.5 whitespace-nowrap border-0 border-b-2 border-solid border-transparent bg-transparent px-3 py-2.5 [font:var(--text-label-m)] tracking-[var(--track-body)] text-ink-3 hover:text-ink-2 data-[state=active]:border-brand data-[state=active]:text-brand"
-                    >
-                      {g.name}
-                      <span className="text-xs text-ink-4 [font-family:var(--font-mono)] group-data-[state=active]:text-brand">
-                        {g.entries.length}
+              {/* {업종} 제조 표준 — 고정 참조 행 + 상세 팝업 (v7) */}
+              <div className="mt-5 flex flex-wrap items-center gap-x-1.5 gap-y-2">
+                <span className="mr-1 flex-none rounded-[var(--radius-s)] bg-surface-3 px-2 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] text-ink-2">
+                  {industryShort} 제조 표준
+                </span>
+                {STANDARD_FLOW.map((id, i) => (
+                  <span key={id} className="inline-flex items-center gap-1.5">
+                    {i > 0 && (
+                      <span aria-hidden className="inline-flex text-[color:var(--grey-400)]">
+                        <Icons.chevronRight size={12} />
                       </span>
-                    </Tabs.Trigger>
-                  ))}
-                </Tabs.List>
-
-                {areaGroups.map((g) => (
-                  <Tabs.Content
-                    key={g.id}
-                    value={g.id}
-                    className="ax-scrollbar-none ax-step-enter mt-1 overflow-y-auto"
-                    /* 높이 고정(자료 약 10행 기준) — 개수와 무관하게 일정, 초과분은 내부 스크롤 (v4) */
-                    style={{ height: 460 }}
-                  >
-                    {/* L별 그룹 — 낮은 순 */}
-                    {LEVEL_ORDER.map((lv) => {
-                      const rows = g.entries.filter((e) => e.level === lv);
-                      if (rows.length === 0) return null;
-                      return (
-                        <div key={lv} className="mt-5">
-                          {/* 디지털화 수준 강조 (v4) */}
-                          <span className="inline-flex items-center rounded-[var(--radius-s)] bg-surface-3 px-2 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] text-ink-2">
-                            {DIGITAL_LEVELS[lv]}
-                          </span>
-                          <div className="mt-1">
-                            {rows.map((row) => {
-                              const open = Boolean(openDetails[row.key]);
-                              return (
-                                <div
-                                  key={row.key}
-                                  className="border-t border-[var(--line-subtle)] py-2 first:border-t-0"
-                                >
-                                  <div className="flex items-center gap-2.5">
-                                    <span className="inline-flex flex-none text-ink-4">
-                                      {row.kind === "doc" ? (
-                                        <Icons.file size={14} />
-                                      ) : (
-                                        <Icons.globe size={14} />
-                                      )}
-                                    </span>
-                                    <span className="min-w-0 flex-1 truncate text-[15px] font-light tracking-[var(--track-body)] text-ink">
-                                      {row.title}
-                                    </span>
-                                    <span className="flex-none [font:var(--text-caption)] tracking-[var(--track-body)] text-ink-3">
-                                      {row.sub}
-                                    </span>
-                                    {row.kind === "pub" ? (
-                                      <span className="flex-none text-xs [font-family:var(--font-mono)] text-ink-3">
-                                        {row.count}건
-                                      </span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        aria-expanded={open}
-                                        onClick={() =>
-                                          setOpenDetails((p) => ({ ...p, [row.key]: !p[row.key] }))
-                                        }
-                                        className="flex-none cursor-pointer border-0 bg-transparent p-1 [font:var(--text-caption)] tracking-[var(--track-body)] text-brand underline underline-offset-2"
-                                      >
-                                        상세 {open ? "접기" : "보기"}
-                                      </button>
-                                    )}
-                                  </div>
-                                  {open && row.detail && (
-                                    <div className="mt-1.5 ml-6 rounded-[var(--radius-s)] bg-surface-2 px-3 py-2.5">
-                                      <p className="m-0 [font:var(--text-body3)] tracking-[var(--track-body)] text-ink-2">
-                                        {row.detail}
-                                      </p>
-                                      {row.teaser && (
-                                        <p className="mt-1.5 mb-0 [font:var(--text-caption)] tracking-[var(--track-body)] text-ink-3">
-                                          근거 — {row.teaser}
-                                        </p>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                    {g.entries.length === 0 && (
-                      <p className="mt-5 mb-0 [font:var(--text-body3)] tracking-[var(--track-body)] text-ink-3">
-                        이 영역에서 확인된 자료가 아직 없어요.
-                      </p>
                     )}
-                  </Tabs.Content>
+                    <span className="inline-flex items-center rounded-[var(--radius-full)] border border-solid border-line bg-surface px-2.5 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] text-ink-2">
+                      {getDept(id).name}
+                    </span>
+                  </span>
                 ))}
-              </Tabs.Root>
+                <button
+                  type="button"
+                  onClick={() => setStdOpen(true)}
+                  className="ml-1 flex-none cursor-pointer border-0 bg-transparent p-1 [font:var(--text-caption)] tracking-[var(--track-body)] text-brand underline underline-offset-2"
+                >
+                  표준 상세
+                </button>
+              </div>
+
+              {/* {기업명} — 자사 간략 흐름. 드래그 가능, 아래 상세 카드와 순서 연동 (v7) */}
+              <div className="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-2">
+                <span className="mr-1 flex-none rounded-[var(--radius-s)] bg-brand-weak px-2 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] text-brand">
+                  {companyInput.trim()}
+                </span>
+                {companyFlow.map((id, i) => {
+                  const mismatch = STANDARD_FLOW[i] !== id;
+                  return (
+                    <span key={id} className="inline-flex items-center gap-1.5">
+                      {i > 0 && (
+                        <span aria-hidden className="inline-flex text-[color:var(--grey-400)]">
+                          <Icons.chevronRight size={12} />
+                        </span>
+                      )}
+                      <span
+                        {...dragProps(i)}
+                        aria-label={`${getDept(id).name} — 끌어서 순서 이동`}
+                        className={`inline-flex cursor-grab items-center gap-1.5 rounded-[var(--radius-full)] border border-solid px-2.5 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] transition-colors duration-[var(--dur-fast)] active:cursor-grabbing ${
+                          dragOver === i
+                            ? "border-[var(--line-brand)] bg-brand-weak text-brand"
+                            : mismatch
+                              ? "border-[color:var(--fg-warning)] bg-surface text-[color:var(--fg-warning)]"
+                              : "border-line bg-surface text-ink-2"
+                        }`}
+                      >
+                        {mismatch && (
+                          <span
+                            aria-hidden
+                            className="size-1.5 flex-none rounded-full bg-[color:var(--fg-warning)]"
+                          />
+                        )}
+                        {getDept(id).name}
+                      </span>
+                    </span>
+                  );
+                })}
+              </div>
+
+              {/* 자사 상세 카드 행 — 간략 흐름과 같은 순서 (드래그 연동) */}
+              <div className="ax-scrollbar-none mt-4 flex items-stretch gap-1.5 overflow-x-auto pb-2">
+                {companyFlow.map((id, i) => {
+                  const mismatch = STANDARD_FLOW[i] !== id;
+                  return (
+                    <div key={id} className="flex flex-none items-center gap-1.5">
+                      {i > 0 && (
+                        <span
+                          aria-hidden
+                          className="inline-flex flex-none text-[color:var(--grey-400)]"
+                        >
+                          <Icons.chevronRight size={14} />
+                        </span>
+                      )}
+                      <div
+                        {...dragProps(i)}
+                        aria-label={`${getDept(id).name} — 끌어서 순서 이동`}
+                        className={`w-[264px] flex-none cursor-grab rounded-[var(--radius-l)] border border-solid bg-surface p-3.5 transition-colors duration-[var(--dur-fast)] active:cursor-grabbing ${
+                          dragOver === i
+                            ? "border-[var(--line-brand)] bg-brand-weak"
+                            : mismatch
+                              ? "border-[color:var(--fg-warning)]"
+                              : "border-line"
+                        }`}
+                      >
+                        <DeptCardBody dept={getDept(id)} mismatch={mismatch} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* 지원 부서 — 흐름(체인) 밖 별도 표기 */}
+              <div className="mt-5 flex flex-wrap items-start gap-2">
+                <span className="flex-none rounded-[var(--radius-s)] bg-surface-3 px-2 py-1 [font:var(--text-label-s)] tracking-[var(--track-body)] text-ink-2">
+                  지원 부서
+                </span>
+                {SUPPORT_DEPT_IDS.map((id) => (
+                  <div
+                    key={id}
+                    className="w-[264px] flex-none rounded-[var(--radius-l)] border border-solid border-line bg-surface p-3.5"
+                  >
+                    <DeptCardBody dept={getDept(id)} mismatch={false} />
+                  </div>
+                ))}
+              </div>
             </section>
 
             {/* ── 다음 단계: 우측 하단 배치 (플로팅 X, v3) ── */}
@@ -825,6 +933,37 @@ export default function CollectPage() {
             </Tabs.Content>
           </Tabs.Root>
         )}
+      </Modal>
+
+      {/* ── 표준 상세 흐름 팝업 (수정요청v7) — 업종별 제조 표준, 추후 업종 추가 구축 예정 ── */}
+      <Modal
+        open={stdOpen}
+        onClose={() => setStdOpen(false)}
+        title={`${industryShort} 제조 표준`}
+      >
+        <ol className="m-0 list-none p-0">
+          {STANDARD_FLOW.map((id, i) => {
+            const dept = getDept(id);
+            return (
+              <li
+                key={id}
+                className="flex items-start gap-3 border-t border-[var(--line-subtle)] py-3 first:border-t-0"
+              >
+                <span className="mt-0.5 inline-flex size-[22px] flex-none items-center justify-center rounded-full bg-surface-3 text-[13px] font-bold [font-family:var(--font-mono)] text-ink-2">
+                  {i + 1}
+                </span>
+                <span className="min-w-0">
+                  <span className="block [font:var(--text-label-m)] tracking-[var(--track-heading)] text-ink">
+                    {dept.name}
+                  </span>
+                  <span className="mt-0.5 block [font:var(--text-body3)] tracking-[var(--track-body)] text-ink-2">
+                    {dept.tasks.join(" · ")}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
       </Modal>
     </>
   );

@@ -19,11 +19,18 @@ import type { StepId } from "@/lib/types";
  * - 저장소 유지 없음 — 새로고침하면 데이터 초기화 (라우트 이동은 Provider가 유지)
  * - 작업 진행 중 새로고침/이탈 시 브라우저 기본 경고(beforeunload)
  */
+/** S0 업로드 첨부 파일 메타 — 실제 업로드·데모 자료 공용 (수정요청v6) */
+export interface AttachedFileInfo {
+  key: string;
+  name: string;
+  type: string;
+}
+
 export interface DiagnosisState {
   /** S0: 기업 식별값 (필수) — 어떤 값이든 데모 시나리오로 진행 */
   companyInput: string;
-  /** S0: 자료 업로드(선택) — 데모에서는 시나리오 12건으로 시뮬레이션 */
-  uploadSimulated: boolean;
+  /** S0: 첨부 파일 목록 — 라우트 이동에도 유지 (수정요청v6) */
+  attachedFiles: AttachedFileInfo[];
   /** S0: 8대 기능 관심영역(선택) */
   interestAreas: string[];
   /** S0: 시스템 현황(선택) */
@@ -40,7 +47,7 @@ export interface DiagnosisState {
 
 const initialState: DiagnosisState = {
   companyInput: "",
-  uploadSimulated: false,
+  attachedFiles: [],
   interestAreas: [],
   systems: [],
   confirmedDocIds: [],
@@ -77,7 +84,7 @@ export function DiagnosisProvider({ children }: { children: ReactNode }) {
   /* 작업 진행 중이면 새로고침·창 닫기 전에 브라우저 기본 경고 표시 */
   const inProgress =
     state.companyInput !== "" ||
-    state.uploadSimulated ||
+    state.attachedFiles.length > 0 ||
     state.completedSteps.length > 0 ||
     state.selectedTaskIds.length > 0;
 

@@ -9,7 +9,6 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
-import * as Collapsible from "@radix-ui/react-collapsible";
 
 import {
   Badge,
@@ -37,11 +36,6 @@ import { AXES, INDUSTRY_AVG, LEVELS, areaName } from "@/data/rubric/meta";
 import { rubricQuestions } from "@/data/rubric/questions";
 import { judgments } from "@/data/scenario/judgments";
 import { areaAssessments } from "@/data/scenario/areas";
-import {
-  stockFlowRows,
-  valueChainAnalysis,
-  type StockTone,
-} from "@/data/scenario/valueChain";
 import { uploadedDocs } from "@/data/scenario/documents";
 import { companyStats, demoCompany } from "@/data/scenario/company";
 import { publicSources } from "@/data/scenario/publicData";
@@ -58,7 +52,7 @@ import {
    - 점수는 전부 computeOverall(judgments) 런타임 계산 (하드코딩 금지)
    - 라이트 연속 흐름 (다크 히어로 폐지), 콘텐츠 max-width 1080px
    - 섹션: 기업 개요·현재 단계 → 카테고리별 준비도 → 8영역 →
-     가치사슬 → 종합 분석 결과 (권고 확인 섹션은 폐지)
+     종합 분석 결과 (권고 확인 섹션은 폐지)
    ============================================================ */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
@@ -525,17 +519,6 @@ function CauseChain({ steps }: { steps: string[] }) {
 }
 
 /* ============================================================
-   섹션 4 보조 — 품목별 재고 흐름 표 (데이터는 valueChain.ts 공유 — 화면·PDF 정합, v5)
-   ============================================================ */
-const STOCK_ROWS = stockFlowRows;
-
-const STOCK_TONE_COLOR: Record<StockTone, string> = {
-  danger: "var(--fg-danger)",
-  warning: "var(--fg-warning)",
-  success: "var(--fg-success)",
-};
-
-/* ============================================================
    페이지
    ============================================================ */
 export default function ResultPage() {
@@ -558,10 +541,6 @@ export default function ResultPage() {
   const [basisAxis, setBasisAxis] = useState<AxisId | null>(null);
   const [statDetail, setStatDetail] = useState<CompanyStat | null>(null);
   const [chainArea, setChainArea] = useState<AreaAssessment | null>(null);
-  /** 가치사슬 신호 아코디언 — 디폴트 접힘 (v3) */
-  const [vcOpen, setVcOpen] = useState(false);
-  /** 호버 중인 가치사슬 신호 태그 — 표의 관련 행을 브랜드 컬러로 연동 (v4) */
-  const [hoverSignal, setHoverSignal] = useState<string | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
 
   const collectDone = completedSteps.includes("collect");
@@ -1168,286 +1147,10 @@ export default function ResultPage() {
         </Inner>
       </section>
 
-      {/* ============ 섹션 4 — 종합 분석 결과 (가치사슬 신호 통합, v3) ============ */}
+      {/* ============ 섹션 4 — 종합 분석 결과 ============ */}
       <section style={{ padding: "56px 0 80px" }}>
         <Inner>
           <SectionHead label="종합 분석" title="종합 분석 결과" />
-
-          {/* 가치사슬 신호 — 아코디언 (Radix Collapsible, 디폴트 접힘), 신호는 #태그로만 */}
-          {valueChainAnalysis.available && (
-            <Card radius="2xl" padded={false} style={{ overflow: "hidden", marginBottom: 16 }}>
-              <Collapsible.Root open={vcOpen} onOpenChange={setVcOpen}>
-              <Collapsible.Trigger asChild>
-              <button
-                type="button"
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: 10,
-                  padding: "18px 22px",
-                  border: "none",
-                  background: "transparent",
-                  cursor: "pointer",
-                  fontFamily: "var(--font-sans)",
-                  textAlign: "left",
-                  transition: "background-color var(--dur-fast) var(--ease)",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--hover-overlay)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "transparent";
-                }}
-              >
-                <strong
-                  style={{
-                    font: "var(--text-title2)",
-                    letterSpacing: "var(--track-heading)",
-                    color: "var(--fg-primary)",
-                    flex: "none",
-                  }}
-                >
-                  가치사슬 신호
-                </strong>
-                <span style={{ display: "flex", flexWrap: "wrap", gap: 6, flex: "1 1 auto" }}>
-                  {valueChainAnalysis.signals.map((signal) => {
-                    const hovered = hoverSignal === signal.id;
-                    return (
-                      <span
-                        key={signal.id}
-                        onMouseEnter={() => setHoverSignal(signal.id)}
-                        onMouseLeave={() => setHoverSignal(null)}
-                        style={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          padding: "4px 10px",
-                          borderRadius: "var(--radius-full)",
-                          background: hovered ? "var(--bg-brand-weak)" : "var(--bg-tertiary)",
-                          font: "var(--text-caption)",
-                          fontWeight: 600,
-                          color: hovered ? "var(--fg-brand)" : "var(--fg-secondary)",
-                          whiteSpace: "nowrap",
-                          transition:
-                            "background-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)",
-                        }}
-                      >
-                        #{signal.title}
-                      </span>
-                    );
-                  })}
-                </span>
-                <span
-                  aria-hidden
-                  style={{
-                    display: "inline-flex",
-                    flex: "none",
-                    color: "var(--grey-500)",
-                    transform: vcOpen ? "rotate(-90deg)" : "rotate(90deg)",
-                    transition: "transform var(--dur-base) var(--ease)",
-                  }}
-                >
-                  <Icons.chevronRight size={16} />
-                </span>
-              </button>
-              </Collapsible.Trigger>
-
-              <Collapsible.Content>
-                <div className="ax-step-enter" style={{ borderTop: "1px solid var(--line-subtle)" }}>
-              {/* 어떤 자료를 결합해서 나온 결과인지 (v4) */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                  gap: 8,
-                  padding: "16px 22px 4px",
-                }}
-              >
-                <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                  올려주신 자료를 결합했어요
-                </span>
-                {valueChainAnalysis.usedDocTypes.map((docType, i) => (
-                  <span key={docType} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                    {i > 0 && (
-                      <span
-                        aria-hidden
-                        style={{ color: "var(--grey-400)", fontSize: 12, fontWeight: 600 }}
-                      >
-                        +
-                      </span>
-                    )}
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        padding: "4px 10px",
-                        borderRadius: "var(--radius-full)",
-                        border: "1px solid var(--line-default)",
-                        background: "var(--bg-secondary)",
-                        font: "var(--text-caption)",
-                        fontWeight: 600,
-                        color: "var(--fg-secondary)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      <Icons.file size={12} />
-                      {docType}
-                    </span>
-                  </span>
-                ))}
-                <span aria-hidden style={{ display: "inline-flex", color: "var(--grey-400)" }}>
-                  <Icons.arrow size={13} />
-                </span>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    padding: "4px 10px",
-                    borderRadius: "var(--radius-full)",
-                    background: "var(--bg-brand-weak)",
-                    font: "var(--text-caption)",
-                    fontWeight: 700,
-                    color: "var(--fg-brand)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  품목별 재고 흐름
-                </span>
-              </div>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", minWidth: 720, borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr>
-                      {[
-                        { key: "item", label: <>자재/품목</>, align: "left" as const },
-                        { key: "stock", label: <>현재고</>, align: "right" as const },
-                        { key: "safety", label: <>안전재고</>, align: "right" as const },
-                        { key: "daily", label: <>일평균 소진</>, align: "right" as const },
-                        { key: "days", label: <>재고 소진일</>, align: "right" as const },
-                        { key: "turn", label: <>월 회전</>, align: "right" as const },
-                        { key: "action", label: <>권장 조치</>, align: "left" as const },
-                      ].map((h) => (
-                        <th
-                          key={h.key}
-                          style={{
-                            textAlign: h.align,
-                            padding: "14px 18px",
-                            font: "var(--text-caption)",
-                            color: "var(--grey-500)",
-                            borderBottom: "1px solid var(--line-default)",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {h.label}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {STOCK_ROWS.map((r, idx) => {
-                      /* 태그 호버 시 근거 행을 브랜드 컬러로 (v4) */
-                      const linked = hoverSignal !== null && r.signals.includes(hoverSignal);
-                      return (
-                      <tr
-                        key={r.item}
-                        style={{
-                          background: linked
-                            ? "var(--bg-brand-weak)"
-                            : r.tone === "danger"
-                              ? "var(--bg-danger-weak)"
-                              : "transparent",
-                          transition: "background-color var(--dur-fast) var(--ease)",
-                        }}
-                      >
-                        <td
-                          style={{
-                            padding: "13px 18px",
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: linked ? "var(--fg-brand)" : "var(--fg-primary)",
-                            transition: "color var(--dur-fast) var(--ease)",
-                            borderBottom:
-                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {r.item}
-                        </td>
-                        {[r.stock, r.safety, r.daily].map((v, i) => (
-                          <td
-                            key={i}
-                            style={{
-                              ...mono,
-                              padding: "13px 18px",
-                              fontSize: 14,
-                              textAlign: "right",
-                              color: "var(--fg-secondary)",
-                              borderBottom:
-                                idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
-                            }}
-                          >
-                            {v}
-                          </td>
-                        ))}
-                        <td
-                          style={{
-                            ...mono,
-                            padding: "13px 18px",
-                            fontSize: 14,
-                            fontWeight: 700,
-                            textAlign: "right",
-                            color: STOCK_TONE_COLOR[r.tone],
-                            borderBottom:
-                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
-                          }}
-                        >
-                          D-{r.days}
-                        </td>
-                        <td
-                          style={{
-                            ...mono,
-                            padding: "13px 18px",
-                            fontSize: 14,
-                            textAlign: "right",
-                            color: "var(--fg-secondary)",
-                            borderBottom:
-                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
-                          }}
-                        >
-                          {r.turn}
-                        </td>
-                        <td
-                          style={{
-                            padding: "13px 18px",
-                            fontSize: 13.5,
-                            fontWeight: r.actionTone === "plain" ? 400 : 700,
-                            color:
-                              r.actionTone === "danger"
-                                ? "var(--fg-danger)"
-                                : r.actionTone === "strong"
-                                  ? "var(--fg-primary)"
-                                  : "var(--fg-secondary)",
-                            borderBottom:
-                              idx === STOCK_ROWS.length - 1 ? "none" : "1px solid var(--line-subtle)",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {r.action}
-                        </td>
-                      </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-                </div>
-              </Collapsible.Content>
-              </Collapsible.Root>
-            </Card>
-          )}
 
           {/* 종합 분석 — 보고서형 단일 카드 (강점/보완/AX 전략 제안 불릿, v3) */}
           <Card radius="2xl" style={{ padding: 28 }}>

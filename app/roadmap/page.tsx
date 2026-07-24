@@ -65,7 +65,7 @@ function StageCard({ stage }: { stage: RoadmapStage }) {
             color: "var(--fg-primary)",
           }}
         >
-          단계 {stage.order} · {stage.title}
+          STEP {stage.order} · {stage.title}
         </h3>
         <p style={{ margin: "6px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
           {stage.purpose}

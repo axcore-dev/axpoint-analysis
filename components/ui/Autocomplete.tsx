@@ -1,12 +1,18 @@
 "use client";
 
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useCombobox } from "downshift";
 
 /**
  * 자동완성 검색 필드 (수정요청v3 — downshift 기반)
  * 콤보박스 동작(필터링·방향키 탐색·Enter 선택·Esc 닫기·ARIA)은 downshift가 담당하고,
  * 시각은 디자인 시스템 .ax-field 문법을 따른다. 매칭 구간은 하이라이트.
+ *
+ * 한글 IME 대응 (수정요청v7): 입력을 React 제어(controlled)로 두면 조합(composition)
+ * 중 재렌더가 input.value를 덮어써 조합이 취소되고 글자가 중복·깨짐.
+ * → 입력 DOM은 완전 비제어로 두고(React가 value를 쓰지 않음), 필터링·하이라이트용
+ *   query 상태만 input 이벤트에서 미러링한다. 외부 값 반영(재방문 복원 등)은
+ *   포커스가 없을 때만 ref로 직접 쓴다.
  */
 
 export interface AutocompleteItem {
@@ -65,13 +71,25 @@ export function Autocomplete({
   inputStyle,
   ...aria
 }: AutocompleteProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  /* 필터링·하이라이트용 미러 — 렌더에만 쓰고 input DOM에는 절대 쓰지 않는다 */
+  const [query, setQuery] = useState(value);
+
+  /* 외부 값 반영(재방문 복원 등) — 사용자가 입력 중(포커스)이면 건드리지 않음 */
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || document.activeElement === el) return;
+    if (el.value !== value) el.value = value;
+    setQuery((prev) => (prev === value ? prev : value));
+  }, [value]);
+
   /* 입력값 포함 항목 우선, 매칭 없으면 전체 노출 (빈 드롭다운 금지) */
   const filtered = useMemo(() => {
-    const q = value.trim().toLowerCase();
+    const q = query.trim().toLowerCase();
     if (!q) return items;
     const matched = items.filter((it) => it.value.toLowerCase().includes(q));
     return matched.length > 0 ? matched : items;
-  }, [items, value]);
+  }, [items, query]);
 
   const {
     isOpen,
@@ -82,41 +100,55 @@ export function Autocomplete({
     openMenu,
   } = useCombobox({
     items: filtered,
-    inputValue: value,
+    inputValue: query,
     selectedItem: null,
     itemToString: (it) => it?.value ?? "",
-    /* blur·닫힘 시 selectedItem(null) 기준으로 입력값을 비우는 기본 동작 방지 — 입력값 유지 */
+    /* blur·Esc 시 입력값을 비우는 기본 동작 방지 — 입력값 유지 (DOM은 비제어).
+       항목 선택 시엔 controlled selectedItem(null) 때문에 inputValue가 ""로 리셋되므로
+       선택 항목 문자열로 고정한다 (v7 버그 수정). */
     stateReducer: (state, { type, changes }) => {
       switch (type) {
         case useCombobox.stateChangeTypes.InputBlur:
+        case useCombobox.stateChangeTypes.InputKeyDownEscape:
           return { ...changes, inputValue: state.inputValue };
+        case useCombobox.stateChangeTypes.ItemClick:
+        case useCombobox.stateChangeTypes.InputKeyDownEnter:
+          return {
+            ...changes,
+            inputValue: changes.selectedItem ? changes.selectedItem.value : state.inputValue,
+          };
         default:
           return changes;
       }
     },
     onInputValueChange: ({ inputValue }) => {
-      if (inputValue !== value) onValueChange(inputValue ?? "");
+      const next = inputValue ?? "";
+      setQuery(next);
+      if (next !== value) onValueChange(next);
     },
     onSelectedItemChange: ({ selectedItem }) => {
       if (selectedItem) onSelect(selectedItem.value);
     },
   });
 
+  /* downshift가 주는 value prop을 버려 입력을 비제어로 유지 (IME 보호) */
+  const { value: _controlledValue, ...inputProps } = getInputProps({
+    ref: inputRef,
+    "aria-label": aria["aria-label"],
+    placeholder,
+    style: inputStyle,
+    onFocus: () => {
+      openMenu();
+      onFocus?.();
+    },
+  });
+  void _controlledValue;
+
   return (
     <div style={{ position: "relative", width: "100%" }}>
       <div className={`ax-field ${fieldClassName ?? ""}`} style={fieldStyle}>
         {leading && <span className="ax-field__icon">{leading}</span>}
-        <input
-          {...getInputProps({
-            "aria-label": aria["aria-label"],
-            placeholder,
-            style: inputStyle,
-            onFocus: () => {
-              openMenu();
-              onFocus?.();
-            },
-          })}
-        />
+        <input {...inputProps} defaultValue={value} />
         {trailing}
       </div>
 
@@ -136,7 +168,7 @@ export function Autocomplete({
                 }`}
               >
                 <span className="min-w-0 flex-1 truncate">
-                  <Highlight text={it.value} query={value} />
+                  <Highlight text={it.value} query={query} />
                 </span>
                 {it.description && (
                   <span className="flex-none [font:var(--text-caption)] text-ink-4">

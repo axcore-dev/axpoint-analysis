@@ -38,6 +38,16 @@ export const companyStats: CompanyStat[] = [
     sourceId: "pub-dart",
   },
   {
+    /* v7: '정부 R&D 과제' 칩 대체 — 스마트공장 사업 수혜 여부 판단, 2번째 위치 */
+    id: "stat-smart",
+    label: "스마트공장 사업",
+    value: "수혜 이력 없음",
+    detail: [
+      "정부 스마트공장 보급·확산 사업 참여 이력이 확인되지 않았어요.",
+      "미참여 기업으로, 기초 단계 신규 신청 대상이에요.",
+    ],
+  },
+  {
     id: "stat-patent",
     label: "특허",
     value: "등록 3건",
@@ -46,13 +56,6 @@ export const companyStats: CompanyStat[] = [
       "IPC 분류는 B23(공작기계) 중심으로, 가공 기술 특허예요.",
     ],
     sourceId: "pub-kipo",
-  },
-  {
-    id: "stat-rnd",
-    label: "정부 R&D 과제",
-    value: "1건",
-    detail: ["2024년 지역 뿌리기업 공정개선 R&D 과제에 참여했어요."],
-    sourceId: "pub-rnd",
   },
   {
     id: "stat-news",

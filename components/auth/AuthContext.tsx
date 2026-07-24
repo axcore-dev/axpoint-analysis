@@ -17,6 +17,12 @@ import {
 export interface AuthUser {
   email: string;
   name: string;
+  /** 소속 회사명 (선택, 수정요청v7 — 내 정보) */
+  company?: string;
+  /** 직책 (선택) */
+  title?: string;
+  /** 연락처 (선택) */
+  phone?: string;
 }
 
 interface AuthContextValue {
@@ -25,6 +31,8 @@ interface AuthContextValue {
   login: (email: string) => void;
   signup: (email: string, name: string) => void;
   logout: () => void;
+  /** 프로필 부분 수정 — 병합 후 sessionStorage에 유지 (수정요청v7) */
+  updateProfile: (patch: Partial<AuthUser>) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -36,6 +44,16 @@ export const DEMO_CREDENTIALS = {
   email: "kim.daeho@demo-company.co.kr",
   password: "demo1234!",
   name: "김대호",
+  company: "(주)데모기업",
+  title: "대표",
+  phone: "010-1234-5678",
+};
+
+/* 데모 프로필 기본값 — 실제 서비스라면 서버에서 내려올 값 */
+const DEMO_PROFILE = {
+  company: DEMO_CREDENTIALS.company,
+  title: DEMO_CREDENTIALS.title,
+  phone: DEMO_CREDENTIALS.phone,
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -58,13 +76,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const login = useCallback((email: string) => {
-    const u = { email, name: DEMO_CREDENTIALS.name };
+    const u: AuthUser = { email, name: DEMO_CREDENTIALS.name, ...DEMO_PROFILE };
     setUser(u);
     persist(u);
   }, []);
 
   const signup = useCallback((email: string, name: string) => {
-    const u = { email, name: name || DEMO_CREDENTIALS.name };
+    const u: AuthUser = { email, name: name || DEMO_CREDENTIALS.name, ...DEMO_PROFILE };
     setUser(u);
     persist(u);
   }, []);
@@ -74,9 +92,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persist(null);
   }, []);
 
+  const updateProfile = useCallback((patch: Partial<AuthUser>) => {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      persist(next);
+      return next;
+    });
+  }, []);
+
   const value = useMemo(
-    () => ({ user, hydrated, login, signup, logout }),
-    [user, hydrated, login, signup, logout],
+    () => ({ user, hydrated, login, signup, logout, updateProfile }),
+    [user, hydrated, login, signup, logout, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

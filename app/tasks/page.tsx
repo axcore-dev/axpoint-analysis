@@ -253,7 +253,7 @@ function TaskCard({
 
 export default function TasksPage() {
   const router = useRouter();
-  const { completedSteps, systems, selectedTaskIds, addTask, toggleTask, completeStep } =
+  const { completedSteps, systems, selectedTaskIds, addTask, toggleTask, completeStep, update } =
     useDiagnosis();
 
   const [filter, setFilter] = useState<Filter>("recommended");
@@ -372,11 +372,10 @@ export default function TasksPage() {
             </p>
           </div>
 
-          {/* 큰 숫자 요약 3개 */}
+          {/* 큰 숫자 요약 — 후보 과제 수 표기는 제거 (수정요청v6) */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 36px" }}>
             {(
               [
-                { n: TOTAL_COUNT, label: "개 후보 과제" },
                 { n: PRIORITY_AREA_COUNT, label: "곳 우선 개선 영역" },
                 { n: RECOMMENDED_COUNT, label: "개 추천 과제" },
               ] as const
@@ -584,7 +583,28 @@ export default function TasksPage() {
                 정부 지원사업 1회 신청 단위: 2~3개
               </div>
             </div>
-            <div style={{ flex: "none", marginLeft: "auto" }}>
+            <div
+              style={{
+                flex: "none",
+                marginLeft: "auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+              }}
+            >
+              {/* 2개 이상 담으면 모두 해제 노출 (수정요청v6) */}
+              {count >= 2 && (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  onClick={() => {
+                    update({ selectedTaskIds: [] });
+                    setSuggestion(null);
+                  }}
+                >
+                  모두 해제
+                </Button>
+              )}
               <Button variant="primary" size="lg" onClick={goRoadmap} disabled={count === 0}>
                 이 과제로 로드맵 보기
                 <Icons.arrow size={17} />

@@ -190,6 +190,14 @@ export const Icons = {
       </>,
       p,
     ),
+  user: (p?: IconProps) =>
+    I(
+      <>
+        <path d="M20 21a8 8 0 0 0-16 0" />
+        <circle cx="12" cy="7" r="4" />
+      </>,
+      p,
+    ),
 } as const;
 
 export type IconName = keyof typeof Icons;

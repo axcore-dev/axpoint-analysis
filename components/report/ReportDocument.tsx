@@ -15,10 +15,8 @@ import {
   hitlResponses,
   keyPoint,
   publicSources,
-  stockFlowRows,
   strategyType,
   uploadedDocs,
-  valueChainAnalysis,
 } from "@/data/scenario";
 
 /**
@@ -38,7 +36,7 @@ import {
  *
  * 페이지 구성 (6~7p, 담은 과제 수에 따라 가변):
  *   ① 표지  ② 종합 소견 + 업종 대비 포지션  ③ 카테고리별 준비도(6축)
- *   ④ 기능영역 8곳 등급 + 가치사슬 신호  ⑤ 담은 과제(6건 초과 시 분할)
+ *   ④ 기능영역 8곳 등급  ⑤ 담은 과제(6건 초과 시 분할)
  *   ⑥ AX 로드맵  ⑦ 예상 효과 산출 + 진단 방법·한계 고지
  */
 
@@ -506,7 +504,7 @@ export function ReportDocument({
     </div>,
   );
 
-  /* ── ④ 기능영역 8곳 등급 + 가치사슬 신호 요약 ── */
+  /* ── ④ 기능영역 8곳 등급 ── */
   bodies.push(
     <div>
       <SectionTitle no="4">기능영역 8곳 진단</SectionTitle>
@@ -562,103 +560,11 @@ export function ReportDocument({
     </div>,
   );
 
-  /* ── ⑤ 가치사슬 신호 + 품목별 재고 흐름 표 (화면과 동일, v5) ── */
-  if (valueChainAnalysis.available) {
-    bodies.push(
-      <div>
-        <SectionTitle no="5">가치사슬 신호</SectionTitle>
-        <div style={{ fontSize: 11.5, color: MUTED, marginBottom: 12 }}>
-          귀사 업로드 자료만으로 교차 분석한 신호예요 (결합 자료:{" "}
-          {valueChainAnalysis.usedDocTypes.join(" + ")} → 품목별 재고 흐름)
-        </div>
-        {valueChainAnalysis.signals.map((sig) => (
-          <div key={sig.id} style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-            <span
-              style={{
-                flex: "none",
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                marginTop: 5,
-                background: sig.severity === "warning" ? "#E8710A" : "#B0B8C1",
-              }}
-            />
-            <div>
-              <div style={{ fontSize: 12.5, fontWeight: 600, color: INK }}>{sig.title}</div>
-              <div style={{ marginTop: 2, fontSize: 11.5, lineHeight: 1.55, color: SECONDARY }}>
-                {sig.finding}
-              </div>
-            </div>
-          </div>
-        ))}
-
-        <div
-          style={{
-            marginTop: 24,
-            fontSize: 15,
-            fontWeight: 700,
-            color: INK,
-            paddingBottom: 8,
-            borderBottom: `1px solid ${HAIRLINE}`,
-            marginBottom: 4,
-          }}
-        >
-          품목별 재고 흐름
-        </div>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={th}>자재/품목</th>
-              <th style={{ ...th, textAlign: "right" }}>현재고</th>
-              <th style={{ ...th, textAlign: "right" }}>안전재고</th>
-              <th style={{ ...th, textAlign: "right" }}>일평균 소진</th>
-              <th style={{ ...th, textAlign: "right" }}>재고 소진일</th>
-              <th style={{ ...th, textAlign: "right" }}>월 회전</th>
-              <th style={th}>권장 조치</th>
-            </tr>
-          </thead>
-          <tbody>
-            {stockFlowRows.map((r) => {
-              const dayColor =
-                r.tone === "danger" ? "#F04452" : r.tone === "warning" ? "#B45608" : "#0F9D58";
-              return (
-                <tr key={r.item} style={{ background: r.tone === "danger" ? "#FDECEE" : "transparent" }}>
-                  <td style={{ ...td, fontWeight: 600, whiteSpace: "nowrap" }}>{r.item}</td>
-                  <td style={{ ...tdMono, textAlign: "right" }}>{r.stock}</td>
-                  <td style={{ ...tdMono, textAlign: "right" }}>{r.safety}</td>
-                  <td style={{ ...tdMono, textAlign: "right" }}>{r.daily}</td>
-                  <td style={{ ...tdMono, textAlign: "right", fontWeight: 700, color: dayColor }}>
-                    D-{r.days}
-                  </td>
-                  <td style={{ ...tdMono, textAlign: "right" }}>{r.turn}</td>
-                  <td
-                    style={{
-                      ...td,
-                      whiteSpace: "nowrap",
-                      fontWeight: r.actionTone === "plain" ? 400 : 700,
-                      color: r.actionTone === "danger" ? "#F04452" : r.actionTone === "strong" ? INK : SECONDARY,
-                    }}
-                  >
-                    {r.action}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        <div style={note}>
-          재고 소진일은 일평균 소진 기준의 예상이에요. 발주점 기준이 없어 지금은 사람
-          기억으로 발주 시점을 잡고 있어요. (데모 수치 — 발주서·생산 기록·재고표 기준)
-        </div>
-      </div>,
-    );
-  }
-
-  /* ── ⑥ 담은 과제 (6건 초과 시 페이지 분할) ── */
+  /* ── ⑤ 담은 과제 (6건 초과 시 페이지 분할) ── */
   taskChunks.forEach((tasks, chunkIdx) => {
     bodies.push(
       <div>
-        <SectionTitle no="6">
+        <SectionTitle no="5">
           담은 과제 <span style={{ fontFamily: MONO }}>{selectedTasks.length}</span>건
           {taskChunks.length > 1 && (
             <span style={{ fontSize: 13, fontWeight: 400, color: MUTED }}>
@@ -721,7 +627,7 @@ export function ReportDocument({
   /* ── ⑥ AX 로드맵 (기간·게이트·역할) ── */
   bodies.push(
     <div>
-      <SectionTitle no="7">
+      <SectionTitle no="6">
         AX 로드맵 — 총 <span style={{ fontFamily: MONO }}>{roadmap.totalMonths}</span>개월
       </SectionTitle>
       {roadmap.stages.length === 0 ? (
@@ -740,7 +646,7 @@ export function ReportDocument({
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: INK }}>
                 <span style={{ fontFamily: MONO, fontSize: 12, color: BLUE }}>
-                  단계 {stage.order}
+                  STEP {stage.order}
                 </span>{" "}
                 {stage.title}
               </div>
@@ -790,7 +696,7 @@ export function ReportDocument({
   /* ── ⑦ 예상 효과 산출 + 진단 방법·한계 고지 (말미 고정 블록) ── */
   bodies.push(
     <div>
-      <SectionTitle no="8">예상 효과 산출 내역</SectionTitle>
+      <SectionTitle no="7">예상 효과 산출 내역</SectionTitle>
       {roi.items.length === 0 ? (
         <div style={{ fontSize: 13, color: MUTED }}>
           정량 효과 산출 대상 과제가 없어요 (기반 과제는 정성 효과로 분류돼요).
