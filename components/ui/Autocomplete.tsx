@@ -20,6 +20,10 @@ export interface AutocompleteItem {
   value: string;
   /** 보조 설명 (우측 회색 표기) */
   description?: string;
+  /** 이름 옆 코드 배지 (모노 칩 — 사업자번호 등) */
+  badge?: string;
+  /** 포커스(하이라이트) 시 아래 줄에 펼치는 상세 정보 */
+  detail?: string;
 }
 
 interface AutocompleteProps {
@@ -38,6 +42,8 @@ interface AutocompleteProps {
   fieldClassName?: string;
   fieldStyle?: CSSProperties;
   inputStyle?: CSSProperties;
+  /** 각 항목 앞 아이콘 (기업 검색의 건물 아이콘 등) */
+  itemIcon?: ReactNode;
 }
 
 /** 매칭 구간 하이라이트 */
@@ -69,6 +75,7 @@ export function Autocomplete({
   fieldClassName,
   fieldStyle,
   inputStyle,
+  itemIcon,
   ...aria
 }: AutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -160,14 +167,35 @@ export function Autocomplete({
       >
         {isOpen &&
           filtered.map((it, i) => (
-            <li key={it.value} {...getItemProps({ item: it, index: i })}>
+            <li key={`${it.value}|${it.badge ?? ""}`} {...getItemProps({ item: it, index: i })}>
               <span
                 className={`flex w-full cursor-pointer items-center gap-2.5 rounded-[var(--radius-s)] px-3.5 py-2.5 text-left [font:var(--text-body2)] tracking-[var(--track-body)] text-ink transition-colors duration-[var(--dur-fast)] ${
                   i === highlightedIndex ? "bg-[var(--hover-overlay)]" : ""
                 }`}
               >
-                <span className="min-w-0 flex-1 truncate">
-                  <Highlight text={it.value} query={query} />
+                {itemIcon && (
+                  <span className="flex-none text-[var(--fg-brand)]">{itemIcon}</span>
+                )}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2">
+                    <span className="min-w-0 truncate font-semibold">
+                      <Highlight text={it.value} query={query} />
+                    </span>
+                    {it.badge && (
+                      <span
+                        className="flex-none rounded-full bg-[var(--bg-brand-weak)] px-2 py-0.5 text-[var(--fg-brand)]"
+                        style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: 0 }}
+                      >
+                        {it.badge}
+                      </span>
+                    )}
+                  </span>
+                  {/* 상세줄 — 포커스된 항목만 펼침 (지역·업종·설립 등) */}
+                  {i === highlightedIndex && it.detail && (
+                    <span className="mt-0.5 block truncate [font:var(--text-caption)] text-ink-4">
+                      {it.detail}
+                    </span>
+                  )}
                 </span>
                 {it.description && (
                   <span className="flex-none [font:var(--text-caption)] text-ink-4">

@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthContext";
 import { LoginModal } from "@/components/auth/LoginModal";
 import { useDiagnosis, type AttachedFileInfo } from "@/components/flow/DiagnosisContext";
-import { uploadedDocs } from "@/data/scenario/documents";
-import { COMPANY_DIRECTORY, companyDesc, findCompany } from "@/data/scenario/companies";
-import { FUNCTION_AREAS } from "@/data/rubric/meta";
+import { api, API_URL } from "@/lib/api";
 import {
   Autocomplete,
   BackIconButton,
@@ -35,24 +33,30 @@ const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 const TYPING_PHRASES = ["(주)데모기업", "123-45-67890"];
 const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
-/** 예상 검색어 (자동완성) — 기업 디렉터리(companies.ts)에서 파생 (v7: 단일 원본 이동) */
-const COMPANY_ITEMS: AutocompleteItem[] = COMPANY_DIRECTORY.map((c) => ({
-  value: c.aliases[0] ?? c.name,
-  description: companyDesc(c),
-}));
-
-/** 미등록 기업 폴백 — 데모 시나리오 기본값 */
-const DEMO_COMPANY_DESC = companyDesc(COMPANY_DIRECTORY[0]);
-
 /** 올리면 좋은 서류 — 업로드 존에 칩으로 강조 (v3 개선) */
 const DOC_HINTS = ["생산일지", "발주서", "재고표", "검사성적서"];
 
-/** 데모 버튼용 시나리오 자료 12건 (v6: 실제 업로드와 분리) */
-const DEMO_FILES: AttachedFileInfo[] = uploadedDocs.map((d) => ({
-  key: d.id,
-  name: d.fileName,
-  type: d.fileType.toUpperCase(),
-}));
+type SearchHit = {
+  id: string | null;
+  name: string;
+  bizNo: string | null;
+  region: string | null;
+  industry: string | null;
+  estDate: string | null;
+  address: string | null;
+  source: string;
+};
+
+/** 사업자번호 표기 — 000-00-00000 */
+const fmtBizNo = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
+
+/** 자동완성 상세줄 — 지역 · 업종 · 설립연도 (없으면 주소로 대체) */
+const hitDetail = (it: SearchHit) => {
+  const parts = [it.region, it.industry, it.estDate ? `설립 ${it.estDate.slice(0, 4)}` : null].filter(
+    Boolean,
+  );
+  return parts.length > 0 ? parts.join(" · ") : (it.address ?? "");
+};
 
 const stepCardStyle: CSSProperties = {
   width: "100%",
@@ -79,9 +83,10 @@ export default function LandingPage() {
   const { user } = useAuth();
   const {
     companyInput,
+    companyId,
+    assessmentId,
     attachedFiles,
     systems,
-    interestAreas,
     update,
     completeStep,
   } = useDiagnosis();
@@ -95,7 +100,43 @@ export default function LandingPage() {
   /** 업로드 판독 로딩 — 완료 시 파일을 첨부 목록에 합침 (v6 개편) */
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [noMoreDemo, setNoMoreDemo] = useState(false);
+  /** 자동완성 — 백엔드 검색(디렉터리+비즈노) 결과 */
+  const [suggestions, setSuggestions] = useState<AutocompleteItem[]>([]);
+  /** 검색 결과의 기업명 → 사업자번호 (기업 확인 단계의 국세청 검증에 사용) */
+  const bizNoByName = useRef<Map<string, string>>(new Map());
+  const [verifying, setVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
+  /** 기업 확인 카드용 — 사업자번호로 검색해도 기업명을 조회해 표시한다 */
+  const [resolved, setResolved] = useState<{ name: string; bizNo: string | null } | null>(null);
+
+  /* 기업 확인 진입 시 기업명·사업자번호 해석 — 번호로 검색했으면 이름을 찾아온다 */
+  useEffect(() => {
+    if (phase !== "confirm") return;
+    const input = company.trim();
+    const raw = input.replace(/\D/g, "");
+    const isBizNo = raw.length === 10;
+    setResolved(null);
+    let cancelled = false;
+    (async () => {
+      try {
+        const { items } = await api<{ items: SearchHit[] }>(
+          `/api/companies/search?q=${encodeURIComponent(input)}`,
+        );
+        const hit = isBizNo
+          ? (items.find((it) => it.bizNo === raw) ?? items[0])
+          : (items.find((it) => it.name === input) ?? items[0]);
+        if (cancelled) return;
+        if (hit) setResolved({ name: hit.name, bizNo: hit.bizNo });
+        else setResolved({ name: isBizNo ? "" : input, bizNo: isBizNo ? raw : (bizNoByName.current.get(input) ?? null) });
+      } catch {
+        if (!cancelled)
+          setResolved({ name: isBizNo ? "" : input, bizNo: isBizNo ? raw : (bizNoByName.current.get(input) ?? null) });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, company]);
 
   /* 뒤로 돌아왔을 때 진행 중 입력값 복원 */
   useEffect(() => {
@@ -144,25 +185,69 @@ export default function LandingPage() {
     return () => clearTimeout(timer);
   }, [phase, touched, idle]);
 
-  /* 업로드 판독 로딩 — 1초 후 첨부 목록에 합침 (v6: 실제 업로드·데모 공용) */
-  const startUpload = (files: AttachedFileInfo[]) => {
-    setNoMoreDemo(false);
+  /* 자동완성 — 입력 후 300ms 디바운스로 백엔드 검색 (검색 API는 공개, 오류는 빈 목록) */
+  useEffect(() => {
+    const q = company.trim();
+    if (phase !== "search" || !q) {
+      setSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const { items } = await api<{ items: SearchHit[] }>(
+          `/api/companies/search?q=${encodeURIComponent(q)}`,
+        );
+        for (const it of items) if (it.bizNo) bizNoByName.current.set(it.name, it.bizNo);
+        setSuggestions(
+          items.map((it) => ({
+            value: it.name,
+            badge: it.bizNo ? fmtBizNo(it.bizNo) : undefined,
+            detail: hitDetail(it),
+          })),
+        );
+      } catch {
+        setSuggestions([]);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [company, phase]);
+
+  /** 실제 업로드 — MinIO 저장 + 분류 큐 등록. 거부된 파일은 목록에서 제외 */
+  const startUpload = async (files: File[]) => {
+    if (!assessmentId || files.length === 0) return;
     setUploading(true);
-    /* ponytail: 판독 1초 중 파일 삭제 시 삭제 전 목록 기준 병합 — 문제 되면 ref로 최신 목록 참조 */
-    setTimeout(() => {
-      const merged = [
-        ...attachedFiles,
-        ...files.filter((f) => !attachedFiles.some((a) => a.key === f.key)),
-      ];
+    try {
+      const form = new FormData();
+      for (const f of files) form.append("files", f);
+      const res = await fetch(`${API_URL}/api/assessments/${assessmentId}/files`, {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      const body = (await res.json()) as {
+        saved?: { id: string; name: string }[];
+        rejected?: { name: string; reason: string }[];
+        error?: string;
+      };
+      const added: AttachedFileInfo[] = (body.saved ?? []).map((s) => ({
+        key: s.id,
+        name: s.name,
+        type: (s.name.split(".").pop() ?? "").toUpperCase(),
+      }));
+      update({ attachedFiles: [...attachedFiles, ...added] });
+    } finally {
       setUploading(false);
-      update({ attachedFiles: merged });
-    }, 1000);
+    }
   };
 
-  /** 첨부 파일 삭제 (v3 개선) — 전부 지우면 업로드 안 한 상태로 */
-  const removeDoc = (key: string) => {
-    setNoMoreDemo(false);
+  /** 첨부 파일 삭제 (v3 개선) — 서버 원본도 함께 삭제 */
+  const removeDoc = async (key: string) => {
     update({ attachedFiles: attachedFiles.filter((f) => f.key !== key) });
+    try {
+      await api(`/api/files/${key}`, { method: "DELETE" });
+    } catch {
+      /* 이미 삭제된 경우 등 — 목록에서 이미 제거됨 */
+    }
   };
 
   const canSubmit = company.trim().length >= 1;
@@ -195,28 +280,53 @@ export default function LandingPage() {
     fileInputRef.current?.click();
   };
 
-  /** 파일 선택 완료 → 판독 로딩 후 첨부 */
+  /** 파일 선택 완료 → 서버 업로드 */
   const onFilesPicked = (list: FileList | null) => {
     const files = Array.from(list ?? []);
     if (files.length === 0) return;
-    startUpload(
-      files.map((f, i) => ({
-        key: `up-${Date.now()}-${i}-${f.name}`,
-        name: f.name,
-        type: (f.name.split(".").pop() ?? "").toUpperCase(),
-      })),
-    );
+    void startUpload(files);
   };
 
-  /** 데모 버튼 — 기존 더미 데이터 12건 일괄 첨부 (v6: 실제 업로드와 분리) */
-  const attachDemo = () => {
-    if (uploading) return;
-    const missing = DEMO_FILES.filter((d) => !attachedFiles.some((a) => a.key === d.key));
-    if (missing.length === 0) {
-      setNoMoreDemo(true);
+  /** 기업 확인 → 국세청 검증 + 진단 세션 생성 후 다음 단계 */
+  const confirmCompany = async () => {
+    if (verifying) return;
+    const bizNo = resolved?.bizNo ?? null;
+    const name = resolved?.name || company.trim();
+    if (!bizNo) {
+      setVerifyError("사업자번호를 확인할 수 없어요. 검색 결과에서 기업을 선택하거나 사업자번호로 검색해 주세요.");
       return;
     }
-    startUpload(missing);
+    setVerifying(true);
+    setVerifyError(null);
+    try {
+      const res = await api<{
+        verified: boolean;
+        reason?: string;
+        company?: { id: string; name: string };
+      }>("/api/companies/verify", {
+        method: "POST",
+        body: JSON.stringify({ bizNo, name }),
+      });
+      if (!res.verified || !res.company) {
+        setVerifyError(res.reason ?? "기업 확인에 실패했어요.");
+        return;
+      }
+      // 이미 만든 진단이 있으면 재사용, 없으면 생성
+      let aid = assessmentId;
+      if (!aid || companyId !== res.company.id) {
+        const created = await api<{ assessment: { id: string } }>("/api/assessments", {
+          method: "POST",
+          body: JSON.stringify({ companyId: res.company.id }),
+        });
+        aid = created.assessment.id;
+      }
+      update({ companyId: res.company.id, assessmentId: aid, companyInput: res.company.name });
+      setPhase("upload");
+    } catch (e) {
+      setVerifyError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.");
+    } finally {
+      setVerifying(false);
+    }
   };
 
   /** '없음'은 배타 선택 — 없음을 고르면 나머지 해제, 다른 걸 고르면 없음 해제 */
@@ -230,22 +340,23 @@ export default function LandingPage() {
     });
   };
 
-  const toggleArea = (id: string) => {
-    update({
-      interestAreas: interestAreas.includes(id)
-        ? interestAreas.filter((a) => a !== id)
-        : [...interestAreas, id],
-    });
-  };
-
-  const startDiagnosis = () => {
-    update({ companyInput: company.trim() });
+  const startDiagnosis = async () => {
+    if (assessmentId) {
+      try {
+        await api(`/api/assessments/${assessmentId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ systems, completedSteps: ["landing"] }),
+        });
+      } catch {
+        /* 저장 실패해도 진행 — 다음 단계에서 재시도 가능 */
+      }
+    }
     completeStep("landing");
     router.push("/collect");
   };
 
-  /* 두 섹션(프로그램·관심 영역) 모두 골라야 진단 시작 (v3) */
-  const canStart = systems.length > 0 && interestAreas.length > 0;
+  /* 사용 중인 프로그램을 골라야 진단 시작 (관심 영역은 삭제 확정 — 작업 요청v2) */
+  const canStart = systems.length > 0;
 
   return (
     <div className="axp-landing flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
@@ -286,12 +397,13 @@ export default function LandingPage() {
               value={company}
               onValueChange={setCompany}
               onSelect={pickSuggestion}
-              /* v6: 입력 전에는 드롭다운 미노출 — 최근 검색 기록처럼 보이는 전체 목록 제거 */
-              items={company.trim() ? COMPANY_ITEMS : []}
+              /* v6: 입력 전에는 드롭다운 미노출. 목록은 백엔드 검색(디렉터리+비즈노) 결과 */
+              items={company.trim() ? suggestions : []}
               placeholder={placeholder}
               aria-label="기업명 또는 사업자번호"
               onFocus={() => setTouched(true)}
               leading={<Icons.search size={22} />}
+              itemIcon={<Icons.building size={18} />}
               fieldClassName="ax-field--pill"
               fieldStyle={{ height: 66, paddingLeft: 26, paddingRight: 9, gap: 12 }}
               inputStyle={{ fontSize: 19 }}
@@ -328,7 +440,8 @@ export default function LandingPage() {
                 overflowWrap: "anywhere",
               }}
             >
-              {company.trim()}
+              {/* 기업명 우선 표시 — 사업자번호로 검색해도 조회된 기업명을 보여준다 */}
+              {resolved === null ? "…" : resolved.name || company.trim()}
             </div>
             <div
               style={{
@@ -337,16 +450,23 @@ export default function LandingPage() {
                 color: "var(--fg-tertiary)",
               }}
             >
-              {/* v6: 검색한 기업의 메타를 그대로 전달 (미등록 기업은 데모 기본값) */}
-              {(() => {
-                const found = findCompany(company);
-                return found ? companyDesc(found) : DEMO_COMPANY_DESC;
-              })()}
+              {resolved?.bizNo ? `사업자번호 ${fmtBizNo(resolved.bizNo)}` : ""}
             </div>
+            {verifyError && (
+              <p
+                style={{
+                  margin: "12px 0 0",
+                  font: "var(--text-caption)",
+                  color: "var(--fg-danger, #d4380d)",
+                }}
+              >
+                {verifyError}
+              </p>
+            )}
           </div>
           <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 8 }}>
-            <Button variant="primary" size="lg" full onClick={() => setPhase("upload")}>
-              맞아요, 계속할게요
+            <Button variant="primary" size="lg" full disabled={verifying} onClick={confirmCompany}>
+              {verifying ? "확인하고 있어요" : "맞아요, 계속할게요"}
             </Button>
             <Button variant="ghost" size="md" full onClick={() => setPhase("search")}>
               다시 검색
@@ -421,18 +541,6 @@ export default function LandingPage() {
               )}
             </button>
 
-            {/* 데모 버튼 — 기존 더미 데이터 파일 일괄 첨부 (v6) */}
-            <div className="mt-2 flex items-center justify-between gap-2">
-              {noMoreDemo ? (
-                <p className="m-0 [font:var(--text-caption)] text-ink-4">더 올릴 자료가 없어요</p>
-              ) : (
-                <span />
-              )}
-              <Button variant="ghost" size="sm" disabled={uploading} onClick={attachDemo}>
-                데모
-              </Button>
-            </div>
-
             {/* 업로드된 파일 리스트 — 콤팩트 행 + 파일별 삭제 (v3 개선) */}
             {attachedFiles.length > 0 && (
               <ul className="ax-scrollbar-none mt-3 flex max-h-[236px] list-none flex-col gap-1 overflow-y-auto">
@@ -492,7 +600,7 @@ export default function LandingPage() {
           <BackIconButton label="자료 올리기로 돌아가기" onClick={() => setPhase("upload")} />
           <DotProgress step={3} total={3} />
           <h2 className="ax-heading" style={cardHeadingStyle}>
-            <b>사용 중인 프로그램</b>과 <b>관심 영역</b>을 골라주세요
+            <b>사용 중인 프로그램</b>을 골라주세요
           </h2>
 
           <div style={{ marginTop: 24 }}>
@@ -517,26 +625,6 @@ export default function LandingPage() {
               ))}
             </div>
 
-            <div
-              style={{
-                font: "var(--text-label-s)",
-                color: "var(--fg-secondary)",
-                margin: "20px 0 10px",
-              }}
-            >
-              관심 영역
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {FUNCTION_AREAS.map((area) => (
-                <Tag
-                  key={area.id}
-                  selected={interestAreas.includes(area.id)}
-                  onClick={() => toggleArea(area.id)}
-                >
-                  {area.name}
-                </Tag>
-              ))}
-            </div>
           </div>
 
           <div className="mt-7 flex flex-col gap-2">
