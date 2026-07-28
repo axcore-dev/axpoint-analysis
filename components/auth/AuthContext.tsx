@@ -9,10 +9,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { api } from "@/lib/api";
 
 /**
- * 가짜 인증 (데모) — 백엔드 없음. 어떤 값이든 통과하며 sessionStorage에 유지.
- * 흐름만 실제 서비스와 동일하게 맞춘다 (수정요청v1 확정 사항).
+ * 인증 — 백엔드(better-auth) 연동. 세션은 httpOnly 쿠키로 유지되고,
+ * 마운트 시 /api/me로 복원한다. 이메일 가입은 인증 메일 완료 후 로그인 가능.
  */
 export interface AuthUser {
   email: string;
@@ -23,87 +24,121 @@ export interface AuthUser {
   title?: string;
   /** 연락처 (선택) */
   phone?: string;
+  /** '체험하기' 게스트 계정 여부 */
+  isAnonymous?: boolean;
 }
 
 interface AuthContextValue {
   user: AuthUser | null;
   hydrated: boolean;
-  login: (email: string) => void;
-  signup: (email: string, name: string) => void;
-  logout: () => void;
-  /** 프로필 부분 수정 — 병합 후 sessionStorage에 유지 (수정요청v7) */
-  updateProfile: (patch: Partial<AuthUser>) => void;
+  login: (email: string, password: string) => Promise<void>;
+  /** 가입 — 성공해도 세션은 없음(이메일 인증 완료 후 로그인) */
+  signup: (email: string, password: string, name: string) => Promise<void>;
+  /** '체험하기' — 게스트 계정 즉석 발급 + 자동 로그인 */
+  loginGuest: () => Promise<void>;
+  /** 구글 소셜 로그인 — 동의 화면으로 이동 */
+  loginGoogle: () => Promise<void>;
+  logout: () => Promise<void>;
+  /** 프로필 부분 수정 — 서버 반영 후 로컬 병합 (수정요청v7) */
+  updateProfile: (patch: Partial<AuthUser>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const STORAGE_KEY = "axpoint-demo-auth-v1";
-
-/** 데모 기본값 — 로그인 폼에 미리 채워 넣는다 */
-export const DEMO_CREDENTIALS = {
-  email: "kim.daeho@demo-company.co.kr",
-  password: "demo1234!",
-  name: "김대호",
-  company: "(주)데모기업",
-  title: "대표",
-  phone: "010-1234-5678",
-};
-
-/* 데모 프로필 기본값 — 실제 서비스라면 서버에서 내려올 값 */
-const DEMO_PROFILE = {
-  company: DEMO_CREDENTIALS.company,
-  title: DEMO_CREDENTIALS.title,
-  phone: DEMO_CREDENTIALS.phone,
+type SessionUser = {
+  email: string;
+  name: string;
+  title?: string | null;
+  phone?: string | null;
+  isAnonymous?: boolean | null;
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => {
+  const refresh = useCallback(async () => {
     try {
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (raw) setUser(JSON.parse(raw) as AuthUser);
+      const { user: u, companyName } = await api<{ user: SessionUser; companyName: string | null }>(
+        "/api/me",
+      );
+      setUser({
+        email: u.email,
+        name: u.name,
+        company: companyName ?? undefined,
+        title: u.title ?? undefined,
+        phone: u.phone ?? undefined,
+        isAnonymous: u.isAnonymous ?? undefined,
+      });
     } catch {
-      /* 무시 */
+      setUser(null); // 세션 없음(401 포함)
     }
-    setHydrated(true);
   }, []);
 
-  const persist = (u: AuthUser | null) => {
-    if (u) sessionStorage.setItem(STORAGE_KEY, JSON.stringify(u));
-    else sessionStorage.removeItem(STORAGE_KEY);
-  };
+  useEffect(() => {
+    refresh().finally(() => setHydrated(true));
+  }, [refresh]);
 
-  const login = useCallback((email: string) => {
-    const u: AuthUser = { email, name: DEMO_CREDENTIALS.name, ...DEMO_PROFILE };
-    setUser(u);
-    persist(u);
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string) => {
+      await api("/api/auth/sign-in/email", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      await refresh();
+    },
+    [refresh],
+  );
 
-  const signup = useCallback((email: string, name: string) => {
-    const u: AuthUser = { email, name: name || DEMO_CREDENTIALS.name, ...DEMO_PROFILE };
-    setUser(u);
-    persist(u);
-  }, []);
-
-  const logout = useCallback(() => {
-    setUser(null);
-    persist(null);
-  }, []);
-
-  const updateProfile = useCallback((patch: Partial<AuthUser>) => {
-    setUser((prev) => {
-      if (!prev) return prev;
-      const next = { ...prev, ...patch };
-      persist(next);
-      return next;
+  const signup = useCallback(async (email: string, password: string, name: string) => {
+    await api("/api/auth/sign-up/email", {
+      method: "POST",
+      body: JSON.stringify({ email, password, name }),
     });
+    // 이메일 인증 완료 전에는 세션이 없다 — 화면은 인증 안내를 보여준다
   }, []);
+
+  const loginGuest = useCallback(async () => {
+    await api("/api/auth/sign-in/anonymous", { method: "POST", body: JSON.stringify({}) });
+    await refresh();
+  }, [refresh]);
+
+  const loginGoogle = useCallback(async () => {
+    // 구글 동의 화면으로 이동 → 완료 후 콜백이 세션 쿠키를 심고 원래 주소로 복귀
+    const { url } = await api<{ url: string }>("/api/auth/sign-in/social", {
+      method: "POST",
+      body: JSON.stringify({ provider: "google", callbackURL: window.location.origin }),
+    });
+    window.location.href = url;
+  }, []);
+
+  const logout = useCallback(async () => {
+    try {
+      await api("/api/auth/sign-out", { method: "POST", body: JSON.stringify({}) });
+    } finally {
+      setUser(null);
+    }
+  }, []);
+
+  const updateProfile = useCallback(
+    async (patch: Partial<AuthUser>) => {
+      // 서버에 반영되는 항목: 이름·직책·연락처 (회사 연결은 기업 검색 연동 시)
+      await api("/api/auth/update-user", {
+        method: "POST",
+        body: JSON.stringify({
+          ...(patch.name !== undefined && { name: patch.name }),
+          ...(patch.title !== undefined && { title: patch.title }),
+          ...(patch.phone !== undefined && { phone: patch.phone }),
+        }),
+      });
+      setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+    },
+    [],
+  );
 
   const value = useMemo(
-    () => ({ user, hydrated, login, signup, logout, updateProfile }),
-    [user, hydrated, login, signup, logout, updateProfile],
+    () => ({ user, hydrated, login, signup, loginGuest, loginGoogle, logout, updateProfile }),
+    [user, hydrated, login, signup, loginGuest, loginGoogle, logout, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
