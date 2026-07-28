@@ -9,6 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { api } from "@/lib/api";
 import type { StepId } from "@/lib/types";
 
 /**
@@ -29,6 +30,10 @@ export interface AttachedFileInfo {
 export interface DiagnosisState {
   /** S0: 기업 식별값 (필수) — 어떤 값이든 데모 시나리오로 진행 */
   companyInput: string;
+  /** 서버 기업 id — 국세청 검증 통과 후 채워짐 */
+  companyId: string | null;
+  /** 서버 진단 세션 id — 기업 확정 시 생성 */
+  assessmentId: string | null;
   /** S0: 첨부 파일 목록 — 라우트 이동에도 유지 (수정요청v6) */
   attachedFiles: AttachedFileInfo[];
   /** S0: 8대 기능 관심영역(선택) */
@@ -47,6 +52,8 @@ export interface DiagnosisState {
 
 const initialState: DiagnosisState = {
   companyInput: "",
+  companyId: null,
+  assessmentId: null,
   attachedFiles: [],
   interestAreas: [],
   systems: [],
@@ -103,11 +110,18 @@ export function DiagnosisProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const completeStep = useCallback((step: StepId) => {
-    setState((s) =>
-      s.completedSteps.includes(step)
-        ? s
-        : { ...s, completedSteps: [...s.completedSteps, step] },
-    );
+    setState((s) => {
+      if (s.completedSteps.includes(step)) return s;
+      const completedSteps = [...s.completedSteps, step];
+      /* 서버에도 저장 — 마이페이지 이어하기·재열람이 진행 단계를 복원할 수 있게 (실패해도 화면 진행은 유지) */
+      if (s.assessmentId) {
+        api(`/api/assessments/${s.assessmentId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ completedSteps }),
+        }).catch(() => {});
+      }
+      return { ...s, completedSteps };
+    });
   }, []);
 
   const addTask = useCallback((taskId: string) => {
