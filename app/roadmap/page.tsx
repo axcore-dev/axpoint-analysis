@@ -1,34 +1,68 @@
 "use client";
 
-import { useMemo, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useInView } from "react-intersection-observer";
-import type { RoadmapStage } from "@/lib/types";
-import { getTask } from "@/data/catalog/tasks";
-import { areaName } from "@/data/rubric/meta";
-import { generateRoadmap } from "@/lib/roadmap";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
+import { RouteLoading } from "@/components/flow/RouteLoading";
+import { api } from "@/lib/api";
 import { Badge, Button, Card, Icons } from "@/components/ui";
 
 /**
- * S4 AX 로드맵 — F-RMP-01~05 (2026-07-10 수정요청v3)
- * 단계 축 = AX 7단계 방법론 — 담은 과제로만 구성, 단계 순서가 곧 우선순위 (v4).
+ * AX 로드맵 — 원본 세로 타임라인 UI + 백엔드 실연동.
+ * 담은 과제를 방법론 단계로 그룹핑한 결과(기간·비용)를 서버에서 재계산해 표시.
+ * 선행 과제 자동 삽입 없음(확정) — 담은 과제만 포함. 단계 순서가 곧 우선순위.
  * 세로 타임라인: 좌측 레일(도트 + '약 N개월' 마커) + 우측 단계 카드.
  * 스크롤 중앙 포커스 — 뷰포트 중앙 카드만 선명, 나머지는 은은하게.
- * 귀사/AXpoint 할 일은 단일 리스트로 통합, 진행 기준(게이트) 카드는 폐지.
+ * 서버 응답에 없는 데이터(목표 문장·단계 설명·할 일·비용 참고문구)는 렌더하지 않는다.
  */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)", letterSpacing: "0" };
 
-function range([min, max]: [number, number], unit: string): string {
+function range(min: number, max: number, unit: string): string {
   const fmt = (n: number) => n.toLocaleString("ko-KR");
   return min === max ? `${fmt(min)}${unit}` : `${fmt(min)}~${fmt(max)}${unit}`;
+}
+
+type RoadmapPayload = {
+  stages: {
+    order: number;
+    stage: number;
+    stageName: string;
+    taskNos: number[];
+    startMonth: number;
+    durationMonths: number;
+    costMin: number;
+    costMax: number;
+  }[];
+  totalMonths: number;
+  costMin: number;
+  costMax: number;
+  tasks: {
+    no: number;
+    functionArea: string;
+    title: string;
+    durationMinMonths: number | null;
+    durationMaxMonths: number | null;
+    costMin: number | null;
+    costMax: number | null;
+    costNote: string | null;
+  }[];
+};
+
+type RoadmapStage = RoadmapPayload["stages"][number];
+type RoadmapTask = RoadmapPayload["tasks"][number];
+
+function taskDuration(t: RoadmapTask): string | null {
+  if (t.durationMinMonths == null) return null;
+  const max = t.durationMaxMonths ?? t.durationMinMonths;
+  return t.durationMinMonths === max ? `${max}개월` : `${t.durationMinMonths}~${max}개월`;
 }
 
 /* 단계 도트 톤 — 블루 농도 변화 (첫 단계가 가장 진함) */
 const STAGE_ACCENTS = ["var(--blue-500)", "var(--blue-100)", "var(--grey-300)"];
 
-/* ---------- 스크롤 중앙 포커스 래퍼 (v3) ---------- */
+/* ---------- 스크롤 중앙 포커스 래퍼 ---------- */
 
 function FocusRow({ children, style }: { children: ReactNode; style?: CSSProperties }) {
   /* 뷰포트 세로 중앙 ±24% 밴드에 걸치면 포커스 (react-intersection-observer) */
@@ -50,9 +84,13 @@ function FocusRow({ children, style }: { children: ReactNode; style?: CSSPropert
 
 /* ---------- 단계 카드 ---------- */
 
-function StageCard({ stage }: { stage: RoadmapStage }) {
-  const autoReasons = new Map(stage.autoInserted.map((a) => [a.taskId, a.reason]));
-
+function StageCard({
+  stage,
+  taskByNo,
+}: {
+  stage: RoadmapStage;
+  taskByNo: Map<number, RoadmapTask>;
+}) {
   return (
     <Card radius="2xl" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
       {/* 단계 헤더 */}
@@ -65,11 +103,8 @@ function StageCard({ stage }: { stage: RoadmapStage }) {
             color: "var(--fg-primary)",
           }}
         >
-          STEP {stage.order} · {stage.title}
+          STEP {stage.order} · {stage.stageName}
         </h3>
-        <p style={{ margin: "6px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
-          {stage.purpose}
-        </p>
       </div>
 
       {/* 과제 리스트 — 카드마다 해당 로드맵 데이터 표기 */}
@@ -83,12 +118,12 @@ function StageCard({ stage }: { stage: RoadmapStage }) {
           gap: 8,
         }}
       >
-        {stage.taskIds.map((id) => {
-          const t = getTask(id);
-          const autoReason = autoReasons.get(id);
+        {stage.taskNos.map((no) => {
+          const t = taskByNo.get(no);
+          if (!t) return null;
           return (
             <li
-              key={id}
+              key={no}
               style={{
                 padding: "12px 14px",
                 border: "1px solid var(--line-subtle)",
@@ -100,99 +135,33 @@ function StageCard({ stage }: { stage: RoadmapStage }) {
                 <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
                   {t.title}
                 </span>
-                <Badge tone="neutral">{areaName(t.areaId)}</Badge>
-                <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
-                  {t.durationMonths[0] === t.durationMonths[1]
-                    ? `${t.durationMonths[0]}개월`
-                    : `${t.durationMonths[0]}~${t.durationMonths[1]}개월`}
-                </span>
-                <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
-                  {range(t.costBand.selfPay, "만원")}
-                </span>
-                {autoReason && <Badge tone="accent">자동 추가</Badge>}
+                <Badge tone="neutral">{t.functionArea}</Badge>
+                {taskDuration(t) && (
+                  <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
+                    {taskDuration(t)}
+                  </span>
+                )}
+                {t.costMin != null && (
+                  <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
+                    {range(t.costMin, t.costMax ?? t.costMin, "만원")}
+                  </span>
+                )}
               </div>
-              {autoReason && (
-                <div
-                  style={{
-                    marginTop: 6,
-                    font: "var(--text-body3)",
-                    color: "var(--fg-tertiary)",
-                  }}
-                >
-                  {autoReason}
-                </div>
-              )}
             </li>
           );
         })}
       </ul>
 
-      {/* 금액 (F-RMP-04, v3: '자부담' → '금액') */}
+      {/* 금액 */}
       <div>
         <div style={{ font: "var(--text-body2)", color: "var(--fg-primary)" }}>
           금액{" "}
           <span style={{ ...mono, fontWeight: 600, color: "var(--fg-brand)" }}>
-            {range(stage.costBand.selfPay, "")}
+            {range(stage.costMin, stage.costMax, "")}
           </span>
           만 원
         </div>
-        <div style={{ font: "var(--text-caption)", color: "var(--grey-500)", marginTop: 3 }}>
-          {stage.costBand.note}
-        </div>
       </div>
-
-      {/* 할 일 — 귀사/AXpoint 통합 리스트 (F-RMP-05, v3) */}
-      {stage.todos.length > 0 && (
-        <div
-          style={{
-            padding: "12px 14px",
-            border: "1px solid var(--line-subtle)",
-            borderRadius: "var(--radius-m)",
-          }}
-        >
-          <div style={{ font: "var(--text-label-s)", color: "var(--fg-primary)", marginBottom: 8 }}>
-            할 일
-          </div>
-          <ul
-            style={{
-              margin: 0,
-              padding: 0,
-              listStyle: "none",
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              font: "var(--text-body3)",
-              color: "var(--fg-secondary)",
-            }}
-          >
-            {/* 도트 불릿 + 주체 볼드 (v5: 태그 → 불릿) */}
-            {stage.todos.map((todo) => (
-              <li
-                key={`${todo.owner}-${todo.text}`}
-                style={{ display: "flex", gap: 9, alignItems: "flex-start" }}
-              >
-                <span
-                  aria-hidden
-                  style={{
-                    flex: "none",
-                    width: 4,
-                    height: 4,
-                    borderRadius: "50%",
-                    background: "var(--grey-400)",
-                    marginTop: 9,
-                  }}
-                />
-                <span>
-                  <strong style={{ fontWeight: 600, color: "var(--fg-primary)" }}>
-                    {todo.owner}
-                  </strong>{" "}
-                  {todo.text}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </Card>
   );
 }
@@ -201,15 +170,21 @@ function StageCard({ stage }: { stage: RoadmapStage }) {
 
 export default function RoadmapPage() {
   const router = useRouter();
-  const { selectedTaskIds, completeStep } = useDiagnosis();
+  const { assessmentId, selectedTaskIds, completedSteps, completeStep } = useDiagnosis();
+  const [data, setData] = useState<RoadmapPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const roadmap = useMemo(
-    () => (selectedTaskIds.length > 0 ? generateRoadmap(selectedTaskIds) : null),
-    [selectedTaskIds],
-  );
+  const hasSelection = selectedTaskIds.length > 0 || completedSteps.includes("tasks");
+
+  useEffect(() => {
+    if (!assessmentId || !hasSelection) return;
+    api<RoadmapPayload>(`/api/assessments/${assessmentId}/roadmap`)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
+  }, [assessmentId, hasSelection]);
 
   /* 가드: 담은 과제 없음 */
-  if (!roadmap) {
+  if (!assessmentId || !hasSelection) {
     return (
       <section
         style={{
@@ -239,9 +214,16 @@ export default function RoadmapPage() {
       </section>
     );
   }
+  if (error)
+    return (
+      <div className="flex min-h-[calc(100vh-56px)] items-center justify-center px-[var(--gutter)]">
+        <p style={{ font: "var(--text-body1)", color: "var(--fg-tertiary)" }}>{error}</p>
+      </div>
+    );
+  if (!data) return <RouteLoading messages={["로드맵을 만들고 있어요"]} />;
 
-  const selfMin = roadmap.stages.reduce((a, s) => a + s.costBand.selfPay[0], 0);
-  const selfMax = roadmap.stages.reduce((a, s) => a + s.costBand.selfPay[1], 0);
+  const taskByNo = new Map(data.tasks.map((t) => [t.no, t]));
+  const taskCount = data.stages.reduce((s, st) => s + st.taskNos.length, 0);
 
   const goReport = () => {
     completeStep("roadmap");
@@ -260,11 +242,11 @@ export default function RoadmapPage() {
       `}</style>
 
       <div style={{ maxWidth: "var(--container-content)", margin: "0 auto" }}>
-        {/* ---- 상단 헤더 — 숫자만 브랜드 컬러 (v3) ---- */}
+        {/* ---- 상단 헤더 — 숫자만 브랜드 컬러 ---- */}
         <header style={{ marginBottom: 40 }}>
           <h2
             style={{
-              margin: "0 0 10px",
+              margin: "0 0 16px",
               font: "var(--text-h2)",
               letterSpacing: "var(--track-heading)",
               color: "var(--fg-primary)",
@@ -272,17 +254,6 @@ export default function RoadmapPage() {
           >
             AX 로드맵
           </h2>
-          <p
-            style={{
-              margin: "0 0 16px",
-              font: "var(--text-body1)",
-              letterSpacing: "var(--track-body)",
-              color: "var(--fg-secondary)",
-              maxWidth: 720,
-            }}
-          >
-            {roadmap.goalLine}
-          </p>
           <div
             style={{
               display: "flex",
@@ -296,7 +267,7 @@ export default function RoadmapPage() {
             <span>
               담은 과제{" "}
               <span style={{ ...mono, fontWeight: 700, color: "var(--fg-brand)" }}>
-                {selectedTaskIds.length}
+                {taskCount}
               </span>
               개
             </span>
@@ -306,7 +277,7 @@ export default function RoadmapPage() {
             <span>
               총{" "}
               <span style={{ ...mono, fontWeight: 700, color: "var(--fg-brand)" }}>
-                {roadmap.totalMonths}
+                {data.totalMonths}
               </span>
               개월
             </span>
@@ -316,15 +287,14 @@ export default function RoadmapPage() {
             <span>
               금액{" "}
               <span style={{ ...mono, fontWeight: 700, color: "var(--fg-brand)" }}>
-                {range([selfMin, selfMax], "")}
-                
+                {range(data.costMin, data.costMax, "")}
               </span>
               만 원
             </span>
           </div>
         </header>
 
-        {/* ---- 세로 타임라인 (스크롤 중앙 포커스, v3) ---- */}
+        {/* ---- 세로 타임라인 (스크롤 중앙 포커스) ---- */}
         <div style={{ position: "relative" }}>
           {/* 레일 세로 라인 */}
           <span
@@ -338,15 +308,15 @@ export default function RoadmapPage() {
               background: "var(--grey-200)",
             }}
           />
-          {roadmap.stages.map((stage, i) => {
+          {data.stages.map((stage, i) => {
             const accent = STAGE_ACCENTS[Math.min(i, STAGE_ACCENTS.length - 1)];
             return (
               <FocusRow
                 key={stage.order}
-                style={{ marginBottom: i === roadmap.stages.length - 1 ? 0 : 28 }}
+                style={{ marginBottom: i === data.stages.length - 1 ? 0 : 28 }}
               >
                 <div className="axp-rm-row">
-                  {/* 기간 마커 — '약 N개월' (v3) */}
+                  {/* 기간 마커 — '약 N개월' */}
                   <div
                     style={{
                       ...mono,
@@ -380,7 +350,7 @@ export default function RoadmapPage() {
                   </div>
                   {/* 단계 카드 */}
                   <div style={{ paddingLeft: 12, minWidth: 0 }}>
-                    <StageCard stage={stage} />
+                    <StageCard stage={stage} taskByNo={taskByNo} />
                   </div>
                 </div>
               </FocusRow>
@@ -388,7 +358,7 @@ export default function RoadmapPage() {
           })}
         </div>
 
-        {/* ---- 말미 CTA — 우측 하단 (v3) ---- */}
+        {/* ---- 말미 CTA — 우측 하단 ---- */}
         <div style={{ marginTop: 56, display: "flex", justifyContent: "flex-end" }}>
           <Button variant="primary" size="xl" onClick={goReport}>
             보고서 보기

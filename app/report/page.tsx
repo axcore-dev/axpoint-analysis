@@ -1,37 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
-import { ReportDocument } from "@/components/report/ReportDocument";
+import { RouteLoading } from "@/components/flow/RouteLoading";
+import { api } from "@/lib/api";
 import { Button, Card, Eyebrow, Icons, Input, Modal } from "@/components/ui";
-import { computeOverall } from "@/lib/scoring/engine";
-import { computeRoi } from "@/lib/roi";
-import { generateReportPdf } from "@/lib/pdf";
-import { generateRoadmap } from "@/lib/roadmap";
-import { judgments } from "@/data/scenario/judgments";
-import { demoCompany } from "@/data/scenario/company";
 
 /**
- * S5 보고서(전환) — F-RPT-01~06, REQ-F-18/19 (2026-07-09 수정요청v1)
- *
- * 요약 4칸(단계 / 업종 대비 포지션 / 연 효과 드릴다운 / 회수 드릴다운)
- * → CTA 버튼 2개(보고서 받기 모달 = 주 동선 / 문의하기 새 탭)
+ * S5 보고서(전환) — 백엔드 실연동 + 원본 요약·티저 레이아웃 복원.
+ * 요약 카드(단계·점수·과제·기간·자부담) → CTA(보고서 받기 리드 수집 / 문의하기)
  * → 체험 티저(라이트 카드 + 미니 SVG 대시보드, axcore.it.kr 새 탭).
- * PDF는 화면 밖 ReportDocument(페이지 단위 794×1123 컨테이너)를
- * 페이지별 html2canvas 캡처로 즉시 다운로드한다.
+ * 업종 대비 포지션·ROI 드릴다운은 벤치마크·산출 가정 확정 후,
+ * PDF 다운로드는 보고서 구성 확정 후 재도입한다.
  */
 
-const DIAGNOSIS_DATE = "2026-07-09";
 const CONTACT_URL = "https://axcore.ai.kr/#5.contact";
 const WORKSPACE_URL = "https://axcore.it.kr";
 
 const fmt = (n: number) => n.toLocaleString("ko-KR");
 const mono = { fontFamily: "var(--font-mono)", letterSpacing: "0" } as const;
 
-type Drill = "roi" | "payback" | null;
-type PdfState = "idle" | "working" | "done" | "error";
+type Summary = {
+  level: number;
+  levelName: string;
+  totalScore: string;
+  taskCount: number;
+  totalMonths: number;
+  costMin: number;
+  costMax: number;
+};
 
-/* ---- 요약 카드 공용 문법 ---- */
+/* ---- 요약 카드 공용 문법 (원본) ---- */
 function SummaryLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{ font: "var(--text-label-s)", color: "var(--fg-tertiary)" }}>{children}</div>
@@ -50,14 +50,6 @@ function SummaryValue({ children }: { children: React.ReactNode }) {
         color: "var(--fg-primary)",
       }}
     >
-      {children}
-    </div>
-  );
-}
-
-function SummaryCaption({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.5, color: "var(--fg-tertiary)" }}>
       {children}
     </div>
   );
@@ -132,92 +124,90 @@ function WorkspaceMockup() {
 }
 
 export default function ReportPage() {
-  const { companyInput, selectedTaskIds, completedSteps, completeStep } = useDiagnosis();
-
-  /* sessionStorage 하이드레이션(Provider effect) 이후에만 가드 판정 */
-  const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
-
-  const [drill, setDrill] = useState<Drill>(null);
+  const router = useRouter();
+  const { companyInput, assessmentId, completedSteps, completeStep } = useDiagnosis();
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [email, setEmail] = useState("");
-  const [pdfState, setPdfState] = useState<PdfState>("idle");
-  const [sentTo, setSentTo] = useState("");
-  const docRef = useRef<HTMLDivElement>(null);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
-  /* 데이터 — 전부 런타임 계산 (백엔드 없음) */
-  const overall = useMemo(() => computeOverall(judgments), []);
-  const roi = useMemo(() => computeRoi(selectedTaskIds), [selectedTaskIds]);
-  const roadmap = useMemo(() => generateRoadmap(selectedTaskIds), [selectedTaskIds]);
+  useEffect(() => {
+    if (!assessmentId) return;
+    Promise.all([
+      api<{ result: { level: number; levelName: string; totalScore: string } | null }>(
+        `/api/assessments/${assessmentId}/result`,
+      ),
+      api<{ stages: { taskNos: number[] }[]; totalMonths: number; costMin: number; costMax: number }>(
+        `/api/assessments/${assessmentId}/roadmap`,
+      ),
+    ])
+      .then(([r, rm]) => {
+        if (!r.result) throw new Error("진단 결과가 아직 없어요.");
+        setSummary({
+          level: r.result.level,
+          levelName: r.result.levelName,
+          totalScore: r.result.totalScore,
+          taskCount: rm.stages.reduce((s, st) => s + st.taskNos.length, 0),
+          totalMonths: rm.totalMonths,
+          costMin: rm.costMin,
+          costMax: rm.costMax,
+        });
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
+  }, [assessmentId]);
 
-  const companyName = companyInput.trim() || demoCompany.name;
-  const emailValid = email.includes("@") && email.trim().length >= 3;
-  const monthlySaving = roi.totalAnnualSaving > 0 ? Math.round(roi.totalAnnualSaving / 12) : 0;
-
-  /* 업종 대비 포지션 — INDUSTRY_AVG 평균 대비 scoreRaw 차이 (소수 1자리) */
-  const industryMean = overall.scoreRaw - overall.industryDiff;
-  const diffAhead = overall.industryDiff >= 0;
-  const diffLabel = `${diffAhead ? "+" : "-"}${Math.abs(overall.industryDiff).toFixed(1)}점`;
-
-  const guardPassed = completedSteps.includes("roadmap");
-
-  const onDownload = async () => {
-    if (!emailValid || pdfState === "working") return;
-    setPdfState("working");
-    try {
-      if (!docRef.current) throw new Error("보고서 DOM이 준비되지 않았어요");
-      await generateReportPdf(docRef.current, companyName);
-      setSentTo(email.trim());
-      completeStep("report");
-      setPdfState("done");
-    } catch (err) {
-      console.error("PDF 보고서 생성 실패:", err);
-      setPdfState("error");
-    }
-  };
-
-  if (!ready) return null;
-
-  /* ── 가드: 로드맵 미완료 (진입 조건, F-CMN-01) ─────────── */
-  if (!guardPassed) {
+  /* 진입 가드 — 로드맵 미완료 (기존 정책 유지) */
+  if (!assessmentId || !completedSteps.includes("roadmap")) {
     return (
-      <section style={{ padding: "var(--space-20) var(--gutter)" }}>
-        <Card style={{ maxWidth: 560, margin: "0 auto", textAlign: "center", padding: "var(--space-8)" }}>
-          <div style={{ color: "var(--fg-quaternary)", display: "flex", justifyContent: "center" }}>
-            <Icons.info size={28} />
-          </div>
-          <h1
-            style={{
-              margin: "16px 0 0",
-              font: "var(--text-h3)",
-              letterSpacing: "var(--track-heading)",
-              color: "var(--fg-primary)",
-            }}
-          >
-            보고서는 로드맵 확인 후 열려요
-          </h1>
-          <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            담으신 과제로 AX 로드맵을 먼저 확인하시면, 예상 효과와 투자 회수까지 담은
-            보고서가 준비돼요.
+      <div className="flex min-h-[calc(100vh-56px)] items-center justify-center px-[var(--gutter)]">
+        <Card radius="2xl" style={{ maxWidth: 480, width: "100%", padding: 36, textAlign: "center" }}>
+          <p style={{ font: "var(--text-h3)", color: "var(--fg-primary)", margin: 0 }}>
+            로드맵을 먼저 확인해 주세요
           </p>
           <div style={{ marginTop: 22 }}>
-            <Button variant="primary" href="/roadmap">
-              로드맵으로 이동
+            <Button variant="primary" size="lg" full onClick={() => router.push("/roadmap")}>
+              로드맵으로 가기
             </Button>
           </div>
         </Card>
-      </section>
+      </div>
     );
   }
+  if (error)
+    return (
+      <div className="flex min-h-[calc(100vh-56px)] items-center justify-center px-[var(--gutter)]">
+        <p style={{ font: "var(--text-body1)", color: "var(--fg-tertiary)" }}>{error}</p>
+      </div>
+    );
+  if (!summary) return <RouteLoading messages={["보고서를 준비하고 있어요"]} />;
+
+  const companyName = companyInput.trim();
+  const canSend = email.includes("@") && email.trim().length >= 3;
+
+  const submitLead = async () => {
+    if (!canSend || sending) return;
+    setSending(true);
+    setEmailError(null);
+    try {
+      await api("/api/leads", {
+        method: "POST",
+        body: JSON.stringify({ email: email.trim(), context: "pdf", assessmentId }),
+      });
+      setSentTo(email.trim());
+      completeStep("report");
+    } catch (e) {
+      setEmailError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.");
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <div className="ax-step-enter">
-      {/* 드릴다운 카드 호버 시 '산출 내역 보기' 브랜드 컬러 (v5) */}
-      <style>{`
-        .axp-drill:hover .axp-drill-link { color: var(--fg-brand); }
-        .axp-drill-link { transition: color var(--dur-fast) var(--ease); }
-      `}</style>
-      {/* ══ 요약 4칸 (F-RPT-01) — 흰 캔버스 단일 흐름 ══════════ */}
+      {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준) ══ */}
       <section style={{ padding: "var(--space-16) var(--gutter) 0" }}>
         <div style={{ maxWidth: "var(--container-content)", margin: "0 auto" }}>
           <Eyebrow>STEP 6 · 보고서</Eyebrow>
@@ -232,8 +222,7 @@ export default function ReportPage() {
             {companyName} 진단 결과 요약
           </h1>
           <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-tertiary)" }}>
-            진단일 <span style={mono}>{DIAGNOSIS_DATE}</span> · 담으신 과제{" "}
-            <span style={mono}>{selectedTaskIds.length}</span>건 기준
+            담으신 과제 <span style={mono}>{summary.taskCount}</span>건 기준
           </p>
 
           <div
@@ -244,266 +233,45 @@ export default function ReportPage() {
               marginTop: "var(--space-8)",
             }}
           >
-            {/* ① 현재 단계 — Lv 라벨만, 브랜드 컬러 (v4) */}
+            {/* 현재 단계 — Lv 라벨만, 브랜드 컬러 */}
             <Card>
               <SummaryLabel>현재 단계</SummaryLabel>
               <SummaryValue>
-                <span style={{ color: "var(--fg-brand)" }}>{overall.level.label}</span>
+                <span style={{ color: "var(--fg-brand)" }}>{`Lv.${summary.level} ${summary.levelName}`}</span>
               </SummaryValue>
             </Card>
 
-            {/* ② 포지션 — 업종 평균 대비 (런타임 계산) */}
             <Card>
-              <SummaryLabel>포지션</SummaryLabel>
+              <SummaryLabel>종합 점수</SummaryLabel>
               <SummaryValue>
-                <span style={{ ...mono, color: "var(--fg-brand)" }}>{diffLabel}</span>{" "}
-                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-tertiary)" }}>
-                  (업종 평균보다)
-                </span>
+                <span style={mono}>{summary.totalScore}</span>점
               </SummaryValue>
-              <SummaryCaption>
-                중소 금속가공 표본 평균 <span style={mono}>{Math.round(industryMean)}</span>점
-                대비
-              </SummaryCaption>
             </Card>
 
-            {/* ③ 예상 연 효과 — 클릭 드릴다운 */}
-            <Card
-              className="axp-drill"
-              interactive
-              role="button"
-              tabIndex={0}
-              aria-expanded={drill === "roi"}
-              onClick={() => setDrill((d) => (d === "roi" ? null : "roi"))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setDrill((d) => (d === "roi" ? null : "roi"));
-                }
-              }}
-              style={{
-                cursor: "pointer",
-                borderColor: drill === "roi" ? "var(--line-brand)" : "var(--line-default)",
-              }}
-            >
-              <SummaryLabel>예상 연 효과</SummaryLabel>
+            <Card>
+              <SummaryLabel>담은 과제</SummaryLabel>
               <SummaryValue>
-                <span style={{ ...mono, color: "var(--fg-brand)" }}>
-                  {roi.totalAnnualSaving > 0 ? `${fmt(roi.totalAnnualSaving)}만원` : "—"}
-                </span>
+                <span style={mono}>{summary.taskCount}</span>개
               </SummaryValue>
-              {/* 산출 내역 보기 — 회색 + →, 카드 호버 시 브랜드 컬러 (v4·v5) */}
-              <div
-                className="axp-drill-link"
-                style={{
-                  marginTop: 10,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  font: "var(--text-label-s)",
-                  color: "var(--fg-tertiary)",
-                }}
-              >
-                산출 내역 보기
-                <span style={{ display: "inline-flex" }}>
-                  <Icons.arrow size={14} />
-                </span>
-              </div>
             </Card>
 
-            {/* ④ 투자 회수 — 클릭 드릴다운 */}
-            <Card
-              className="axp-drill"
-              interactive
-              role="button"
-              tabIndex={0}
-              aria-expanded={drill === "payback"}
-              onClick={() => setDrill((d) => (d === "payback" ? null : "payback"))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setDrill((d) => (d === "payback" ? null : "payback"));
-                }
-              }}
-              style={{
-                cursor: "pointer",
-                borderColor: drill === "payback" ? "var(--line-brand)" : "var(--line-default)",
-              }}
-            >
-              <SummaryLabel>투자 회수</SummaryLabel>
+            <Card>
+              <SummaryLabel>총 기간</SummaryLabel>
               <SummaryValue>
-                <span style={{ ...mono, color: "var(--fg-brand)" }}>
-                  {roi.totalAnnualSaving > 0 ? `약 ${roi.paybackMonths}개월` : "—"}
-                </span>
+                약 <span style={mono}>{summary.totalMonths}</span>개월
               </SummaryValue>
-              {/* 산출 내역 보기 — 회색 + →, 카드 호버 시 브랜드 컬러 (v4·v5) */}
-              <div
-                className="axp-drill-link"
-                style={{
-                  marginTop: 10,
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 5,
-                  font: "var(--text-label-s)",
-                  color: "var(--fg-tertiary)",
-                }}
-              >
-                산출 내역 보기
-                <span style={{ display: "inline-flex" }}>
-                  <Icons.arrow size={14} />
+            </Card>
+
+            <Card>
+              <SummaryLabel>자부담</SummaryLabel>
+              <SummaryValue>
+                <span style={mono}>
+                  {fmt(summary.costMin)}~{fmt(summary.costMax)}
                 </span>
-              </div>
+                만원
+              </SummaryValue>
             </Card>
           </div>
-
-          {/* ── ③ 드릴다운: 연 효과 산출 내역 (REQ-F-18) ── */}
-          {drill === "roi" && (
-            <Card style={{ marginTop: "var(--space-4)" }}>
-              <div style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>
-                예상 연 효과 산출 내역
-              </div>
-              {roi.items.length === 0 ? (
-                <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                  정량 효과 산출 대상 과제가 없어요. 기반 과제는 정성 효과로 분류되어
-                  합산에서 제외돼요.
-                </p>
-              ) : (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
-                    <thead>
-                      <tr>
-                        {["항목", "산출 가정 (기준 단가·시간)", "연 절감액"].map((h, i) => (
-                          <th
-                            key={h}
-                            style={{
-                              textAlign: i === 2 ? "right" : "left",
-                              font: "var(--text-caption)",
-                              color: "var(--fg-tertiary)",
-                              padding: "8px 10px",
-                              borderBottom: "1px solid var(--line-default)",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {h}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {roi.items.map((item) => (
-                        <tr key={item.label}>
-                          <td
-                            style={{
-                              fontSize: 14,
-                              fontWeight: 600,
-                              color: "var(--fg-primary)",
-                              padding: "10px",
-                              borderBottom: "1px solid var(--line-subtle)",
-                              minWidth: 180,
-                            }}
-                          >
-                            {item.label}
-                          </td>
-                          <td
-                            style={{
-                              fontSize: 13,
-                              lineHeight: 1.5,
-                              color: "var(--fg-secondary)",
-                              padding: "10px",
-                              borderBottom: "1px solid var(--line-subtle)",
-                            }}
-                          >
-                            {item.assumption}
-                          </td>
-                          <td
-                            style={{
-                              ...mono,
-                              fontSize: 14,
-                              textAlign: "right",
-                              whiteSpace: "nowrap",
-                              color: "var(--fg-primary)",
-                              padding: "10px",
-                              borderBottom: "1px solid var(--line-subtle)",
-                            }}
-                          >
-                            {fmt(item.annualSaving)}만원
-                          </td>
-                        </tr>
-                      ))}
-                      <tr>
-                        <td
-                          colSpan={2}
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: "var(--fg-primary)",
-                            padding: "12px 10px",
-                          }}
-                        >
-                          합산
-                        </td>
-                        <td
-                          style={{
-                            ...mono,
-                            fontSize: 15,
-                            fontWeight: 700,
-                            textAlign: "right",
-                            whiteSpace: "nowrap",
-                            color: "var(--fg-primary)",
-                            padding: "12px 10px",
-                          }}
-                        >
-                          {fmt(roi.totalAnnualSaving)}만원
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-              )}
-              <p style={{ margin: "12px 0 0", font: "var(--text-caption)", lineHeight: 1.6, color: "var(--fg-quaternary)" }}>
-                {roi.disclaimer}
-              </p>
-            </Card>
-          )}
-
-          {/* ── ④ 드릴다운: 투자 회수 계산식 ── */}
-          {drill === "payback" && (
-            <Card style={{ marginTop: "var(--space-4)" }}>
-              <div style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>
-                투자 회수 계산식
-              </div>
-              {roi.totalAnnualSaving > 0 ? (
-                <>
-                  <div
-                    style={{
-                      marginTop: 12,
-                      background: "var(--bg-secondary)",
-                      borderRadius: "var(--radius-m)",
-                      padding: "16px 18px",
-                      ...mono,
-                      fontSize: 15,
-                      lineHeight: 1.7,
-                      color: "var(--fg-primary)",
-                      overflowX: "auto",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    총 자부담 {fmt(roi.totalSelfPay)}만원 ÷ 월 효과 {fmt(monthlySaving)}만원
-                    (연 {fmt(roi.totalAnnualSaving)}만원 ÷ 12) ≈{" "}
-                    <span style={{ fontWeight: 700 }}>약 {roi.paybackMonths}개월</span>
-                  </div>
-                  <p style={{ margin: "12px 0 0", fontSize: 13, lineHeight: 1.55, color: "var(--fg-secondary)" }}>
-                    총 자부담은 담으신 과제의 자부담 밴드 중간값 합산이며, 정부 지원사업
-                    (스마트공장 등) 선정 기준의 추정치입니다. 회수 개월은 올림 처리합니다.
-                  </p>
-                </>
-              ) : (
-                <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                  정량 효과가 산출된 과제가 없어 회수 기간을 계산할 수 없어요.
-                </p>
-              )}
-            </Card>
-          )}
 
           {/* ══ CTA — 버튼 2개만 (카드·설명문 없음) ══════════════ */}
           <div
@@ -514,7 +282,6 @@ export default function ReportPage() {
               flexWrap: "wrap",
             }}
           >
-            {/* v3: 보고서 받기 ↔ 문의하기 컬러 교체 */}
             <Button variant="secondary" size="xl" onClick={() => setModalOpen(true)}>
               보고서 받기
               <Icons.arrow size={18} />
@@ -527,7 +294,7 @@ export default function ReportPage() {
         </div>
       </section>
 
-      {/* ══ 체험 티저 (F-RPT-03) — 라이트 카드 + 미니 대시보드 ══ */}
+      {/* ══ 체험 티저 — 라이트 카드 + 미니 대시보드 ══ */}
       <section style={{ padding: "var(--space-16) var(--gutter) var(--space-20)" }}>
         <Card radius="2xl" style={{ maxWidth: "var(--container-content)", margin: "0 auto", padding: "var(--space-8)" }}>
           <div
@@ -566,113 +333,57 @@ export default function ReportPage() {
         </Card>
       </section>
 
-      {/* ══ 보고서 받기 모달 (F-RPT-02·04) ═══════════════════ */}
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="보고서 받기">
-        {pdfState === "done" ? (
-          <div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                gap: 10,
-                background: "var(--bg-brand-weak)",
-                borderRadius: "var(--radius-m)",
-                padding: "14px 16px",
-              }}
-            >
-              <span style={{ color: "var(--fg-brand)", display: "inline-flex", marginTop: 2 }}>
-                <Icons.check size={17} />
-              </span>
-              <div>
-                <div style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                  {sentTo}로 보냈어요
-                </div>
-                <div style={{ marginTop: 4, font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
-                  데모라 실제 발송은 없고, PDF가 다운로드됐어요.
-                </div>
-              </div>
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <Button
-                variant="secondary"
-                size="lg"
-                full
-                href={CONTACT_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                전문가와 결과 리뷰하기
-              </Button>
-            </div>
+      {/* ══ 보고서 받기 모달 — 이메일 수집(리드) ══ */}
+      <Modal
+        open={modalOpen}
+        onClose={() => {
+          setModalOpen(false);
+          setSentTo(null);
+        }}
+        title="보고서 받기"
+      >
+        {sentTo ? (
+          <div style={{ textAlign: "center", padding: "8px 0" }}>
+            <p style={{ margin: 0, font: "var(--text-body-m, var(--text-body2))", color: "var(--fg-primary)" }}>
+              신청이 접수됐어요.
+            </p>
+            <p style={{ margin: "8px 0 18px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+              보고서가 준비되면 {sentTo}로 보내드려요.
+            </p>
+            <Button variant="secondary" full onClick={() => window.open(CONTACT_URL, "_blank")}>
+              전문가와 결과 리뷰하기
+            </Button>
           </div>
         ) : (
           <div>
-            <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-              이메일을 입력하시면 진단 결과 전체를 담은 상세 보고서 PDF를 받으실 수 있어요.
+            <p style={{ margin: "0 0 12px", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+              보고서를 받을 이메일을 입력해 주세요.
             </p>
-            <div style={{ marginTop: 14 }}>
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@company.co.kr"
-                leadingIcon={<Icons.mail size={17} />}
-                aria-label="보고서 받을 이메일"
-                invalid={email.length > 0 && !emailValid}
-              />
-            </div>
-            {email.length > 0 && !emailValid && (
-              <p style={{ margin: "7px 0 0", font: "var(--text-caption)", color: "var(--fg-danger)" }}>
-                이메일 형식을 확인해 주세요 (@ 포함)
+            <Input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="이메일 주소"
+              aria-label="보고서 받을 이메일"
+            />
+            {emailError && (
+              <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-danger, #d4380d)" }}>
+                {emailError}
               </p>
             )}
-            <div style={{ marginTop: 14 }}>
-              <Button
-                variant="primary"
-                size="lg"
-                full
-                disabled={!emailValid || pdfState === "working"}
-                onClick={onDownload}
-              >
-                {pdfState === "working" ? "보고서 만드는 중…" : "PDF 받기"}
+            {!canSend && email.length > 0 && (
+              <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-quaternary)" }}>
+                이메일 형식을 확인해 주세요
+              </p>
+            )}
+            <div style={{ marginTop: 16 }}>
+              <Button variant="primary" full disabled={!canSend || sending} onClick={submitLead}>
+                {sending ? "접수하고 있어요" : "받기"}
               </Button>
             </div>
-            {pdfState === "error" ? (
-              <p style={{ margin: "10px 0 0", font: "var(--text-body3)", color: "var(--fg-danger)" }}>
-                PDF 생성에 실패했어요. 잠시 후 다시 시도해 주세요.
-              </p>
-            ) : (
-              <p style={{ margin: "10px 0 0", font: "var(--text-caption)", color: "var(--fg-quaternary)" }}>
-                데모라 실제 발송은 없어요 — PDF가 바로 다운로드돼요.
-              </p>
-            )}
           </div>
         )}
       </Modal>
-
-      {/* ══ PDF 캡처용 화면 밖 보고서 DOM (페이지 컨테이너 배열) ══ */}
-      <div
-        aria-hidden
-        style={{
-          position: "fixed",
-          left: -9999,
-          top: 0,
-          width: 794,
-          pointerEvents: "none",
-          zIndex: -1,
-        }}
-      >
-        <div ref={docRef}>
-          <ReportDocument
-            companyName={companyName}
-            diagnosisDate={DIAGNOSIS_DATE}
-            overall={overall}
-            roi={roi}
-            roadmap={roadmap}
-            selectedTaskIds={selectedTaskIds}
-          />
-        </div>
-      </div>
     </div>
   );
 }

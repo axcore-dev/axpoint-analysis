@@ -1,58 +1,20 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type ReactNode,
-} from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
-import {
-  Badge,
-  Button,
-  Card,
-  DotStepper,
-  Icons,
-  Loader,
-  Modal,
-  TermTooltip,
-} from "@/components/ui";
+import { Badge, Button, Card, Icons } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
-
-import { computeOverall, mapLevel, sortAxesByScore } from "@/lib/scoring/engine";
-import type {
-  AreaAssessment,
-  AxisId,
-  AxisScore,
-  CompanyStat,
-  EvidenceKind,
-  EvidenceRef,
-  FunctionAreaId,
-} from "@/lib/types";
-import { AXES, INDUSTRY_AVG, LEVELS, areaName } from "@/data/rubric/meta";
-import { rubricQuestions } from "@/data/rubric/questions";
-import { judgments } from "@/data/scenario/judgments";
-import { areaAssessments } from "@/data/scenario/areas";
-import { uploadedDocs } from "@/data/scenario/documents";
-import { companyStats, demoCompany } from "@/data/scenario/company";
-import { publicSources } from "@/data/scenario/publicData";
-import { getGlossary } from "@/data/glossary";
-import {
-  axisFindings,
-  comprehensiveAnalysis,
-  keyPoint,
-  strategyType,
-} from "@/data/scenario/narrative";
+import { RouteLoading } from "@/components/flow/RouteLoading";
+import { api } from "@/lib/api";
 
 /* ============================================================
-   S2 진단 결과 — 2026-07-09 수정요청v1 전면 재작성
-   - 점수는 전부 computeOverall(judgments) 런타임 계산 (하드코딩 금지)
-   - 라이트 연속 흐름 (다크 히어로 폐지), 콘텐츠 max-width 1080px
-   - 섹션: 기업 개요·현재 단계 → 카테고리별 준비도 → 8영역 →
-     종합 분석 결과 (권고 확인 섹션은 폐지)
+   S2 진단 결과 — 원본 레이아웃 복원 + 백엔드 실연동
+   - 데이터는 전부 GET /api/assessments/:id/result 응답
+   - 서버에 없는 데이터 블록은 렌더하지 않는다:
+     업종 평균 비교(벤치마크 미구현), 기업 통계 칩·공개데이터(회사 상세 미제공),
+     점수 근거 팝업(문항 텍스트·앵커 미제공), 관리 대상 인과 체인(cause_chain 미생성),
+     단계 스테퍼(전체 레벨 명칭 미제공). 가치사슬 섹션은 삭제 확정.
    ============================================================ */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
@@ -69,31 +31,57 @@ function fmtScore(n: number | null): string {
   return String(Math.round(n * 10) / 10);
 }
 
-const KIND_LABEL: Record<EvidenceKind, string> = {
-  upload: "업로드",
-  public: "공개 데이터",
-  hitl: "확인 응답",
+type AxisView = {
+  code: string;
+  name: string;
+  score: number;
+  answeredCount: number;
+  totalCount: number;
 };
 
-/** 근거를 출처 텍스트로 — "업로드 · 3월 생산일지 — "종이 양식에…"" */
-function EvidenceTextList({ items }: { items: EvidenceRef[] }) {
-  if (items.length === 0) return null;
-  return (
-    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>
-      {items.map((e, i) => (
-        <li
-          key={`${e.refId}-${i}`}
-          style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--fg-tertiary)" }}
-        >
-          <span style={{ fontWeight: 600, color: "var(--fg-secondary)" }}>
-            {KIND_LABEL[e.kind]} · {e.label}
-          </span>
-          {e.snippet && <> — &ldquo;{e.snippet}&rdquo;</>}
-        </li>
-      ))}
-    </ul>
-  );
-}
+type ResultPayload = {
+  status: string;
+  axes: {
+    axisCode: string;
+    axisName: string;
+    score: string;
+    answeredCount: number;
+    totalCount: number;
+  }[];
+  areas: {
+    functionArea: string;
+    grade: string;
+    asIs: string | null;
+    holdReason: string | null;
+  }[];
+  judgments: { anchorLevel: number | null }[];
+  result: {
+    totalScore: string;
+    level: number;
+    levelName: string;
+    balanceLabel: string | null;
+    strengths: string[];
+    bottlenecks: string[];
+    narrative: {
+      conclusion: string;
+      strengths: { title: string; body: string }[];
+      improvements: { title: string; body: string }[];
+      strategy: string;
+    } | null;
+  } | null;
+};
+
+/** 8영역 표시 순서 — 분류·분석·과제 화면 공통 체계와 동일 */
+const AREA_ORDER = [
+  "경영지원",
+  "제품설계",
+  "생산관리",
+  "장비관리",
+  "품질검사",
+  "재고물류",
+  "영업관리",
+  "고객지원",
+];
 
 /* ---- 콘텐츠 래퍼 (max 1080px) ---- */
 function Inner({ children }: { children: ReactNode }) {
@@ -105,15 +93,17 @@ function SectionHead({
   title,
   sub,
 }: {
-  label: string;
+  label?: string;
   title: string;
   sub?: ReactNode;
 }) {
   return (
     <header style={{ marginBottom: 24 }}>
-      <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
-        {label}
-      </div>
+      {label && (
+        <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 8 }}>
+          {label}
+        </div>
+      )}
       <h3
         style={{
           margin: 0,
@@ -135,38 +125,39 @@ function SectionHead({
 
 /* ============================================================
    섹션 2 보조 — 레이더 차트 (호버 점수 툴팁 + 축 클릭 선택)
+   벤치마크 미구현으로 평균 폴리곤·평균 범례는 제외
    ============================================================ */
 function RadarChart({
   axes,
   selected,
   onSelect,
 }: {
-  axes: AxisScore[];
-  selected: AxisId | null;
-  onSelect: (id: AxisId) => void;
+  axes: AxisView[];
+  selected: string | null;
+  onSelect: (code: string) => void;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const cx = 180;
   const cy = 168;
   const R = 114;
+  const step = 360 / axes.length;
 
   const pt = (i: number, v: number): [number, number] => {
-    const ang = (Math.PI / 180) * (-90 + i * 60);
+    const ang = (Math.PI / 180) * (-90 + i * step);
     return [cx + R * (v / 100) * Math.cos(ang), cy + R * (v / 100) * Math.sin(ang)];
   };
   const poly = (vals: number[]) =>
     vals.map((v, i) => pt(i, v).map((n) => n.toFixed(1)).join(",")).join(" ");
 
-  const ownVals = axes.map((a) => a.score ?? 0);
-  const avgVals = axes.map((a) => a.industryAvg);
+  const ownVals = axes.map((a) => a.score);
 
   return (
     <figure style={{ margin: 0 }}>
       <svg
         viewBox="0 0 360 336"
         role="img"
-        aria-label={`카테고리별 준비도 차트 — 자사 점수와 평균 비교. ${axes
-          .map((a) => `${a.name} ${fmtScore(a.score)}점(평균 ${a.industryAvg}점)`)
+        aria-label={`카테고리별 준비도 차트. ${axes
+          .map((a) => `${a.name} ${fmtScore(a.score)}점`)
           .join(", ")}`}
         style={{ width: "100%", maxWidth: 460, display: "block", margin: "0 auto" }}
       >
@@ -183,10 +174,10 @@ function RadarChart({
         {/* 스포크 */}
         {axes.map((a, i) => {
           const [x, y] = pt(i, 100);
-          const isSel = selected === a.axis;
+          const isSel = selected === a.code;
           return (
             <line
-              key={a.axis}
+              key={a.code}
               x1={cx}
               y1={cy}
               x2={x}
@@ -196,10 +187,10 @@ function RadarChart({
             />
           );
         })}
-        {/* 선택 축 그라데이션 — 선택 꼭짓점은 블루 유지, 멀어질수록 회색 (v3) */}
+        {/* 선택 축 그라데이션 — 선택 꼭짓점은 블루 유지, 멀어질수록 회색 */}
         {selected !== null &&
           (() => {
-            const selIdx = axes.findIndex((a) => a.axis === selected);
+            const selIdx = axes.findIndex((a) => a.code === selected);
             if (selIdx < 0) return null;
             const [sx, sy] = pt(selIdx, ownVals[selIdx]);
             return (
@@ -218,15 +209,6 @@ function RadarChart({
               </defs>
             );
           })()}
-        {/* 평균 — 회색 점선 */}
-        <polygon
-          points={poly(avgVals)}
-          fill="none"
-          stroke="var(--grey-400)"
-          strokeWidth={1.5}
-          strokeDasharray="4 4"
-          strokeLinejoin="round"
-        />
         {/* 자사 — 선택 없으면 블루, 선택 시 그라데이션 (전환 시 부드러운 페이드) */}
         <g key={selected ?? "none"} style={{ animation: "ax-fade-in var(--dur-slow) var(--ease)" }}>
           <polygon
@@ -241,10 +223,10 @@ function RadarChart({
         {/* 꼭짓점 도트 (호버 툴팁 + 클릭 선택) */}
         {ownVals.map((v, i) => {
           const [x, y] = pt(i, v);
-          const isSel = selected === axes[i].axis;
+          const isSel = selected === axes[i].code;
           const dimmed = selected !== null && !isSel;
           return (
-            <g key={axes[i].axis}>
+            <g key={axes[i].code}>
               <circle
                 cx={x}
                 cy={y}
@@ -266,24 +248,26 @@ function RadarChart({
                 style={{ cursor: "pointer" }}
                 onMouseEnter={() => setHover(i)}
                 onMouseLeave={() => setHover(null)}
-                onClick={() => onSelect(axes[i].axis)}
+                onClick={() => onSelect(axes[i].code)}
                 role="button"
                 aria-label={`${axes[i].name} ${fmtScore(axes[i].score)}점 — 상세 보기`}
               />
             </g>
           );
         })}
-        {/* 축 라벨 — 호버·선택 시 부드러운 강조 (v3) */}
+        {/* 축 라벨 — 호버·선택 시 부드러운 강조 */}
         {axes.map((a, i) => {
           const [x, y] = pt(i, 118);
-          const short = AXES.find((m) => m.id === a.axis)?.short ?? a.axis;
-          const anchor = i === 0 || i === 3 ? "middle" : i === 1 || i === 2 ? "start" : "end";
-          const dy = i === 0 ? -8 : i === 3 ? 16 : 4;
-          const isSel = selected === a.axis;
+          const ang = (Math.PI / 180) * (-90 + i * step);
+          const cos = Math.cos(ang);
+          const sin = Math.sin(ang);
+          const anchor = cos > 0.15 ? "start" : cos < -0.15 ? "end" : "middle";
+          const dy = sin < -0.9 ? -8 : sin > 0.9 ? 16 : 4;
+          const isSel = selected === a.code;
           const isHover = hover === i;
           return (
             <text
-              key={a.axis}
+              key={a.code}
               x={x}
               y={y + dy}
               textAnchor={anchor}
@@ -293,24 +277,23 @@ function RadarChart({
               fontFamily="var(--font-sans)"
               letterSpacing="-0.01em"
               style={{ cursor: "pointer", transition: "fill var(--dur-base) var(--ease)" }}
-              onClick={() => onSelect(a.axis)}
+              onClick={() => onSelect(a.code)}
               onMouseEnter={() => setHover(i)}
               onMouseLeave={() => setHover(null)}
               role="button"
               aria-label={`${a.name} 상세 보기`}
             >
-              {short}
+              {a.name}
             </text>
           );
         })}
-        {/* 호버 툴팁 — 2줄(자사/평균), 평균은 회색 저채도 (v4) */}
+        {/* 호버 툴팁 — 자사 점수 */}
         {hover !== null &&
           (() => {
             const ownLine = `자사 ${fmtScore(axes[hover].score)}`;
-            const avgLine = `평균 ${axes[hover].industryAvg}`;
             const [x, y] = pt(hover, ownVals[hover]);
-            const w = Math.max(ownLine.length, avgLine.length) * 7 + 22;
-            const h = 40;
+            const w = ownLine.length * 7 + 22;
+            const h = 25;
             const tx = Math.min(Math.max(x, w / 2 + 4), 360 - w / 2 - 4);
             const ty = Math.max(y - h - 10, 4);
             return (
@@ -339,17 +322,6 @@ function RadarChart({
                   fontFamily="var(--font-mono)"
                 >
                   {ownLine}
-                </text>
-                <text
-                  x={tx - w / 2 + 11}
-                  y={ty + 31}
-                  textAnchor="start"
-                  fontSize={11}
-                  fontWeight={500}
-                  fill="var(--grey-500)"
-                  fontFamily="var(--font-mono)"
-                >
-                  {avgLine}
                 </text>
               </g>
             );
@@ -380,30 +352,15 @@ function RadarChart({
           </svg>
           자사
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-          <svg width="22" height="10" aria-hidden="true">
-            <line
-              x1="1"
-              y1="5"
-              x2="21"
-              y2="5"
-              stroke="var(--grey-400)"
-              strokeWidth="1.5"
-              strokeDasharray="4 3"
-            />
-          </svg>
-          평균 (중소 금속가공 표본)
-        </span>
       </figcaption>
     </figure>
   );
 }
 
-/* ---- 프로그레스바 (자사 채움 + 평균 위치 점선 마커, 평균 미달 = 저채도 주황 v3) ---- */
-function ScoreBar({ score, avg }: { score: number; avg: number }) {
-  const belowAvg = score < avg;
+/* ---- 프로그레스바 (자사 채움 — 평균 마커는 벤치마크 도입 시 재추가) ---- */
+function ScoreBar({ score }: { score: number }) {
   return (
-    <div style={{ position: "relative", padding: "22px 0 20px" }}>
+    <div style={{ position: "relative", padding: "14px 0 12px" }}>
       <div
         style={{
           height: 8,
@@ -418,102 +375,11 @@ function ScoreBar({ score, avg }: { score: number; avg: number }) {
             width: `${Math.max(0, Math.min(100, score))}%`,
             height: "100%",
             borderRadius: "var(--radius-full)",
-            background: belowAvg ? "var(--orange-muted)" : "var(--blue-500)",
-            transition: "width var(--dur-slow) var(--ease), background-color var(--dur-base) var(--ease)",
+            background: "var(--blue-500)",
+            transition: "width var(--dur-slow) var(--ease)",
           }}
         />
       </div>
-      {/* 평균 마커 — 세로 점선 + 상단 "평균" / 하단 점수 */}
-      <div
-        style={{
-          position: "absolute",
-          left: `${Math.max(0, Math.min(100, avg))}%`,
-          top: 0,
-          bottom: 0,
-          transform: "translateX(-50%)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-        }}
-        aria-label={`평균 ${avg}점`}
-      >
-        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--grey-500)", lineHeight: 1 }}>
-          평균
-        </span>
-        <span
-          style={{
-            flex: 1,
-            width: 0,
-            borderLeft: "1.5px dashed var(--grey-400)",
-            margin: "3px 0",
-          }}
-        />
-        <span style={{ ...mono, fontSize: 11, color: "var(--grey-500)", lineHeight: 1 }}>{avg}</span>
-      </div>
-    </div>
-  );
-}
-
-/* ============================================================
-   섹션 3 보조 — 관리 대상 인과 체인 (장비.png 문법, 화면 로컬 상수)
-   시나리오 정합: areas.ts asIs · valueChain.ts 신호와 일치
-   ============================================================ */
-const CAUSE_CHAINS: Partial<Record<FunctionAreaId, string[]>> = {
-  production: ["수기 기록 4회 재입력", "이관 오류·수량 불일치", "월 집계 반나절", "현황 파악 지연"],
-  logistics: ["품목 표기 제각각", "재고 대사 불가", "감(感) 발주", "과잉 재고 2.5주치"],
-  quality: ["불량 사유 미기록", "원인 분석 불가", "같은 불량 반복", "클레임 대응 지연"],
-};
-
-function CauseChain({ steps }: { steps: string[] }) {
-  const last = steps.length - 1;
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        flexWrap: "wrap",
-        gap: 8,
-        padding: "4px 0",
-      }}
-    >
-      {steps.map((s, i) => (
-        <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          {i > 0 && (
-            <span style={{ display: "inline-flex", color: "var(--grey-400)" }} aria-hidden="true">
-              <Icons.arrow size={13} />
-            </span>
-          )}
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              padding: "8px 14px",
-              borderRadius: "var(--radius-s)",
-              fontSize: 13,
-              lineHeight: 1.35,
-              ...(i === 0
-                ? {
-                    background: "var(--bg-danger-weak)",
-                    color: "var(--fg-danger)",
-                    fontWeight: 600,
-                  }
-                : i === last
-                  ? {
-                      background: "var(--bg-base)",
-                      border: "1px solid var(--line-strong)",
-                      color: "var(--fg-primary)",
-                      fontWeight: 700,
-                    }
-                  : {
-                      background: "var(--bg-tertiary)",
-                      color: "var(--fg-secondary)",
-                    }),
-            }}
-          >
-            {s}
-          </span>
-        </span>
-      ))}
     </div>
   );
 }
@@ -523,116 +389,73 @@ function CauseChain({ steps }: { steps: string[] }) {
    ============================================================ */
 export default function ResultPage() {
   const router = useRouter();
-  const { companyInput, completedSteps, completeStep } = useDiagnosis();
-
-  /* ---- 점수: 전부 런타임 계산 ---- */
-  const overall = useMemo(() => computeOverall(judgments), []);
-  const judgmentById = useMemo(() => new Map(judgments.map((j) => [j.questionId, j])), []);
-  const axisById = useMemo(
-    () => new Map(overall.axes.map((a) => [a.axis, a])),
-    [overall],
-  );
-  const axesByBottleneck = useMemo(() => sortAxesByScore(overall.axes), [overall]);
+  const { companyInput, assessmentId, completedSteps, completeStep } = useDiagnosis();
+  const [data, setData] = useState<ResultPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   /* ---- 화면 상태 ---- */
-  const [ready, setReady] = useState(false);
-  const [selectedAxis, setSelectedAxis] = useState<AxisId | null>(null);
+  const [selectedAxis, setSelectedAxis] = useState<string | null>(null);
   const [showAllAxes, setShowAllAxes] = useState(false);
-  const [basisAxis, setBasisAxis] = useState<AxisId | null>(null);
-  const [statDetail, setStatDetail] = useState<CompanyStat | null>(null);
-  const [chainArea, setChainArea] = useState<AreaAssessment | null>(null);
-  const statRowRef = useRef<HTMLDivElement>(null);
 
-  const collectDone = completedSteps.includes("collect");
-  const resultDone = completedSteps.includes("result");
-
-  /* 최초 진입 시 약 2초 로딩 — 재방문(result 완료)이면 생략 */
   useEffect(() => {
-    if (!collectDone) return;
-    if (resultDone) {
-      setReady(true);
-      return;
-    }
-    const t = setTimeout(() => setReady(true), 2000);
-    return () => clearTimeout(t);
-  }, [collectDone, resultDone]);
+    if (!assessmentId) return;
+    api<ResultPayload>(`/api/assessments/${assessmentId}/result`)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
+  }, [assessmentId]);
 
-  /* ---- 가드: 자료 정리(collect) 미완료 ---- */
-  if (!collectDone) {
+  /* 진입 가드 — 자료 정리 미완료 (기존 정책 유지) */
+  if (!assessmentId || !completedSteps.includes("collect")) {
     return (
-      <Inner>
-        <Card
-          radius="2xl"
-          style={{ maxWidth: 560, margin: "64px auto", padding: "40px 36px", textAlign: "center" }}
-        >
-          <div style={{ font: "var(--text-label-s)", color: "var(--fg-brand)", marginBottom: 12 }}>
-            진단 결과
-          </div>
-          <h1
-            style={{
-              margin: "0 0 12px",
-              font: "var(--text-h2)",
-              letterSpacing: "var(--track-heading)",
-              color: "var(--fg-primary)",
-            }}
-          >
-            아직 진단 결과가 준비되지 않았어요
-          </h1>
-          <p style={{ margin: "0 0 24px", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            자료 정리 단계를 마치면 업로드 자료·공개 데이터·확인 응답을 근거로 진단 결과가
-            만들어져요.
+      <div className="flex min-h-[calc(100vh-56px)] items-center justify-center px-[var(--gutter)]">
+        <Card radius="2xl" style={{ maxWidth: 480, width: "100%", padding: 36, textAlign: "center" }}>
+          <p style={{ font: "var(--text-h3)", color: "var(--fg-primary)", margin: 0 }}>
+            자료 정리를 먼저 마쳐주세요
           </p>
-          <Button variant="primary" href="/collect">
-            자료 정리로 돌아가기
-          </Button>
+          <div style={{ marginTop: 22 }}>
+            <Button variant="primary" size="lg" full onClick={() => router.push("/collect")}>
+              자료 정리로 가기
+            </Button>
+          </div>
         </Card>
-      </Inner>
-    );
-  }
-
-  /* ---- 로딩 (약 2초) ---- */
-  if (!ready) {
-    return (
-      <div
-        style={{
-          minHeight: "60vh",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 20,
-        }}
-      >
-        <Loader style={{ color: "var(--fg-brand)" }} />
-        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-          방금 정리된 자료를 기준으로 진단하고 있어요
-        </p>
       </div>
     );
   }
 
-  const companyName = companyInput.trim() || demoCompany.name;
-  const foundedYear = new Date(demoCompany.established).getFullYear();
-  const yearsInBusiness = new Date().getFullYear() - foundedYear;
-  const region = demoCompany.address.split(" ").slice(0, 2).join(" ");
+  if (error)
+    return (
+      <div className="flex min-h-[calc(100vh-56px)] items-center justify-center px-[var(--gutter)]">
+        <p style={{ font: "var(--text-body1)", color: "var(--fg-tertiary)" }}>{error}</p>
+      </div>
+    );
+  if (!data) return <RouteLoading messages={["진단 결과를 불러오고 있어요"]} />;
 
-  /* 목표 단계 = 현재 +1 (최대 Lv.5) */
-  const currentIdx = overall.level.level - 1;
-  const targetIdx = Math.min(currentIdx + 1, LEVELS.length - 1);
-
-  /* 업종 평균 위치 — INDUSTRY_AVG 평균을 mapLevel로 환산 */
-  const industryAvgScore =
-    Object.values(INDUSTRY_AVG).reduce((a, b) => a + b, 0) / Object.values(INDUSTRY_AVG).length;
-  const industryLevel = mapLevel(industryAvgScore);
-
-  const stepperSteps = LEVELS.map((l, i) => ({
-    label: l.label,
-    sub: i === targetIdx ? "목표 단계" : undefined,
+  const { areas, result } = data;
+  const axes: AxisView[] = data.axes.map((a) => ({
+    code: a.axisCode,
+    name: a.axisName,
+    score: Number(a.score),
+    answeredCount: a.answeredCount,
+    totalCount: a.totalCount,
   }));
+  const axisByCode = new Map(axes.map((a) => [a.code, a]));
+  const axesByBottleneck = [...axes].sort((a, b) => a.score - b.score);
 
-  /** 축 선택 — 같은 축 재클릭 시 해제 (v4) */
-  const selectAxis = (id: AxisId) => {
-    setSelectedAxis((prev) => (prev === id ? null : id));
+  const answered = data.judgments.filter((j) => j.anchorLevel !== null).length;
+  const totalQ = data.judgments.length;
+  const lowCoverage = totalQ > 0 && answered / totalQ < 0.5;
+
+  const companyName = companyInput.trim();
+  const totalScore = result ? Number(result.totalScore) : null;
+  const selectedScore = selectedAxis ? axisByCode.get(selectedAxis) : undefined;
+
+  const sortedAreas = [...areas].sort(
+    (a, b) => AREA_ORDER.indexOf(a.functionArea) - AREA_ORDER.indexOf(b.functionArea),
+  );
+
+  /** 축 선택 — 같은 축 재클릭 시 해제 */
+  const selectAxis = (code: string) => {
+    setSelectedAxis((prev) => (prev === code ? null : code));
     setShowAllAxes(false);
   };
 
@@ -641,462 +464,292 @@ export default function ResultPage() {
     router.push("/tasks");
   };
 
-  const basisScore = basisAxis ? axisById.get(basisAxis) : undefined;
-  const basisQuestions = basisAxis ? rubricQuestions.filter((q) => q.axis === basisAxis) : [];
-  const statSource = statDetail?.sourceId
-    ? publicSources.find((s) => s.id === statDetail.sourceId)
-    : undefined;
-
-  const selectedScore = selectedAxis ? axisById.get(selectedAxis) : undefined;
+  /** 축코드 목록 → "이름 점수점 · …" (병목/강점 표기) */
+  const axisScoreLine = (codes: string[]) =>
+    codes
+      .map((code) => {
+        const a = axisByCode.get(code);
+        return `${a?.name ?? code} ${fmtScore(a?.score ?? null)}점`;
+      })
+      .join(" · ");
 
   return (
     <div className="ax-step-enter" style={{ background: "var(--bg-base)" }}>
-      {/* ================= 섹션 1 — 기업 개요 + 현재 단계 (통합 카드, v3) ================= */}
+      {/* ================= 섹션 1 — 기업 개요 + 현재 단계 (통합 카드) ================= */}
       <section style={{ padding: "40px 0 12px" }}>
         <Inner>
-          <div style={{ display: "grid", gap: 16 }}>
-            <Card radius="2xl" style={{ padding: 28 }}>
-              {/* 기업 식별 — 출처는 우측에 캡션 스타일로 (v5+) */}
-              <div
+          <Card radius="2xl" style={{ padding: 28 }}>
+            {companyName && (
+              <h2
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "baseline",
-                  justifyContent: "space-between",
-                  gap: 10,
+                  margin: 0,
+                  font: "var(--text-title1)",
+                  letterSpacing: "var(--track-heading)",
+                  color: "var(--fg-primary)",
                 }}
               >
-                <span style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
-                  <h2
+                {companyName}
+              </h2>
+            )}
+
+            {/* 현재 단계 — 라벨 · 큰 레벨 · 서브 */}
+            <div style={{ marginTop: companyName ? 30 : 0 }}>
+              <div style={{ font: "var(--text-label-s)", color: "var(--fg-tertiary)" }}>현재</div>
+              {result ? (
+                <>
+                  <h3
                     style={{
-                      margin: 0,
-                      font: "var(--text-title1)",
-                      letterSpacing: "var(--track-heading)",
+                      margin: "8px 0 0",
+                      font: "var(--text-display2)",
+                      letterSpacing: "var(--track-display)",
                       color: "var(--fg-primary)",
                     }}
                   >
-                    {companyName}
-                  </h2>
-                  <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
-                    {demoCompany.bizNo}
-                  </span>
-                </span>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "3px 10px",
-                    borderRadius: "var(--radius-full)",
-                    background: "var(--bg-secondary)",
-                    border: "1px solid var(--line-subtle)",
-                    font: "var(--text-caption)",
-                    color: "var(--grey-500)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <Icons.globe size={12} />
-                  {demoCompany.infoSource.replace("기업 정보 기준: ", "출처 · ")}
-                </span>
-              </div>
-              <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                대표 {demoCompany.ceo} · 설립 <span style={mono}>{foundedYear}</span>년 (업력{" "}
-                <span style={mono}>{yearsInBusiness}</span>년) · {region}
-              </p>
-
-              {/* 현재 단계 — 라벨 · 큰 레벨 · 서브 (v4) */}
-              <div style={{ marginTop: 30 }}>
-                <div style={{ font: "var(--text-label-s)", color: "var(--fg-tertiary)" }}>
-                  현재
-                </div>
-                <h3
-                  style={{
-                    margin: "8px 0 0",
-                    font: "var(--text-display2)",
-                    letterSpacing: "var(--track-display)",
-                    color: "var(--fg-primary)",
-                  }}
-                >
-                  <b style={{ color: "var(--fg-brand)" }}>Lv.{overall.level.level}</b>{" "}
-                  {overall.level.label.replace(/^Lv\.\d+\s*/, "")}
-                </h3>
+                    <b style={{ color: "var(--fg-brand)" }}>Lv.{result.level}</b> {result.levelName}
+                  </h3>
+                  <p
+                    style={{
+                      margin: "10px 0 0",
+                      font: "var(--text-body2)",
+                      color: "var(--fg-secondary)",
+                    }}
+                  >
+                    종합 {fmtScore(totalScore)}점 · 판정 {answered}/{totalQ}문항
+                    {result.balanceLabel ? ` · ${result.balanceLabel}` : ""}
+                  </p>
+                  {lowCoverage && (
+                    <p
+                      style={{
+                        margin: "8px 0 0",
+                        font: "var(--text-caption)",
+                        color: "var(--fg-quaternary)",
+                      }}
+                    >
+                      자료가 부족해 일부 문항은 판정을 보류했어요. 자료를 더 올리면 진단이
+                      정확해져요.
+                    </p>
+                  )}
+                </>
+              ) : (
                 <p
                   style={{
                     margin: "10px 0 0",
-                    font: "var(--text-body2)",
-                    color: "var(--fg-secondary)",
+                    font: "var(--text-body1)",
+                    color: "var(--fg-tertiary)",
                   }}
                 >
-                  업종 평균(Lv.{industryLevel.level})
-                  {overall.level.level === industryLevel.level
-                    ? "과 비슷한"
-                    : overall.level.level > industryLevel.level
-                      ? "보다 높은"
-                      : "보다 낮은"}{" "}
-                  수준이에요
+                  판정 가능한 자료가 부족해 점수를 산출하지 못했어요.
                 </p>
-                <DotStepper
-                  steps={stepperSteps}
-                  current={currentIdx}
-                  target={targetIdx}
-                  style={{ marginTop: 28 }}
-                />
-              </div>
-
-              {/* 연한 구분선 + 통계 칩 */}
-              <div
-                style={{
-                  position: "relative",
-                  marginTop: 28,
-                  paddingTop: 24,
-                  borderTop: "1px solid var(--line-subtle)",
-                }}
-              >
-                <div
-                  ref={statRowRef}
-                  style={{
-                    display: "flex",
-                    gap: 10,
-                    overflowX: "auto",
-                    paddingRight: 48,
-                    scrollbarWidth: "none",
-                  }}
-                >
-                  {companyStats.map((stat) => (
-                    <button
-                      key={stat.id}
-                      type="button"
-                      onClick={() => setStatDetail(stat)}
-                      style={{
-                        flex: "none",
-                        display: "flex",
-                        flexDirection: "column",
-                        alignItems: "flex-start",
-                        gap: 5,
-                        minWidth: 136,
-                        boxSizing: "border-box",
-                        padding: "12px 18px",
-                        borderRadius: "var(--radius-l)",
-                        border: "1px solid var(--line-default)",
-                        background: "var(--bg-base)",
-                        cursor: "pointer",
-                        fontFamily: "var(--font-sans)",
-                        whiteSpace: "nowrap",
-                        transition: "background-color var(--dur-fast) var(--ease)",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = "var(--grey-50)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "var(--bg-base)";
-                      }}
-                      aria-label={`${stat.label} ${stat.value} — 상세 보기`}
-                    >
-                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                        {stat.label}
-                        {stat.basis ? ` (${stat.basis})` : ""}
-                      </span>
-                      <span style={{ ...mono, fontSize: 15, fontWeight: 600, color: "var(--fg-primary)" }}>
-                        {stat.value}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => statRowRef.current?.scrollBy({ left: 280, behavior: "smooth" })}
-                  aria-label="통계 칩 더 보기"
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    width: 34,
-                    height: 34,
-                    borderRadius: "50%",
-                    border: "1px solid var(--line-default)",
-                    background: "var(--bg-elevated)",
-                    boxShadow: "var(--shadow-1)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--grey-600)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <Icons.chevronRight size={16} />
-                </button>
-              </div>
-            </Card>
-
-            {/* Key Point — 시작점 라벨 + 당장 무엇부터 할지 중앙에 크게 (v5) */}
-            <Card radius="2xl" style={{ padding: "26px 28px 30px" }}>
-              <div
-                style={{
-                  font: "var(--text-label-s)",
-                  color: "var(--fg-brand)",
-                  textAlign: "center",
-                }}
-              >
-                시작점
-              </div>
-              <p
-                style={{
-                  margin: "10px 0 0",
-                  font: "var(--text-h3)",
-                  letterSpacing: "var(--track-heading)",
-                  color: "var(--fg-primary)",
-                  textAlign: "center",
-                }}
-              >
-                {keyPoint}
-              </p>
-            </Card>
-          </div>
+              )}
+            </div>
+          </Card>
         </Inner>
       </section>
 
       {/* ================= 섹션 2 — 카테고리별 준비도 ================= */}
-      <section style={{ padding: "56px 0" }}>
-        <Inner>
-          {/* 타이틀 — 업계 평균 ±10 기준 3구간, 직관 문구 (v5) */}
-          <SectionHead
-            label="카테고리별 준비도"
-            title={
-              overall.score < Math.round(industryAvgScore) - 10
-                ? `${overall.score}점은 업계 평균(${Math.round(industryAvgScore)}점)보다 낮은 점수예요`
-                : overall.score <= Math.round(industryAvgScore) + 10
-                  ? `${overall.score}점은 업계 대비 평균 점수예요`
-                  : `${overall.score}점은 업계 평균(${Math.round(industryAvgScore)}점)보다 높은 점수예요`
-            }
-          />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: 32,
-              alignItems: "start",
-            }}
-          >
-            {/* 좌 — 레이더 */}
-            <RadarChart axes={overall.axes} selected={selectedAxis} onSelect={selectAxis} />
+      {axes.length > 0 && (
+        <section style={{ padding: "56px 0" }}>
+          <Inner>
+            <SectionHead title="카테고리별 준비도" />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+                gap: 32,
+                alignItems: "start",
+              }}
+            >
+              {/* 좌 — 레이더 */}
+              {axes.length >= 3 && (
+                <RadarChart axes={axes} selected={selectedAxis} onSelect={selectAxis} />
+              )}
 
-            {/* 우 — 상세 카드 (모두 보기 버튼은 카드 밖 우측, v3) */}
-            <div>
-              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setShowAllAxes((v) => !v);
-                    setSelectedAxis(null);
-                  }}
-                >
-                  {showAllAxes ? "접기" : "모두 보기"}
-                </Button>
-              </div>
-              {showAllAxes ? (
-                /* 전체 보기 — 6개 카드 1열 구성 (v5) */
-                <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-                  {axesByBottleneck.map((a) => (
-                    <Card key={a.axis} radius="l" style={{ padding: "16px 18px" }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "baseline",
-                          justifyContent: "space-between",
-                          gap: 8,
-                        }}
-                      >
-                        <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                          {a.name}
-                        </span>
-                        <span style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}>
-                          {fmtScore(a.score)}
-                          <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>점</span>
-                        </span>
-                      </div>
-                      <ScoreBar score={a.score ?? 0} avg={a.industryAvg} />
-                      <p
-                        style={{
-                          margin: 0,
-                          font: "var(--text-body3)",
-                          color: "var(--fg-tertiary)",
-                          ...clamp2,
-                        }}
-                      >
-                        {axisFindings[a.axis]}
-                      </p>
-                      <div style={{ marginTop: 10 }}>
-                        <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.axis)}>
-                          점수 근거
-                        </Button>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              ) : (
-              <Card radius="2xl" style={{ padding: 26 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  marginBottom: 16,
-                }}
-              >
-                {selectedAxis && (
-                  <button
-                    type="button"
-                    aria-label="요약으로 돌아가기"
-                    onClick={() => setSelectedAxis(null)}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      width: 28,
-                      height: 28,
-                      margin: "-2px 0 -2px -6px",
-                      border: "none",
-                      borderRadius: "var(--radius-s)",
-                      background: "transparent",
-                      color: "var(--fg-tertiary)",
-                      cursor: "pointer",
-                      transition: "background-color var(--dur-fast) var(--ease)",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "var(--hover-overlay)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
+              {/* 우 — 상세 카드 (모두 보기 버튼은 카드 밖 우측) */}
+              <div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setShowAllAxes((v) => !v);
+                      setSelectedAxis(null);
                     }}
                   >
-                    <span aria-hidden style={{ display: "inline-flex", transform: "rotate(180deg)" }}>
-                      <Icons.chevronRight size={16} />
-                    </span>
-                  </button>
-                )}
-                <strong
-                  style={{
-                    font: "var(--text-title1)",
-                    letterSpacing: "var(--track-heading)",
-                    color: "var(--fg-primary)",
-                  }}
-                >
-                  {selectedAxis && selectedScore ? selectedScore.name : "AX 진단 결과 상세"}
-                </strong>
-              </div>
-
-              {selectedAxis && selectedScore ? (
-                /* 카테고리 선택 상태 */
-                <div>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                    <span style={{ ...mono, fontSize: 32, fontWeight: 700, color: "var(--fg-primary)" }}>
-                      {fmtScore(selectedScore.score)}
-                    </span>
-                    <span style={{ font: "var(--text-body3)", color: "var(--grey-400)" }}>/ 100점</span>
-                  </div>
-                  <ScoreBar
-                    score={selectedScore.score ?? 0}
-                    avg={selectedScore.industryAvg}
-                  />
-                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                    {axisFindings[selectedAxis]}
-                  </p>
-                  <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
-                    <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
-                      점수 근거
-                    </Button>
-                  </div>
+                    {showAllAxes ? "접기" : "모두 보기"}
+                  </Button>
                 </div>
-              ) : (
-                /* 기본 상태 — 요약 */
-                <div style={{ display: "grid", gap: 14 }}>
-                  <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                    여섯 카테고리 평균이 종합 <span style={{ ...mono, fontWeight: 600 }}>{overall.score}</span>
-                    점이에요. 분포는 &ldquo;{overall.balanceLabel}&rdquo; 유형으로, 강점과 병목이
-                    뚜렷하게 갈려요.
-                  </p>
-                  {/* 종합 점수 vs 업종 평균 비교 (v4) */}
-                  <div>
-                    <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                      <span style={{ ...mono, fontSize: 28, fontWeight: 700, color: "var(--fg-primary)" }}>
-                        {overall.score}
-                      </span>
-                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>종합</span>
-                      <span
+                {showAllAxes ? (
+                  /* 전체 보기 — 축 카드 1열 구성 (병목 순) */
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+                    {axesByBottleneck.map((a) => (
+                      <Card key={a.code} radius="l" style={{ padding: "16px 18px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "baseline",
+                            justifyContent: "space-between",
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                            {a.name}
+                          </span>
+                          <span
+                            style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}
+                          >
+                            {fmtScore(a.score)}
+                            <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>
+                              점
+                            </span>
+                          </span>
+                        </div>
+                        <ScoreBar score={a.score} />
+                        <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                          판정 {a.answeredCount}/{a.totalCount}
+                        </p>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
+                  <Card radius="2xl" style={{ padding: 26 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        marginBottom: 16,
+                      }}
+                    >
+                      {selectedAxis && (
+                        <button
+                          type="button"
+                          aria-label="요약으로 돌아가기"
+                          onClick={() => setSelectedAxis(null)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 28,
+                            height: 28,
+                            margin: "-2px 0 -2px -6px",
+                            border: "none",
+                            borderRadius: "var(--radius-s)",
+                            background: "transparent",
+                            color: "var(--fg-tertiary)",
+                            cursor: "pointer",
+                            transition: "background-color var(--dur-fast) var(--ease)",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "var(--hover-overlay)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "transparent";
+                          }}
+                        >
+                          <span
+                            aria-hidden
+                            style={{ display: "inline-flex", transform: "rotate(180deg)" }}
+                          >
+                            <Icons.chevronRight size={16} />
+                          </span>
+                        </button>
+                      )}
+                      <strong
                         style={{
-                          ...mono,
-                          fontSize: 16,
-                          fontWeight: 600,
-                          color: "var(--grey-500)",
-                          marginLeft: "auto",
+                          font: "var(--text-title1)",
+                          letterSpacing: "var(--track-heading)",
+                          color: "var(--fg-primary)",
                         }}
                       >
-                        {Math.round(industryAvgScore)}
-                      </span>
-                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                        업종 평균
-                      </span>
+                        {selectedAxis && selectedScore ? selectedScore.name : "AX 진단 결과 상세"}
+                      </strong>
                     </div>
-                    <ScoreBar score={overall.score} avg={Math.round(industryAvgScore)} />
-                  </div>
-                  <div>
-                    <Badge tone="accent">전략 유형 · {strategyType.label}</Badge>
-                    <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
-                      {strategyType.description}
-                    </p>
-                  </div>
-                  <div style={{ display: "grid", gap: 8, paddingTop: 6, borderTop: "1px solid var(--line-subtle)" }}>
-                    <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                      <strong style={{ color: "var(--fg-danger)", fontWeight: 600 }}>병목</strong> ·{" "}
-                      {overall.bottlenecks
-                        .map((id) => {
-                          const a = axisById.get(id);
-                          return `${a?.name} ${fmtScore(a?.score ?? null)}점`;
-                        })
-                        .join(" · ")}
-                    </p>
-                    <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                      <strong style={{ color: "var(--fg-success)", fontWeight: 600 }}>강점</strong> ·{" "}
-                      {overall.strengths
-                        .map((id) => {
-                          const a = axisById.get(id);
-                          return `${a?.name} ${fmtScore(a?.score ?? null)}점`;
-                        })
-                        .join(" · ")}
-                    </p>
-                  </div>
-                  <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                    왼쪽 차트의 카테고리 이름이나 점을 눌러 보세요.
-                  </p>
-                </div>
-              )}
-              </Card>
-              )}
+
+                    {selectedAxis && selectedScore ? (
+                      /* 카테고리 선택 상태 */
+                      <div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                          <span
+                            style={{ ...mono, fontSize: 32, fontWeight: 700, color: "var(--fg-primary)" }}
+                          >
+                            {fmtScore(selectedScore.score)}
+                          </span>
+                          <span style={{ font: "var(--text-body3)", color: "var(--grey-400)" }}>
+                            / 100점
+                          </span>
+                        </div>
+                        <ScoreBar score={selectedScore.score} />
+                        <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+                          판정 {selectedScore.answeredCount}/{selectedScore.totalCount}
+                        </p>
+                      </div>
+                    ) : (
+                      /* 기본 상태 — 요약 */
+                      <div style={{ display: "grid", gap: 14 }}>
+                        {result && totalScore !== null && (
+                          <div>
+                            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                              <span
+                                style={{ ...mono, fontSize: 28, fontWeight: 700, color: "var(--fg-primary)" }}
+                              >
+                                {fmtScore(totalScore)}
+                              </span>
+                              <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                                종합
+                              </span>
+                            </div>
+                            <ScoreBar score={totalScore} />
+                          </div>
+                        )}
+                        {result && result.bottlenecks.length > 0 && result.strengths.length > 0 && (
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: 8,
+                              paddingTop: 6,
+                              borderTop: "1px solid var(--line-subtle)",
+                            }}
+                          >
+                            <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                              <strong style={{ color: "var(--fg-danger)", fontWeight: 600 }}>병목</strong> ·{" "}
+                              {axisScoreLine(result.bottlenecks)}
+                            </p>
+                            <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                              <strong style={{ color: "var(--fg-success)", fontWeight: 600 }}>강점</strong> ·{" "}
+                              {axisScoreLine(result.strengths)}
+                            </p>
+                          </div>
+                        )}
+                        <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                          왼쪽 차트의 카테고리 이름이나 점을 눌러 보세요.
+                        </p>
+                      </div>
+                    )}
+                  </Card>
+                )}
+              </div>
             </div>
-          </div>
-        </Inner>
-      </section>
+          </Inner>
+        </section>
+      )}
 
       {/* ================= 섹션 3 — 8영역 (은은한 밴드) ================= */}
-      <section style={{ background: "var(--bg-secondary)", padding: "56px 0" }}>
-        <Inner>
-          <SectionHead
-            label="기능영역"
-            title="기능영역별 현재 상태"
-            sub="점수 대신 등급으로 표기해요."
-          />
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-              gap: 12,
-            }}
-          >
-            {[...areaAssessments]
-              .sort((a, b) => a.priority - b.priority)
-              .map((area) => {
+      {areas.length > 0 && (
+        <section style={{ background: "var(--bg-secondary)", padding: "56px 0" }}>
+          <Inner>
+            <SectionHead
+              label="기능영역"
+              title="기능영역별 현재 상태"
+              sub="점수 대신 등급으로 표기해요."
+            />
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+                gap: 12,
+              }}
+            >
+              {sortedAreas.map((area) => {
                 const gradeMeta =
                   area.grade === "critical"
                     ? { label: "관리 대상", tone: "danger" as const }
@@ -1107,7 +760,7 @@ export default function ResultPage() {
                         : { label: "판단 보류", tone: "outline" as const };
                 return (
                   <Card
-                    key={area.areaId}
+                    key={area.functionArea}
                     radius="l"
                     style={{
                       padding: "18px 20px",
@@ -1116,9 +769,16 @@ export default function ResultPage() {
                       gap: 10,
                     }}
                   >
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                      }}
+                    >
                       <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                        {areaName(area.areaId)}
+                        {area.functionArea}
                       </strong>
                       <Badge tone={gradeMeta.tone}>{gradeMeta.label}</Badge>
                     </div>
@@ -1131,125 +791,122 @@ export default function ResultPage() {
                         ...clamp2,
                       }}
                     >
-                      {area.grade === "hold" && area.holdReason ? area.holdReason : area.asIs}
+                      {area.grade === "hold" ? (area.holdReason ?? "자료가 부족해요") : area.asIs}
                     </p>
-                    {area.grade === "critical" && (
-                      <div style={{ marginTop: "auto" }}>
-                        <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
-                          사유 보기
-                        </Button>
-                      </div>
-                    )}
                   </Card>
                 );
               })}
-          </div>
-        </Inner>
-      </section>
+            </div>
+          </Inner>
+        </section>
+      )}
 
       {/* ============ 섹션 4 — 종합 분석 결과 ============ */}
       <section style={{ padding: "56px 0 80px" }}>
         <Inner>
-          <SectionHead label="종합 분석" title="종합 분석 결과" />
+          {result?.narrative && (
+            <>
+              <SectionHead label="종합 분석" title="종합 분석 결과" />
 
-          {/* 종합 분석 — 보고서형 단일 카드 (강점/보완/AX 전략 제안 불릿, v3) */}
-          <Card radius="2xl" style={{ padding: 28 }}>
-            <p
-              style={{
-                margin: 0,
-                font: "var(--text-h4)",
-                letterSpacing: "var(--track-heading)",
-                lineHeight: 1.4,
-                color: "var(--fg-primary)",
-                maxWidth: 820,
-              }}
-            >
-              {comprehensiveAnalysis.conclusion}
-            </p>
+              {/* 종합 분석 — 보고서형 단일 카드 (강점/보완/AX 전략 제안 불릿) */}
+              <Card radius="2xl" style={{ padding: 28 }}>
+                <p
+                  style={{
+                    margin: 0,
+                    font: "var(--text-h4)",
+                    letterSpacing: "var(--track-heading)",
+                    lineHeight: 1.4,
+                    color: "var(--fg-primary)",
+                    maxWidth: 820,
+                  }}
+                >
+                  {result.narrative.conclusion}
+                </p>
 
-            <div style={{ marginTop: 24, display: "grid", gap: 22 }}>
-              {(
-                [
-                  {
-                    label: "강점",
-                    color: "var(--fg-success)",
-                    items: comprehensiveAnalysis.strengths,
-                  },
-                  {
-                    label: "보완",
-                    color: "var(--fg-warning)",
-                    items: comprehensiveAnalysis.improvements,
-                  },
-                  {
-                    label: "AX 전략 제안",
-                    color: "var(--fg-brand)",
-                    items: [
+                <div style={{ marginTop: 24, display: "grid", gap: 22 }}>
+                  {(
+                    [
                       {
-                        title: strategyType.label,
-                        body: comprehensiveAnalysis.strategyDirection,
+                        label: "강점",
+                        color: "var(--fg-success)",
+                        items: result.narrative.strengths,
                       },
-                    ],
-                  },
-                ] as const
-              ).map((group) => (
-                <div key={group.label}>
-                  <div
-                    style={{
-                      font: "var(--text-label-s)",
-                      color: group.color,
-                      marginBottom: 8,
-                    }}
-                  >
-                    {group.label}
-                  </div>
-                  {/* 동그라미 불릿 + 제목/본문 개행 (v4) */}
-                  <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 12 }}>
-                    {group.items.map((it) => (
-                      <li
-                        key={it.title}
-                        style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: 860 }}
+                      {
+                        label: "보완",
+                        color: "var(--fg-warning)",
+                        items: result.narrative.improvements,
+                      },
+                      {
+                        label: "AX 전략 제안",
+                        color: "var(--fg-brand)",
+                        items: [{ title: null, body: result.narrative.strategy }],
+                      },
+                    ] as { label: string; color: string; items: { title: string | null; body: string }[] }[]
+                  ).map((group) => (
+                    <div key={group.label}>
+                      <div
+                        style={{
+                          font: "var(--text-label-s)",
+                          color: group.color,
+                          marginBottom: 8,
+                        }}
                       >
-                        <span
-                          aria-hidden
-                          style={{
-                            flex: "none",
-                            width: 5,
-                            height: 5,
-                            borderRadius: "50%",
-                            background: group.color,
-                            marginTop: 8,
-                          }}
-                        />
-                        <span style={{ minWidth: 0 }}>
-                          <strong
-                            style={{
-                              display: "block",
-                              font: "var(--text-label-m)",
-                              color: "var(--fg-primary)",
-                            }}
+                        {group.label}
+                      </div>
+                      {/* 동그라미 불릿 + 제목/본문 개행 */}
+                      <ul
+                        style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 12 }}
+                      >
+                        {group.items.map((it) => (
+                          <li
+                            key={it.title ?? it.body}
+                            style={{ display: "flex", gap: 10, alignItems: "flex-start", maxWidth: 860 }}
                           >
-                            {it.title}
-                          </strong>
-                          <span
-                            style={{
-                              display: "block",
-                              marginTop: 3,
-                              font: "var(--text-body3)",
-                              color: "var(--fg-secondary)",
-                            }}
-                          >
-                            {it.body}
-                          </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                            <span
+                              aria-hidden
+                              style={{
+                                flex: "none",
+                                width: 5,
+                                height: 5,
+                                borderRadius: "50%",
+                                background: group.color,
+                                marginTop: 8,
+                              }}
+                            />
+                            <span style={{ minWidth: 0 }}>
+                              {it.title && (
+                                <strong
+                                  style={{
+                                    display: "block",
+                                    font: "var(--text-label-m)",
+                                    color: "var(--fg-primary)",
+                                  }}
+                                >
+                                  {it.title}
+                                </strong>
+                              )}
+                              <span
+                                style={{
+                                  display: "block",
+                                  marginTop: it.title ? 3 : 0,
+                                  font: "var(--text-body3)",
+                                  color: "var(--fg-secondary)",
+                                }}
+                              >
+                                {it.body}
+                              </span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </Card>
+              </Card>
+            </>
+          )}
 
-          {/* CTA — 우측 하단 (v3) */}
+          {/* CTA — 우측 하단 */}
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 32 }}>
             <Button variant="primary" size="xl" onClick={() => goTasks()}>
               개선 과제 고르러 가기
@@ -1258,169 +915,6 @@ export default function ResultPage() {
           </div>
         </Inner>
       </section>
-
-      {/* ================= 팝업 1 — 통계 칩 상세 ================= */}
-      <Modal
-        open={statDetail !== null}
-        onClose={() => setStatDetail(null)}
-        title={statDetail?.label}
-      >
-        {statDetail && (
-          <div style={{ display: "grid", gap: 14 }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <span style={{ ...mono, fontSize: 26, fontWeight: 700, color: "var(--fg-primary)" }}>
-                {statDetail.value}
-              </span>
-              {statDetail.basis && (
-                <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                  {statDetail.basis} 기준
-                </span>
-              )}
-            </div>
-            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 6 }}>
-              {statDetail.detail.map((d) => (
-                <li key={d} style={{ font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-                  {d}
-                </li>
-              ))}
-            </ul>
-            {statSource && (
-              <p
-                style={{
-                  margin: 0,
-                  paddingTop: 12,
-                  borderTop: "1px solid var(--line-subtle)",
-                  font: "var(--text-caption)",
-                  color: "var(--grey-500)",
-                }}
-              >
-                출처: {statSource.name} — {statSource.sourceApi} (데모 데이터)
-              </p>
-            )}
-          </div>
-        )}
-      </Modal>
-
-      {/* ================= 팝업 2 — 점수 근거 (문항·판정·근거) ================= */}
-      <Modal
-        open={basisAxis !== null}
-        onClose={() => setBasisAxis(null)}
-        title={basisScore ? `${basisScore.name} — 점수 근거` : undefined}
-        wide
-      >
-        {basisAxis && basisScore && (
-          <div>
-            <p
-              style={{
-                margin: "0 0 4px",
-                font: "var(--text-body3)",
-                color: "var(--fg-secondary)",
-              }}
-            >
-              <span style={{ ...mono, fontWeight: 600, color: "var(--fg-primary)" }}>
-                판정 {basisScore.judgedCount}/{basisScore.totalCount} · 자료 충분도{" "}
-                {Math.round(basisScore.coverage * 100)}%
-              </span>
-            </p>
-            <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
-              자료가 부족한 문항은{" "}
-              <TermTooltip term="판정 보류">{getGlossary("판정 보류")?.easy}</TermTooltip>로 두고
-              감점하지 않아요. 판정은 문항별 기준 서술에 분류하는 방식이에요.
-            </p>
-            {/* 스크롤은 팝업 안쪽 리스트에서만 (v3) */}
-            <div
-              className="ax-scrollbar-none"
-              style={{ marginTop: 12, maxHeight: "48vh", overflowY: "auto" }}
-            >
-              {basisQuestions.map((q) => {
-                const j = judgmentById.get(q.id);
-                const deferred = !j || j.anchor === null;
-                return (
-                  <div
-                    key={q.id}
-                    style={{ borderTop: "1px solid var(--line-subtle)", padding: "16px 0" }}
-                  >
-                    <div style={{ ...mono, fontSize: 11, color: "var(--grey-400)", marginBottom: 4 }}>
-                      {q.id}
-                    </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 8,
-                      }}
-                    >
-                      <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                        {q.question}
-                      </strong>
-                      {deferred && <Badge tone="outline">판정 보류</Badge>}
-                    </div>
-                    {!deferred && j?.anchor && (
-                      <p
-                        style={{
-                          margin: "0 0 6px",
-                          font: "var(--text-body3)",
-                          color: "var(--fg-primary)",
-                        }}
-                      >
-                        판정 기준: &ldquo;{q.anchors[j.anchor]}&rdquo;
-                      </p>
-                    )}
-                    {deferred && j?.deferReason && (
-                      <p
-                        style={{
-                          margin: "0 0 6px",
-                          font: "var(--text-body3)",
-                          color: "var(--fg-secondary)",
-                        }}
-                      >
-                        {j.deferReason}
-                      </p>
-                    )}
-                    {j && (
-                      <p
-                        style={{
-                          margin: "0 0 10px",
-                          font: "var(--text-body3)",
-                          color: "var(--fg-secondary)",
-                        }}
-                      >
-                        {j.rationale}
-                      </p>
-                    )}
-                    {j && <EvidenceTextList items={j.evidence} />}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* ================= 팝업 3 — 관리 대상 사유 (인과 체인) ================= */}
-      <Modal
-        open={chainArea !== null}
-        onClose={() => setChainArea(null)}
-        title={chainArea ? areaName(chainArea.areaId) : undefined}
-        wide
-      >
-        {chainArea && (
-          <div style={{ display: "grid", gap: 16 }}>
-            <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-              {chainArea.asIs}
-            </p>
-            <CauseChain steps={CAUSE_CHAINS[chainArea.areaId] ?? []} />
-            <div style={{ paddingTop: 12, borderTop: "1px solid var(--line-subtle)" }}>
-              <div style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)", marginBottom: 6 }}>
-                근거
-              </div>
-              <EvidenceTextList items={chainArea.evidence} />
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }
