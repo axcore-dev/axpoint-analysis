@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
-import { Badge, Button, Card, Icons } from "@/components/ui";
+import { Badge, Button, Card, DotStepper, Icons } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { RouteLoading } from "@/components/flow/RouteLoading";
 import { api } from "@/lib/api";
@@ -31,6 +31,12 @@ function fmtScore(n: number | null): string {
   return String(Math.round(n * 10) / 10);
 }
 
+/** 사업자번호 표기 — 000-00-00000 */
+const fmtBizNo = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
+
+/** 연 매출 표기 — 백만원 단위 값을 억 원으로 */
+const fmtRevenue = (m: number) => (m >= 100 ? `${Math.round(m / 10) / 10}억 원` : `${m}백만 원`);
+
 type AxisView = {
   code: string;
   name: string;
@@ -44,10 +50,20 @@ type ResultPayload = {
   axes: {
     axisCode: string;
     axisName: string;
-    score: string;
-    answeredCount: number;
-    totalCount: number;
+    score: string | null; // 축 카탈로그 LEFT JOIN — 미판정 축은 null
+    answeredCount: number | null;
+    totalCount: number | null;
   }[];
+  levels: { level: number; name: string }[];
+  company: {
+    name: string;
+    bizNo: string | null;
+    ceoName: string | null;
+    region: string | null;
+    estDate: string | null;
+    employees: number | null;
+    revenueMillion: number | null;
+  } | null;
   areas: {
     functionArea: string;
     grade: string;
@@ -396,6 +412,7 @@ export default function ResultPage() {
   /* ---- 화면 상태 ---- */
   const [selectedAxis, setSelectedAxis] = useState<string | null>(null);
   const [showAllAxes, setShowAllAxes] = useState(false);
+  const statRowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!assessmentId) return;
@@ -434,9 +451,9 @@ export default function ResultPage() {
   const axes: AxisView[] = data.axes.map((a) => ({
     code: a.axisCode,
     name: a.axisName,
-    score: Number(a.score),
-    answeredCount: a.answeredCount,
-    totalCount: a.totalCount,
+    score: Number(a.score ?? 0), // 미판정 축은 0점으로 표시 (레이더 5축 고정)
+    answeredCount: a.answeredCount ?? 0,
+    totalCount: a.totalCount ?? 0,
   }));
   const axisByCode = new Map(axes.map((a) => [a.code, a]));
   const axesByBottleneck = [...axes].sort((a, b) => a.score - b.score);
@@ -448,6 +465,31 @@ export default function ResultPage() {
   const companyName = companyInput.trim();
   const totalScore = result ? Number(result.totalScore) : null;
   const selectedScore = selectedAxis ? axisByCode.get(selectedAxis) : undefined;
+
+  /* ---- 기업 개요 (서버 기업 정보 — 값이 있는 조각만 표시) ---- */
+  const co = data.company;
+  const displayName = co?.name || companyName;
+  const foundedYear = co?.estDate ? Number(co.estDate.slice(0, 4)) : null;
+  const yearsInBusiness = foundedYear ? new Date().getFullYear() - foundedYear : null;
+  const infoParts = [
+    co?.ceoName ? `대표 ${co.ceoName}` : null,
+    foundedYear ? `설립 ${foundedYear}년${yearsInBusiness ? ` (업력 ${yearsInBusiness}년)` : ""}` : null,
+    co?.region ?? null,
+  ].filter(Boolean) as string[];
+
+  /* ---- Lv.1~5 단계 스테퍼 — 목표 단계 = 현재 +1 (최대 마지막 단계) ---- */
+  const currentIdx = result ? result.level - 1 : 0;
+  const targetIdx = Math.min(currentIdx + 1, Math.max(data.levels.length - 1, 0));
+  const stepperSteps = data.levels.map((l, i) => ({
+    label: `Lv.${l.level} ${l.name}`,
+    sub: i === targetIdx ? "목표 단계" : undefined,
+  }));
+
+  /* ---- 통계 칩 — 수집된 값만 (외부 데이터 연동 전까지는 비어 있을 수 있음) ---- */
+  const companyStats = [
+    co?.revenueMillion != null ? { label: "연 매출", value: fmtRevenue(co.revenueMillion) } : null,
+    co?.employees != null ? { label: "고용", value: `${co.employees}명` } : null,
+  ].filter(Boolean) as { label: string; value: string }[];
 
   const sortedAreas = [...areas].sort(
     (a, b) => AREA_ORDER.indexOf(a.functionArea) - AREA_ORDER.indexOf(b.functionArea),
@@ -479,21 +521,34 @@ export default function ResultPage() {
       <section style={{ padding: "40px 0 12px" }}>
         <Inner>
           <Card radius="2xl" style={{ padding: 28 }}>
-            {companyName && (
-              <h2
-                style={{
-                  margin: 0,
-                  font: "var(--text-title1)",
-                  letterSpacing: "var(--track-heading)",
-                  color: "var(--fg-primary)",
-                }}
-              >
-                {companyName}
-              </h2>
+            {/* 기업 식별 — 기업명 + 사업자번호 */}
+            {(displayName || co?.bizNo) && (
+              <span style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: 10 }}>
+                <h2
+                  style={{
+                    margin: 0,
+                    font: "var(--text-title1)",
+                    letterSpacing: "var(--track-heading)",
+                    color: "var(--fg-primary)",
+                  }}
+                >
+                  {displayName}
+                </h2>
+                {co?.bizNo && (
+                  <span style={{ ...mono, fontSize: 13, color: "var(--grey-500)" }}>
+                    {fmtBizNo(co.bizNo)}
+                  </span>
+                )}
+              </span>
+            )}
+            {infoParts.length > 0 && (
+              <p style={{ margin: "8px 0 0", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                {infoParts.join(" · ")}
+              </p>
             )}
 
             {/* 현재 단계 — 라벨 · 큰 레벨 · 서브 */}
-            <div style={{ marginTop: companyName ? 30 : 0 }}>
+            <div style={{ marginTop: displayName ? 30 : 0 }}>
               <div style={{ font: "var(--text-label-s)", color: "var(--fg-tertiary)" }}>현재</div>
               {result ? (
                 <>
@@ -529,6 +584,15 @@ export default function ResultPage() {
                       정확해져요.
                     </p>
                   )}
+                  {/* Lv.1~5 단계 흐름 — 현재·목표 단계 시각화 */}
+                  {stepperSteps.length > 0 && (
+                    <DotStepper
+                      steps={stepperSteps}
+                      current={currentIdx}
+                      target={targetIdx}
+                      style={{ marginTop: 28 }}
+                    />
+                  )}
                 </>
               ) : (
                 <p
@@ -542,6 +606,82 @@ export default function ResultPage() {
                 </p>
               )}
             </div>
+
+            {/* 연한 구분선 + 통계 칩 — 수집된 값이 있을 때만 */}
+            {companyStats.length > 0 && (
+              <div
+                style={{
+                  position: "relative",
+                  marginTop: 28,
+                  paddingTop: 24,
+                  borderTop: "1px solid var(--line-subtle)",
+                }}
+              >
+                <div
+                  ref={statRowRef}
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    overflowX: "auto",
+                    paddingRight: 48,
+                    scrollbarWidth: "none",
+                  }}
+                >
+                  {companyStats.map((stat) => (
+                    <div
+                      key={stat.label}
+                      style={{
+                        flex: "none",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 5,
+                        minWidth: 136,
+                        boxSizing: "border-box",
+                        padding: "12px 18px",
+                        borderRadius: "var(--radius-l)",
+                        border: "1px solid var(--line-default)",
+                        background: "var(--bg-base)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                        {stat.label}
+                      </span>
+                      <span
+                        style={{ ...mono, fontSize: 15, fontWeight: 600, color: "var(--fg-primary)" }}
+                      >
+                        {stat.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => statRowRef.current?.scrollBy({ left: 280, behavior: "smooth" })}
+                  aria-label="통계 칩 더 보기"
+                  style={{
+                    position: "absolute",
+                    right: 0,
+                    top: "50%",
+                    transform: "translateY(-50%)",
+                    width: 34,
+                    height: 34,
+                    borderRadius: "50%",
+                    border: "1px solid var(--line-default)",
+                    background: "var(--bg-elevated)",
+                    boxShadow: "var(--shadow-1)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "var(--grey-600)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Icons.chevronRight size={16} />
+                </button>
+              </div>
+            )}
           </Card>
         </Inner>
       </section>
