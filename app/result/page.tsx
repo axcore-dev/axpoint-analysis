@@ -3,18 +3,19 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
-import { Badge, Button, Card, DotStepper, Icons } from "@/components/ui";
+import { Badge, Button, Card, DotStepper, Icons, Modal, TermTooltip } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { RouteLoading } from "@/components/flow/RouteLoading";
 import { api } from "@/lib/api";
+import { getGlossary } from "@/data/glossary";
 
 /* ============================================================
    S2 진단 결과 — 원본 레이아웃 복원 + 백엔드 실연동
    - 데이터는 전부 GET /api/assessments/:id/result 응답
    - 서버에 없는 데이터 블록은 렌더하지 않는다:
-     업종 평균 비교(벤치마크 미구현), 기업 통계 칩·공개데이터(회사 상세 미제공),
-     점수 근거 팝업(문항 텍스트·앵커 미제공), 관리 대상 인과 체인(cause_chain 미생성),
-     단계 스테퍼(전체 레벨 명칭 미제공). 가치사슬 섹션은 삭제 확정.
+     기업 통계 칩 일부(특허·조달·인증 등 외부 수집 미연동), 통계 칩 상세 팝업.
+     가치사슬 섹션은 삭제 확정.
+   - 업종 평균(벤치마크)·점수 근거·인과 체인·축별 소견은 서버 값이 있을 때만 렌더.
    ============================================================ */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
@@ -43,6 +44,21 @@ type AxisView = {
   score: number;
   answeredCount: number;
   totalCount: number;
+  /** 업종 평균 — 벤치마크 없으면 null (평균 마커·폴리곤 미렌더) */
+  industryAvg: number | null;
+  /** 축별 소견 한 문장 — 서사 생성분이 없으면 null */
+  finding: string | null;
+};
+
+type EvidenceItem = { kind: string; label: string; snippet?: string };
+
+type AreaView = {
+  functionArea: string;
+  grade: string;
+  asIs: string | null;
+  holdReason: string | null;
+  causeChain: string[] | null;
+  evidence: EvidenceItem[];
 };
 
 type ResultPayload = {
@@ -64,13 +80,19 @@ type ResultPayload = {
     employees: number | null;
     revenueMillion: number | null;
   } | null;
-  areas: {
-    functionArea: string;
-    grade: string;
-    asIs: string | null;
-    holdReason: string | null;
+  areas: AreaView[];
+  judgments: {
+    questionCode: string;
+    anchorLevel: number | null;
+    score: number | null;
+    rationale: string;
+    judgedBy: string;
+    questionText: string;
+    axisCode: string;
+    anchorCriteria: string | null;
+    evidence: EvidenceItem[];
   }[];
-  judgments: { anchorLevel: number | null }[];
+  benchmarks: { axisCode: string | null; avgScore: string }[];
   result: {
     totalScore: string;
     level: number;
@@ -83,9 +105,38 @@ type ResultPayload = {
       strengths: { title: string; body: string }[];
       improvements: { title: string; body: string }[];
       strategy: string;
+      strategyLabel?: string;
+      axisFindings?: { axisCode: string; finding: string }[];
     } | null;
   } | null;
 };
+
+const KIND_LABEL: Record<string, string> = {
+  upload: "업로드",
+  survey: "설문",
+  external: "공개 데이터",
+  hitl: "확인 응답",
+};
+
+/** 근거를 출처 텍스트로 — "업로드 · 3월 생산일지 — "종이 양식에…"" */
+function EvidenceTextList({ items }: { items: EvidenceItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>
+      {items.map((e, i) => (
+        <li
+          key={`${e.label}-${i}`}
+          style={{ fontSize: 12.5, lineHeight: 1.55, color: "var(--fg-tertiary)" }}
+        >
+          <span style={{ fontWeight: 600, color: "var(--fg-secondary)" }}>
+            {KIND_LABEL[e.kind] ?? e.kind} · {e.label}
+          </span>
+          {e.snippet && <> — &ldquo;{e.snippet}&rdquo;</>}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 /** 8영역 표시 순서 — 분류·분석·과제 화면 공통 체계와 동일 */
 const AREA_ORDER = [
@@ -166,14 +217,19 @@ function RadarChart({
     vals.map((v, i) => pt(i, v).map((n) => n.toFixed(1)).join(",")).join(" ");
 
   const ownVals = axes.map((a) => a.score);
+  const hasAvg = axes.length > 0 && axes.every((a) => a.industryAvg !== null);
+  const avgVals = axes.map((a) => a.industryAvg ?? 0);
 
   return (
     <figure style={{ margin: 0 }}>
       <svg
         viewBox="0 0 360 336"
         role="img"
-        aria-label={`카테고리별 준비도 차트. ${axes
-          .map((a) => `${a.name} ${fmtScore(a.score)}점`)
+        aria-label={`카테고리별 준비도 차트${hasAvg ? " — 자사 점수와 평균 비교" : ""}. ${axes
+          .map(
+            (a) =>
+              `${a.name} ${fmtScore(a.score)}점${hasAvg ? `(평균 ${a.industryAvg}점)` : ""}`,
+          )
           .join(", ")}`}
         style={{ width: "100%", maxWidth: 460, display: "block", margin: "0 auto" }}
       >
@@ -225,6 +281,17 @@ function RadarChart({
               </defs>
             );
           })()}
+        {/* 업종 평균 — 회색 점선 폴리곤 (벤치마크 있을 때만) */}
+        {hasAvg && (
+          <polygon
+            points={poly(avgVals)}
+            fill="none"
+            stroke="var(--grey-400)"
+            strokeWidth={1.5}
+            strokeDasharray="4 4"
+            strokeLinejoin="round"
+          />
+        )}
         {/* 자사 — 선택 없으면 블루, 선택 시 그라데이션 (전환 시 부드러운 페이드) */}
         <g key={selected ?? "none"} style={{ animation: "ax-fade-in var(--dur-slow) var(--ease)" }}>
           <polygon
@@ -303,13 +370,14 @@ function RadarChart({
             </text>
           );
         })}
-        {/* 호버 툴팁 — 자사 점수 */}
+        {/* 호버 툴팁 — 자사 점수 (+ 벤치마크 있으면 평균 줄) */}
         {hover !== null &&
           (() => {
             const ownLine = `자사 ${fmtScore(axes[hover].score)}`;
+            const avgLine = hasAvg ? `평균 ${axes[hover].industryAvg}` : null;
             const [x, y] = pt(hover, ownVals[hover]);
-            const w = ownLine.length * 7 + 22;
-            const h = 25;
+            const w = Math.max(ownLine.length, avgLine?.length ?? 0) * 7 + 22;
+            const h = avgLine ? 40 : 25;
             const tx = Math.min(Math.max(x, w / 2 + 4), 360 - w / 2 - 4);
             const ty = Math.max(y - h - 10, 4);
             return (
@@ -339,6 +407,19 @@ function RadarChart({
                 >
                   {ownLine}
                 </text>
+                {avgLine && (
+                  <text
+                    x={tx - w / 2 + 11}
+                    y={ty + 31}
+                    textAnchor="start"
+                    fontSize={11}
+                    fontWeight={500}
+                    fill="var(--grey-500)"
+                    fontFamily="var(--font-mono)"
+                  >
+                    {avgLine}
+                  </text>
+                )}
               </g>
             );
           })()}
@@ -368,15 +449,32 @@ function RadarChart({
           </svg>
           자사
         </span>
+        {hasAvg && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+            <svg width="22" height="10" aria-hidden="true">
+              <line
+                x1="1"
+                y1="5"
+                x2="21"
+                y2="5"
+                stroke="var(--grey-400)"
+                strokeWidth="1.5"
+                strokeDasharray="4 3"
+              />
+            </svg>
+            평균 (업종 표본)
+          </span>
+        )}
       </figcaption>
     </figure>
   );
 }
 
-/* ---- 프로그레스바 (자사 채움 — 평균 마커는 벤치마크 도입 시 재추가) ---- */
-function ScoreBar({ score }: { score: number }) {
+/* ---- 프로그레스바 (자사 채움 + 평균 위치 점선 마커, 평균 미달 = 저채도 주황) ---- */
+function ScoreBar({ score, avg }: { score: number; avg?: number | null }) {
+  const belowAvg = avg != null && score < avg;
   return (
-    <div style={{ position: "relative", padding: "14px 0 12px" }}>
+    <div style={{ position: "relative", padding: avg != null ? "22px 0 20px" : "14px 0 12px" }}>
       <div
         style={{
           height: 8,
@@ -391,11 +489,100 @@ function ScoreBar({ score }: { score: number }) {
             width: `${Math.max(0, Math.min(100, score))}%`,
             height: "100%",
             borderRadius: "var(--radius-full)",
-            background: "var(--blue-500)",
-            transition: "width var(--dur-slow) var(--ease)",
+            background: belowAvg ? "var(--orange-muted)" : "var(--blue-500)",
+            transition:
+              "width var(--dur-slow) var(--ease), background-color var(--dur-base) var(--ease)",
           }}
         />
       </div>
+      {/* 평균 마커 — 세로 점선 + 상단 "평균" / 하단 점수 */}
+      {avg != null && (
+        <div
+          style={{
+            position: "absolute",
+            left: `${Math.max(0, Math.min(100, avg))}%`,
+            top: 0,
+            bottom: 0,
+            transform: "translateX(-50%)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+          }}
+          aria-label={`평균 ${avg}점`}
+        >
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--grey-500)", lineHeight: 1 }}>
+            평균
+          </span>
+          <span
+            style={{
+              flex: 1,
+              width: 0,
+              borderLeft: "1.5px dashed var(--grey-400)",
+              margin: "3px 0",
+            }}
+          />
+          <span style={{ ...mono, fontSize: 11, color: "var(--grey-500)", lineHeight: 1 }}>
+            {avg}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ============================================================
+   섹션 3 보조 — 관리 대상 인과 체인 (사유 보기 팝업)
+   ============================================================ */
+function CauseChain({ steps }: { steps: string[] }) {
+  const last = steps.length - 1;
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 8,
+        padding: "4px 0",
+      }}
+    >
+      {steps.map((s, i) => (
+        <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+          {i > 0 && (
+            <span style={{ display: "inline-flex", color: "var(--grey-400)" }} aria-hidden="true">
+              <Icons.arrow size={13} />
+            </span>
+          )}
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              padding: "8px 14px",
+              borderRadius: "var(--radius-s)",
+              fontSize: 13,
+              lineHeight: 1.35,
+              ...(i === 0
+                ? {
+                    background: "var(--bg-danger-weak)",
+                    color: "var(--fg-danger)",
+                    fontWeight: 600,
+                  }
+                : i === last
+                  ? {
+                      background: "var(--bg-base)",
+                      border: "1px solid var(--line-strong)",
+                      color: "var(--fg-primary)",
+                      fontWeight: 700,
+                    }
+                  : {
+                      background: "var(--bg-tertiary)",
+                      color: "var(--fg-secondary)",
+                    }),
+            }}
+          >
+            {s}
+          </span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -412,6 +599,10 @@ export default function ResultPage() {
   /* ---- 화면 상태 ---- */
   const [selectedAxis, setSelectedAxis] = useState<string | null>(null);
   const [showAllAxes, setShowAllAxes] = useState(false);
+  /* 점수 근거 팝업 대상 축 (null이면 닫힘) */
+  const [basisAxis, setBasisAxis] = useState<string | null>(null);
+  /* 사유 보기 팝업 대상 영역 (null이면 닫힘) */
+  const [chainArea, setChainArea] = useState<AreaView | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -448,12 +639,25 @@ export default function ResultPage() {
   if (!data) return <RouteLoading messages={["진단 결과를 불러오고 있어요"]} />;
 
   const { areas, result } = data;
+  /* 업종 벤치마크 — 축별 평균 + 종합 평균 (없으면 관련 UI 미렌더) */
+  const benchByAxis = new Map(
+    data.benchmarks.filter((b) => b.axisCode !== null).map((b) => [b.axisCode!, Number(b.avgScore)]),
+  );
+  const overallAvgRow = data.benchmarks.find((b) => b.axisCode === null);
+  const industryAvgScore = overallAvgRow ? Number(overallAvgRow.avgScore) : null;
+  /* 축별 소견 — 종합 서사에 포함해 생성 (구버전 서사에는 없음) */
+  const findingByAxis = new Map(
+    (result?.narrative?.axisFindings ?? []).map((f) => [f.axisCode, f.finding]),
+  );
+
   const axes: AxisView[] = data.axes.map((a) => ({
     code: a.axisCode,
     name: a.axisName,
     score: Number(a.score ?? 0), // 미판정 축은 0점으로 표시 (레이더 5축 고정)
     answeredCount: a.answeredCount ?? 0,
     totalCount: a.totalCount ?? 0,
+    industryAvg: benchByAxis.get(a.axisCode) ?? null,
+    finding: findingByAxis.get(a.axisCode) ?? null,
   }));
   const axisByCode = new Map(axes.map((a) => [a.code, a]));
   const axesByBottleneck = [...axes].sort((a, b) => a.score - b.score);
@@ -465,6 +669,10 @@ export default function ResultPage() {
   const companyName = companyInput.trim();
   const totalScore = result ? Number(result.totalScore) : null;
   const selectedScore = selectedAxis ? axisByCode.get(selectedAxis) : undefined;
+  const basisScore = basisAxis ? axisByCode.get(basisAxis) : undefined;
+  const basisQuestions = basisAxis
+    ? data.judgments.filter((j) => j.axisCode === basisAxis)
+    : [];
 
   /* ---- 기업 개요 (서버 기업 정보 — 값이 있는 조각만 표시) ---- */
   const co = data.company;
@@ -690,7 +898,21 @@ export default function ResultPage() {
       {axes.length > 0 && (
         <section style={{ padding: "56px 0" }}>
           <Inner>
-            <SectionHead title="카테고리별 준비도" />
+            {/* 타이틀 — 벤치마크 있으면 업계 평균 ±10 기준 3구간 비교 문구 */}
+            {totalScore !== null && industryAvgScore !== null ? (
+              <SectionHead
+                label="카테고리별 준비도"
+                title={
+                  Math.round(totalScore) < Math.round(industryAvgScore) - 10
+                    ? `${Math.round(totalScore)}점은 업계 평균(${Math.round(industryAvgScore)}점)보다 낮은 점수예요`
+                    : Math.round(totalScore) <= Math.round(industryAvgScore) + 10
+                      ? `${Math.round(totalScore)}점은 업계 대비 평균 점수예요`
+                      : `${Math.round(totalScore)}점은 업계 평균(${Math.round(industryAvgScore)}점)보다 높은 점수예요`
+                }
+              />
+            ) : (
+              <SectionHead title="카테고리별 준비도" />
+            )}
             <div
               style={{
                 display: "grid",
@@ -743,10 +965,22 @@ export default function ResultPage() {
                             </span>
                           </span>
                         </div>
-                        <ScoreBar score={a.score} />
-                        <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                          판정 {a.answeredCount}/{a.totalCount}
+                        <ScoreBar score={a.score} avg={a.industryAvg} />
+                        <p
+                          style={{
+                            margin: 0,
+                            font: a.finding ? "var(--text-body3)" : "var(--text-caption)",
+                            color: "var(--fg-tertiary)",
+                            ...(a.finding ? clamp2 : {}),
+                          }}
+                        >
+                          {a.finding ?? `판정 ${a.answeredCount}/${a.totalCount}`}
                         </p>
+                        <div style={{ marginTop: 10 }}>
+                          <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.code)}>
+                            점수 근거
+                          </Button>
+                        </div>
                       </Card>
                     ))}
                   </div>
@@ -818,14 +1052,35 @@ export default function ResultPage() {
                             / 100점
                           </span>
                         </div>
-                        <ScoreBar score={selectedScore.score} />
-                        <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
-                          판정 {selectedScore.answeredCount}/{selectedScore.totalCount}
+                        <ScoreBar score={selectedScore.score} avg={selectedScore.industryAvg} />
+                        <p
+                          style={{
+                            margin: 0,
+                            font: selectedScore.finding ? "var(--text-body2)" : "var(--text-body3)",
+                            color: selectedScore.finding
+                              ? "var(--fg-secondary)"
+                              : "var(--fg-tertiary)",
+                          }}
+                        >
+                          {selectedScore.finding ??
+                            `판정 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
                         </p>
+                        <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
+                          <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
+                            점수 근거
+                          </Button>
+                        </div>
                       </div>
                     ) : (
                       /* 기본 상태 — 요약 */
                       <div style={{ display: "grid", gap: 14 }}>
+                        {result && totalScore !== null && result.balanceLabel && (
+                          <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                            {axes.length}개 카테고리 평균이 종합{" "}
+                            <span style={{ ...mono, fontWeight: 600 }}>{fmtScore(totalScore)}</span>
+                            점이에요. 분포는 &ldquo;{result.balanceLabel}&rdquo; 유형이에요.
+                          </p>
+                        )}
                         {result && totalScore !== null && (
                           <div>
                             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
@@ -837,8 +1092,43 @@ export default function ResultPage() {
                               <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
                                 종합
                               </span>
+                              {industryAvgScore !== null && (
+                                <>
+                                  <span
+                                    style={{
+                                      ...mono,
+                                      fontSize: 16,
+                                      fontWeight: 600,
+                                      color: "var(--grey-500)",
+                                      marginLeft: "auto",
+                                    }}
+                                  >
+                                    {Math.round(industryAvgScore)}
+                                  </span>
+                                  <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                                    업종 평균
+                                  </span>
+                                </>
+                              )}
                             </div>
-                            <ScoreBar score={totalScore} />
+                            <ScoreBar
+                              score={totalScore}
+                              avg={industryAvgScore !== null ? Math.round(industryAvgScore) : null}
+                            />
+                          </div>
+                        )}
+                        {result?.narrative?.strategyLabel && (
+                          <div>
+                            <Badge tone="accent">전략 유형 · {result.narrative.strategyLabel}</Badge>
+                            <p
+                              style={{
+                                margin: "8px 0 0",
+                                font: "var(--text-body3)",
+                                color: "var(--fg-tertiary)",
+                              }}
+                            >
+                              {result.narrative.strategy}
+                            </p>
                           </div>
                         )}
                         {result && result.bottlenecks.length > 0 && result.strengths.length > 0 && (
@@ -933,6 +1223,14 @@ export default function ResultPage() {
                     >
                       {area.grade === "hold" ? (area.holdReason ?? "자료가 부족해요") : area.asIs}
                     </p>
+                    {area.grade === "critical" &&
+                      ((area.causeChain?.length ?? 0) > 0 || area.evidence.length > 0) && (
+                        <div style={{ marginTop: "auto" }}>
+                          <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
+                            사유 보기
+                          </Button>
+                        </div>
+                      )}
                   </Card>
                 );
               })}
@@ -1055,6 +1353,124 @@ export default function ResultPage() {
           </div>
         </Inner>
       </section>
+
+      {/* ================= 팝업 — 점수 근거 (문항·판정·근거) ================= */}
+      <Modal
+        open={basisAxis !== null}
+        onClose={() => setBasisAxis(null)}
+        title={basisScore ? `${basisScore.name} — 점수 근거` : undefined}
+        wide
+      >
+        {basisAxis && basisScore && (
+          <div>
+            <p
+              style={{
+                margin: "0 0 4px",
+                font: "var(--text-body3)",
+                color: "var(--fg-secondary)",
+              }}
+            >
+              <span style={{ ...mono, fontWeight: 600, color: "var(--fg-primary)" }}>
+                판정 {basisScore.answeredCount}/{basisScore.totalCount} · 자료 충분도{" "}
+                {basisScore.totalCount > 0
+                  ? Math.round((basisScore.answeredCount / basisScore.totalCount) * 100)
+                  : 0}
+                %
+              </span>
+            </p>
+            <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
+              자료가 부족한 문항은{" "}
+              <TermTooltip term="판정 보류">{getGlossary("판정 보류")?.easy}</TermTooltip>로 두고
+              감점하지 않아요. 판정은 문항별 기준 서술에 분류하는 방식이에요.
+            </p>
+            {/* 스크롤은 팝업 안쪽 리스트에서만 */}
+            <div
+              className="ax-scrollbar-none"
+              style={{ marginTop: 12, maxHeight: "48vh", overflowY: "auto" }}
+            >
+              {basisQuestions.map((j) => {
+                const deferred = j.anchorLevel === null;
+                return (
+                  <div
+                    key={j.questionCode}
+                    style={{ borderTop: "1px solid var(--line-subtle)", padding: "16px 0" }}
+                  >
+                    <div style={{ ...mono, fontSize: 11, color: "var(--grey-400)", marginBottom: 4 }}>
+                      {j.questionCode}
+                    </div>
+                    <div
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 8,
+                      }}
+                    >
+                      <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                        {j.questionText}
+                      </strong>
+                      {deferred && <Badge tone="outline">판정 보류</Badge>}
+                    </div>
+                    {!deferred && j.anchorCriteria && (
+                      <p
+                        style={{
+                          margin: "0 0 6px",
+                          font: "var(--text-body3)",
+                          color: "var(--fg-primary)",
+                        }}
+                      >
+                        판정 기준: &ldquo;{j.anchorCriteria}&rdquo;
+                      </p>
+                    )}
+                    <p
+                      style={{
+                        margin: "0 0 10px",
+                        font: "var(--text-body3)",
+                        color: "var(--fg-secondary)",
+                      }}
+                    >
+                      {j.rationale}
+                    </p>
+                    <EvidenceTextList items={j.evidence} />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ================= 팝업 — 관리 대상 사유 (인과 체인) ================= */}
+      <Modal
+        open={chainArea !== null}
+        onClose={() => setChainArea(null)}
+        title={chainArea?.functionArea}
+        wide
+      >
+        {chainArea && (
+          <div style={{ display: "grid", gap: 16 }}>
+            {chainArea.asIs && (
+              <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                {chainArea.asIs}
+              </p>
+            )}
+            {(chainArea.causeChain?.length ?? 0) > 0 && (
+              <CauseChain steps={chainArea.causeChain!} />
+            )}
+            {chainArea.evidence.length > 0 && (
+              <div style={{ paddingTop: 12, borderTop: "1px solid var(--line-subtle)" }}>
+                <div
+                  style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)", marginBottom: 6 }}
+                >
+                  근거
+                </div>
+                <EvidenceTextList items={chainArea.evidence} />
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
