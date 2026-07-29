@@ -26,6 +26,8 @@ export interface AuthUser {
   phone?: string;
   /** '체험하기' 게스트 계정 여부 */
   isAnonymous?: boolean;
+  /** 권한 — 'admin'이면 어드민 사이트 접근 가능 */
+  role?: string;
 }
 
 interface AuthContextValue {
@@ -51,6 +53,7 @@ type SessionUser = {
   title?: string | null;
   phone?: string | null;
   isAnonymous?: boolean | null;
+  role?: string | null;
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -69,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         title: u.title ?? undefined,
         phone: u.phone ?? undefined,
         isAnonymous: u.isAnonymous ?? undefined,
+        role: u.role ?? undefined,
       });
     } catch {
       setUser(null); // 세션 없음(401 포함)
