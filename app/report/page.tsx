@@ -9,9 +9,9 @@ import { Button, Card, Eyebrow, Icons, Input, Modal } from "@/components/ui";
 
 /**
  * S5 보고서(전환) — 백엔드 실연동 + 원본 요약·티저 레이아웃 복원.
- * 요약 카드(단계·점수·과제·기간·자부담) → CTA(보고서 받기 리드 수집 / 문의하기)
- * → 체험 티저(라이트 카드 + 미니 SVG 대시보드, axcore.it.kr 새 탭).
- * 업종 대비 포지션·ROI 드릴다운은 벤치마크·산출 가정 확정 후,
+ * 요약 4카드(현재 단계·포지션·예상 연 효과·투자 회수) + 산출 내역 드릴다운
+ * → CTA(보고서 받기 리드 수집 / 문의하기) → 체험 티저(axcore.it.kr 새 탭).
+ * 포지션은 벤치마크, 연 효과·회수는 과제 연 절감액(roi_assumption)이 있을 때만 값 표시.
  * PDF 다운로드는 보고서 구성 확정 후 재도입한다.
  */
 
@@ -21,15 +21,27 @@ const WORKSPACE_URL = "https://axcore.it.kr";
 const fmt = (n: number) => n.toLocaleString("ko-KR");
 const mono = { fontFamily: "var(--font-mono)", letterSpacing: "0" } as const;
 
+type Roi = {
+  items: { taskNo: number; label: string; annualSaving: number; assumption: string }[];
+  totalAnnualSaving: number;
+  totalSelfPay: number;
+  paybackMonths: number | null;
+};
+
 type Summary = {
   level: number;
   levelName: string;
   totalScore: string;
+  diagnosedAt: string | null;
+  industryAvg: number | null;
   taskCount: number;
   totalMonths: number;
   costMin: number;
   costMax: number;
+  roi: Roi | null;
 };
+
+type Drill = "roi" | "payback" | null;
 
 /* ---- 요약 카드 공용 문법 (원본) ---- */
 function SummaryLabel({ children }: { children: React.ReactNode }) {
@@ -50,6 +62,14 @@ function SummaryValue({ children }: { children: React.ReactNode }) {
         color: "var(--fg-primary)",
       }}
     >
+      {children}
+    </div>
+  );
+}
+
+function SummaryCaption({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ marginTop: 8, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
       {children}
     </div>
   );
@@ -128,6 +148,7 @@ export default function ReportPage() {
   const { companyInput, assessmentId, completedSteps, completeStep } = useDiagnosis();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [drill, setDrill] = useState<Drill>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -137,23 +158,37 @@ export default function ReportPage() {
   useEffect(() => {
     if (!assessmentId) return;
     Promise.all([
-      api<{ result: { level: number; levelName: string; totalScore: string } | null }>(
-        `/api/assessments/${assessmentId}/result`,
-      ),
-      api<{ stages: { taskNos: number[] }[]; totalMonths: number; costMin: number; costMax: number }>(
-        `/api/assessments/${assessmentId}/roadmap`,
-      ),
+      api<{
+        result: {
+          level: number;
+          levelName: string;
+          totalScore: string;
+          createdAt?: string;
+        } | null;
+        benchmarks?: { axisCode: string | null; avgScore: string }[];
+      }>(`/api/assessments/${assessmentId}/result`),
+      api<{
+        stages: { taskNos: number[] }[];
+        totalMonths: number;
+        costMin: number;
+        costMax: number;
+        roi?: Roi;
+      }>(`/api/assessments/${assessmentId}/roadmap`),
     ])
       .then(([r, rm]) => {
         if (!r.result) throw new Error("진단 결과가 아직 없어요.");
+        const overallAvg = r.benchmarks?.find((b) => b.axisCode === null);
         setSummary({
           level: r.result.level,
           levelName: r.result.levelName,
           totalScore: r.result.totalScore,
+          diagnosedAt: r.result.createdAt?.slice(0, 10) ?? null,
+          industryAvg: overallAvg ? Number(overallAvg.avgScore) : null,
           taskCount: rm.stages.reduce((s, st) => s + st.taskNos.length, 0),
           totalMonths: rm.totalMonths,
           costMin: rm.costMin,
           costMax: rm.costMax,
+          roi: rm.roi ?? null,
         });
       })
       .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
@@ -187,6 +222,18 @@ export default function ReportPage() {
   const companyName = companyInput.trim();
   const canSend = email.includes("@") && email.trim().length >= 3;
 
+  /* 업종 대비 포지션 — 벤치마크 종합 평균 대비 차이 (소수 1자리) */
+  const scoreNum = Number(summary.totalScore);
+  const industryDiff = summary.industryAvg !== null ? scoreNum - summary.industryAvg : null;
+  const diffLabel =
+    industryDiff !== null
+      ? `${industryDiff >= 0 ? "+" : "-"}${Math.abs(industryDiff).toFixed(1)}점`
+      : null;
+
+  const roi = summary.roi;
+  const monthlySaving =
+    roi && roi.totalAnnualSaving > 0 ? Math.round(roi.totalAnnualSaving / 12) : 0;
+
   const submitLead = async () => {
     if (!canSend || sending) return;
     setSending(true);
@@ -207,6 +254,11 @@ export default function ReportPage() {
 
   return (
     <div className="ax-step-enter">
+      {/* 드릴다운 카드 호버 시 '산출 내역 보기' 브랜드 컬러 */}
+      <style>{`
+        .axp-drill:hover .axp-drill-link { color: var(--fg-brand); }
+        .axp-drill-link { transition: color var(--dur-fast) var(--ease); }
+      `}</style>
       {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준) ══ */}
       <section style={{ padding: "var(--space-16) var(--gutter) 0" }}>
         <div style={{ maxWidth: "var(--container-content)", margin: "0 auto" }}>
@@ -222,6 +274,11 @@ export default function ReportPage() {
             {companyName} 진단 결과 요약
           </h1>
           <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-tertiary)" }}>
+            {summary.diagnosedAt && (
+              <>
+                진단일 <span style={mono}>{summary.diagnosedAt}</span> ·{" "}
+              </>
+            )}
             담으신 과제 <span style={mono}>{summary.taskCount}</span>건 기준
           </p>
 
@@ -233,7 +290,7 @@ export default function ReportPage() {
               marginTop: "var(--space-8)",
             }}
           >
-            {/* 현재 단계 — Lv 라벨만, 브랜드 컬러 */}
+            {/* ① 현재 단계 — Lv 라벨만, 브랜드 컬러 */}
             <Card>
               <SummaryLabel>현재 단계</SummaryLabel>
               <SummaryValue>
@@ -241,37 +298,278 @@ export default function ReportPage() {
               </SummaryValue>
             </Card>
 
-            <Card>
-              <SummaryLabel>종합 점수</SummaryLabel>
-              <SummaryValue>
-                <span style={mono}>{summary.totalScore}</span>점
-              </SummaryValue>
-            </Card>
+            {/* ② 포지션 — 업종 평균 대비 (벤치마크 있을 때만) */}
+            {diffLabel !== null && summary.industryAvg !== null && (
+              <Card>
+                <SummaryLabel>포지션</SummaryLabel>
+                <SummaryValue>
+                  <span style={{ ...mono, color: "var(--fg-brand)" }}>{diffLabel}</span>{" "}
+                  <span style={{ fontSize: 13, fontWeight: 500, color: "var(--fg-tertiary)" }}>
+                    (업종 평균보다)
+                  </span>
+                </SummaryValue>
+                <SummaryCaption>
+                  업종 표본 평균 <span style={mono}>{Math.round(summary.industryAvg)}</span>점 대비
+                </SummaryCaption>
+              </Card>
+            )}
 
-            <Card>
-              <SummaryLabel>담은 과제</SummaryLabel>
-              <SummaryValue>
-                <span style={mono}>{summary.taskCount}</span>개
-              </SummaryValue>
-            </Card>
+            {/* ③ 예상 연 효과 — 클릭 드릴다운 */}
+            {roi && (
+              <Card
+                className="axp-drill"
+                interactive
+                role="button"
+                tabIndex={0}
+                aria-expanded={drill === "roi"}
+                onClick={() => setDrill((d) => (d === "roi" ? null : "roi"))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setDrill((d) => (d === "roi" ? null : "roi"));
+                  }
+                }}
+                style={{
+                  cursor: "pointer",
+                  borderColor: drill === "roi" ? "var(--line-brand)" : "var(--line-default)",
+                }}
+              >
+                <SummaryLabel>예상 연 효과</SummaryLabel>
+                <SummaryValue>
+                  <span style={{ ...mono, color: "var(--fg-brand)" }}>
+                    {roi.totalAnnualSaving > 0 ? `${fmt(roi.totalAnnualSaving)}만원` : "—"}
+                  </span>
+                </SummaryValue>
+                <div
+                  className="axp-drill-link"
+                  style={{
+                    marginTop: 10,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    font: "var(--text-label-s)",
+                    color: "var(--fg-tertiary)",
+                  }}
+                >
+                  산출 내역 보기
+                  <span style={{ display: "inline-flex" }}>
+                    <Icons.arrow size={14} />
+                  </span>
+                </div>
+              </Card>
+            )}
 
-            <Card>
-              <SummaryLabel>총 기간</SummaryLabel>
-              <SummaryValue>
-                약 <span style={mono}>{summary.totalMonths}</span>개월
-              </SummaryValue>
-            </Card>
-
-            <Card>
-              <SummaryLabel>자부담</SummaryLabel>
-              <SummaryValue>
-                <span style={mono}>
-                  {fmt(summary.costMin)}~{fmt(summary.costMax)}
-                </span>
-                만원
-              </SummaryValue>
-            </Card>
+            {/* ④ 투자 회수 — 클릭 드릴다운 */}
+            {roi && (
+              <Card
+                className="axp-drill"
+                interactive
+                role="button"
+                tabIndex={0}
+                aria-expanded={drill === "payback"}
+                onClick={() => setDrill((d) => (d === "payback" ? null : "payback"))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setDrill((d) => (d === "payback" ? null : "payback"));
+                  }
+                }}
+                style={{
+                  cursor: "pointer",
+                  borderColor: drill === "payback" ? "var(--line-brand)" : "var(--line-default)",
+                }}
+              >
+                <SummaryLabel>투자 회수</SummaryLabel>
+                <SummaryValue>
+                  <span style={{ ...mono, color: "var(--fg-brand)" }}>
+                    {roi.totalAnnualSaving > 0 && roi.paybackMonths !== null
+                      ? `약 ${roi.paybackMonths}개월`
+                      : "—"}
+                  </span>
+                </SummaryValue>
+                <div
+                  className="axp-drill-link"
+                  style={{
+                    marginTop: 10,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    font: "var(--text-label-s)",
+                    color: "var(--fg-tertiary)",
+                  }}
+                >
+                  산출 내역 보기
+                  <span style={{ display: "inline-flex" }}>
+                    <Icons.arrow size={14} />
+                  </span>
+                </div>
+              </Card>
+            )}
           </div>
+
+          {/* ── ③ 드릴다운: 연 효과 산출 내역 ── */}
+          {roi && drill === "roi" && (
+            <Card style={{ marginTop: "var(--space-4)" }}>
+              <div style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>
+                예상 연 효과 산출 내역
+              </div>
+              {roi.items.length === 0 ? (
+                <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                  정량 효과 산출 대상 과제가 없어요. 기반 과제는 정성 효과로 분류되어 합산에서
+                  제외돼요.
+                </p>
+              ) : (
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12 }}>
+                    <thead>
+                      <tr>
+                        {["항목", "산출 가정 (기준 단가·시간)", "연 절감액"].map((h, i) => (
+                          <th
+                            key={h}
+                            style={{
+                              textAlign: i === 2 ? "right" : "left",
+                              font: "var(--text-caption)",
+                              color: "var(--fg-tertiary)",
+                              padding: "8px 10px",
+                              borderBottom: "1px solid var(--line-default)",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {roi.items.map((item) => (
+                        <tr key={item.taskNo}>
+                          <td
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 600,
+                              color: "var(--fg-primary)",
+                              padding: "10px",
+                              borderBottom: "1px solid var(--line-subtle)",
+                              minWidth: 180,
+                            }}
+                          >
+                            {item.label}
+                          </td>
+                          <td
+                            style={{
+                              fontSize: 13,
+                              lineHeight: 1.5,
+                              color: "var(--fg-secondary)",
+                              padding: "10px",
+                              borderBottom: "1px solid var(--line-subtle)",
+                            }}
+                          >
+                            {item.assumption}
+                          </td>
+                          <td
+                            style={{
+                              ...mono,
+                              fontSize: 14,
+                              textAlign: "right",
+                              whiteSpace: "nowrap",
+                              color: "var(--fg-primary)",
+                              padding: "10px",
+                              borderBottom: "1px solid var(--line-subtle)",
+                            }}
+                          >
+                            {fmt(item.annualSaving)}만원
+                          </td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <td
+                          colSpan={2}
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "var(--fg-primary)",
+                            padding: "12px 10px",
+                          }}
+                        >
+                          합산
+                        </td>
+                        <td
+                          style={{
+                            ...mono,
+                            fontSize: 15,
+                            fontWeight: 700,
+                            textAlign: "right",
+                            whiteSpace: "nowrap",
+                            color: "var(--fg-primary)",
+                            padding: "12px 10px",
+                          }}
+                        >
+                          {fmt(roi.totalAnnualSaving)}만원
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <p
+                style={{
+                  margin: "12px 0 0",
+                  font: "var(--text-caption)",
+                  lineHeight: 1.6,
+                  color: "var(--fg-quaternary)",
+                }}
+              >
+                귀사 업로드 자료의 공수·재고 신호와 기준 단가로 산출한 추정 밴드입니다. 기반
+                과제(코드 표준화 등)의 효과는 정성 효과로 분류되어 합산에서 제외됩니다.
+              </p>
+            </Card>
+          )}
+
+          {/* ── ④ 드릴다운: 투자 회수 계산식 ── */}
+          {roi && drill === "payback" && (
+            <Card style={{ marginTop: "var(--space-4)" }}>
+              <div style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>
+                투자 회수 계산식
+              </div>
+              {roi.totalAnnualSaving > 0 && roi.paybackMonths !== null ? (
+                <>
+                  <div
+                    style={{
+                      marginTop: 12,
+                      background: "var(--bg-secondary)",
+                      borderRadius: "var(--radius-m)",
+                      padding: "16px 18px",
+                      ...mono,
+                      fontSize: 15,
+                      lineHeight: 1.7,
+                      color: "var(--fg-primary)",
+                      overflowX: "auto",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    총 자부담 {fmt(roi.totalSelfPay)}만원 ÷ 월 효과 {fmt(monthlySaving)}만원 (연{" "}
+                    {fmt(roi.totalAnnualSaving)}만원 ÷ 12) ≈{" "}
+                    <span style={{ fontWeight: 700 }}>약 {roi.paybackMonths}개월</span>
+                  </div>
+                  <p
+                    style={{
+                      margin: "12px 0 0",
+                      fontSize: 13,
+                      lineHeight: 1.55,
+                      color: "var(--fg-secondary)",
+                    }}
+                  >
+                    총 자부담은 담으신 과제의 자부담 밴드 중간값 합산이며, 정부 지원사업 (스마트공장
+                    등) 선정 기준의 추정치입니다. 회수 개월은 올림 처리합니다.
+                  </p>
+                </>
+              ) : (
+                <p style={{ margin: "10px 0 0", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+                  정량 효과가 산출된 과제가 없어 회수 기간을 계산할 수 없어요.
+                </p>
+              )}
+            </Card>
+          )}
 
           {/* ══ CTA — 버튼 2개만 (카드·설명문 없음) ══════════════ */}
           <div
