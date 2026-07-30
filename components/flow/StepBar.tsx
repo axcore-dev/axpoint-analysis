@@ -17,8 +17,9 @@ import logo from "@/public/assets/axcore-color.png";
  * 완료 = 체크, 현재 = 블루 강조, 미도달 = 회색.
  * 우측 상단: 로그인/회원가입 버튼 또는 프로필 드롭다운 (수정요청v6 — 공통).
  * 좌측: AXCORE 로고(홈 이동, 수정요청v7). 내 정보(/mypage)에서는 스텝 nav 미노출 (v7).
+ * 첫 화면은 레이아웃이 showSteps={false}로 스텝을 감춘다 (수정요청v9).
  */
-export function StepBar() {
+export function StepBar({ showSteps = true }: { showSteps?: boolean }) {
   const pathname = usePathname();
   const router = useRouter();
   const { completedSteps } = useDiagnosis();
@@ -29,7 +30,7 @@ export function StepBar() {
   );
   const firstIncomplete = STEPS.findIndex((s) => !completedSteps.includes(s.id));
   /* 내 정보 화면 — 진단 플로우 밖이므로 스텝 표시를 감춘다 (수정요청v7) */
-  const hideSteps = pathname.startsWith("/mypage");
+  const hideSteps = !showSteps || pathname.startsWith("/mypage");
 
   return (
     <header

@@ -24,7 +24,7 @@ const COLLECT_MESSAGES = [
 ];
 
 /** 제출 후 판정 로딩 문구 (기존 문구 유지) */
-const CLASSIFY_MESSAGES = ["응답을 판정에 반영하고 있어요", "자료를 8대 영역으로 나누고 있어요"];
+const CLASSIFY_MESSAGES = ["자료를 분석하고 있어요", "분석된 점수를 계산하고 있어요", "업무 영역을 상태를 정리하고 있어요"];
 
 type FileRow = {
   id: string;

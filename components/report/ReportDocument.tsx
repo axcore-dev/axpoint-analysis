@@ -27,7 +27,7 @@ import {
  * jsPDF에 삽입한다. 표·행이 페이지 경계에서 잘리지 않는다.
  *
  * 디자인 v2: 라이트 배경 · 잉크 #191F28(순수 블랙 금지) · 블루 #0A50FF
- * 액센트 · Paperlogy. 화이트 표지에 블루 포인트 (다크 표지 금지).
+ * 액센트 · Pretendard. 화이트 표지에 블루 포인트 (다크 표지 금지).
  * Lv 중심 표기 — "AX 준비도 N/100"은 쓰지 않고, 축별 점수 표(준비도
  * 페이지)만 상세 보고서 성격상 유지.
  *
@@ -51,7 +51,7 @@ const WASH = "#EEF3FF";
 const WHITE = "#FFFFFF";
 const TRACK = "#E5E8EB";
 
-const SANS = "'Paperlogy', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif";
+const SANS = "'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif";
 const MONO = "ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
 
 const PAGE_W = 794; // A4 210mm @ 96dpi

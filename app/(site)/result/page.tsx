@@ -1168,8 +1168,8 @@ export default function ResultPage() {
         <section style={{ background: "var(--bg-secondary)", padding: "56px 0" }}>
           <Inner>
             <SectionHead
-              label="기능영역"
-              title="기능영역별 현재 상태"
+              label="업무영역"
+              title="업무영역별 현재 상태"
               sub="점수 대신 등급으로 표기해요."
             />
             <div

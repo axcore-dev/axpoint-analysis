@@ -34,7 +34,7 @@ export async function generateReportPdf(
   element: HTMLElement,
   companyName: string,
 ): Promise<void> {
-  /* 웹폰트(Paperlogy) 로드 완료 후 캡처 — 폰트 미적용 캡처 방지 */
+  /* 웹폰트(Pretendard) 로드 완료 후 캡처 — 폰트 미적용 캡처 방지 */
   if (typeof document !== "undefined" && document.fonts?.ready) {
     await document.fonts.ready;
   }

@@ -42,8 +42,6 @@ interface AutocompleteProps {
   fieldClassName?: string;
   fieldStyle?: CSSProperties;
   inputStyle?: CSSProperties;
-  /** 각 항목 앞 아이콘 (기업 검색의 건물 아이콘 등) */
-  itemIcon?: ReactNode;
 }
 
 /** 매칭 구간 하이라이트 */
@@ -75,7 +73,6 @@ export function Autocomplete({
   fieldClassName,
   fieldStyle,
   inputStyle,
-  itemIcon,
   ...aria
 }: AutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -173,9 +170,6 @@ export function Autocomplete({
                   i === highlightedIndex ? "bg-[var(--hover-overlay)]" : ""
                 }`}
               >
-                {itemIcon && (
-                  <span className="flex-none text-[var(--fg-brand)]">{itemIcon}</span>
-                )}
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2">
                     <span className="min-w-0 truncate font-semibold">
