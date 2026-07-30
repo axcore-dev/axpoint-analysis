@@ -97,7 +97,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signup = useCallback(async (email: string, password: string, name: string) => {
     await api("/api/auth/sign-up/email", {
       method: "POST",
-      body: JSON.stringify({ email, password, name }),
+      body: JSON.stringify({
+        email,
+        password,
+        name,
+        // 인증 메일 링크를 누른 뒤 돌아올 곳. 없으면 API 도메인 루트로 가서 404가 난다
+        callbackURL: `${window.location.origin}/auth/login?verified=1`,
+      }),
     });
     // 이메일 인증 완료 전에는 세션이 없다 — 화면은 인증 안내를 보여준다
   }, []);
