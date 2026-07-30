@@ -12,6 +12,7 @@ import type { StepId } from "@/lib/types";
 /** 분석 기록 — 서버(진단 세션) 이력 */
 type HistoryEntry = {
   id: string;
+  companyId: string;
   company: string;
   date: string;
   level: string;
@@ -22,6 +23,7 @@ type HistoryEntry = {
 
 type AssessmentListRow = {
   id: string;
+  companyId: string;
   status: string;
   completedSteps: StepId[] | null;
   createdAt: string;
@@ -57,6 +59,7 @@ export default function MyPage() {
         setHistory(
           items.map((a) => ({
             id: a.id,
+            companyId: a.companyId,
             company: a.companyName,
             date: a.createdAt.slice(0, 10),
             level: a.level ? `Lv.${a.level} ${a.levelName ?? ""}`.trim() : "—",
@@ -126,7 +129,18 @@ export default function MyPage() {
 
   /* 기록을 진단 컨텍스트로 복원한 뒤 이동 — 이어하기·재열람 공용 */
   const openRecord = (h: HistoryEntry, path: string) => {
-    update({ assessmentId: h.id, companyInput: h.company, completedSteps: h.completedSteps });
+    /* 기업 식별값까지 복원해야 첫 화면에서 같은 기업을 다시 확인해도 진단이 새로 만들어지지 않는다.
+       진단별 상태(첨부·설문·과제)는 지운다 — 이전 기록의 값이 섞이면 안 된다 */
+    update({
+      assessmentId: h.id,
+      companyId: h.companyId,
+      companyInput: h.company,
+      completedSteps: h.completedSteps,
+      attachedFiles: [],
+      confirmedDocIds: [],
+      surveyDone: false,
+      selectedTaskIds: [],
+    });
     router.push(path);
   };
   /* 미완료 기록의 이어서 진행할 첫 단계 경로 */
