@@ -64,7 +64,10 @@ const initialState: DiagnosisState = {
 };
 
 interface DiagnosisContextValue extends DiagnosisState {
-  update: (patch: Partial<DiagnosisState>) => void;
+  /** 이전 값에서 이어 붙일 때는 함수형을 쓴다 — 렌더 시점의 낡은 값을 덮어쓰지 않게 */
+  update: (
+    patch: Partial<DiagnosisState> | ((prev: DiagnosisState) => Partial<DiagnosisState>),
+  ) => void;
   completeStep: (step: StepId) => void;
   toggleTask: (taskId: string) => void;
   addTask: (taskId: string) => void;
@@ -88,12 +91,10 @@ export function DiagnosisProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  /* 작업 진행 중이면 새로고침·창 닫기 전에 브라우저 기본 경고 표시 */
-  const inProgress =
-    state.companyInput !== "" ||
-    state.attachedFiles.length > 0 ||
-    state.completedSteps.length > 0 ||
-    state.selectedTaskIds.length > 0;
+  /* 새로고침·창 닫기 경고는 '되돌릴 수 없을 때'만 띄운다.
+     진단이 만들어진 뒤에는 서버에 남아 마이페이지에서 이어할 수 있으므로 경고하지 않는다 —
+     완료된 보고서를 보다 나가려 해도 경고가 뜨던 문제 */
+  const inProgress = !state.assessmentId && state.companyInput !== "";
 
   useEffect(() => {
     if (!inProgress) return;
@@ -105,9 +106,12 @@ export function DiagnosisProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("beforeunload", warn);
   }, [inProgress]);
 
-  const update = useCallback((patch: Partial<DiagnosisState>) => {
-    setState((s) => ({ ...s, ...patch }));
-  }, []);
+  const update = useCallback(
+    (patch: Partial<DiagnosisState> | ((prev: DiagnosisState) => Partial<DiagnosisState>)) => {
+      setState((s) => ({ ...s, ...(typeof patch === "function" ? patch(s) : patch) }));
+    },
+    [],
+  );
 
   const completeStep = useCallback((step: StepId) => {
     setState((s) => {

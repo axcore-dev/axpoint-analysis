@@ -127,6 +127,8 @@ export default function LandingPage() {
   const [verifyError, setVerifyError] = useState<string | null>(null);
   /** 필수 서류 현황 — 문서유형 마스터(필수/선택)가 원본 (수정요청v9) */
   const [requiredDocs, setRequiredDocs] = useState<RequiredDocs | null>(null);
+  /** 업로드 실패·거부 안내 */
+  const [uploadError, setUploadError] = useState<string | null>(null);
   /** 자료 부족 경고 팝업 */
   const [shortageOpen, setShortageOpen] = useState(false);
   /** 슬롯에서 올릴 때의 대상 문서 유형 (파일 선택창은 하나를 공유한다) */
@@ -254,6 +256,7 @@ export default function LandingPage() {
   const startUpload = async (files: File[], docTypeId?: number) => {
     if (!assessmentId || files.length === 0) return;
     setUploading(true);
+    setUploadError(null);
     try {
       const form = new FormData();
       for (const f of files) form.append("files", f);
@@ -264,7 +267,7 @@ export default function LandingPage() {
         credentials: "include",
         body: form,
       });
-      const body = (await res.json()) as {
+      const body = (await res.json().catch(() => ({}))) as {
         saved?: { id: string; name: string }[];
         rejected?: { name: string; reason: string }[];
         error?: string;
@@ -274,7 +277,18 @@ export default function LandingPage() {
         name: s.name,
         type: (s.name.split(".").pop() ?? "").toUpperCase(),
       }));
-      update({ attachedFiles: [...attachedFiles, ...added] });
+      if (added.length > 0) update((s) => ({ attachedFiles: [...s.attachedFiles, ...added] }));
+
+      /* 올라가지 못한 파일은 반드시 알린다 — 조용히 빠지면 부족한 줄 모르고 제출한다 */
+      const rejected = body.rejected ?? [];
+      if (rejected.length > 0) {
+        /* 사유가 있으면 사유를 그대로 — 왜 빠졌는지 알아야 다시 올릴 수 있다 */
+        setUploadError(rejected.map((r) => `${r.name} — ${r.reason}`).join(" / "));
+      } else if (!res.ok && added.length === 0) {
+        setUploadError(body.error ?? "파일을 올리지 못했어요. 잠시 후 다시 시도해 주세요.");
+      }
+    } catch {
+      setUploadError("파일을 올리지 못했어요. 연결을 확인하고 다시 시도해 주세요.");
     } finally {
       setUploading(false);
     }
@@ -282,7 +296,7 @@ export default function LandingPage() {
 
   /** 첨부 파일 삭제 (v3 개선) — 서버 원본도 함께 삭제 */
   const removeDoc = async (key: string) => {
-    update({ attachedFiles: attachedFiles.filter((f) => f.key !== key) });
+    update((s) => ({ attachedFiles: s.attachedFiles.filter((f) => f.key !== key) }));
     try {
       await api(`/api/files/${key}`, { method: "DELETE" });
     } catch {
@@ -335,8 +349,10 @@ export default function LandingPage() {
   }, [phase, assessmentId, attachedFiles.length]);
 
   /** 업로드 존 클릭 → 실제 파일 선택 (v6) */
-  const handleUploadClick = () => {
+  const handleUploadClick = (docTypeId?: number) => {
     if (uploading) return;
+    /* 선택창을 취소하면 change 이벤트가 오지 않으므로 열 때마다 대상을 다시 정한다 */
+    uploadTargetRef.current = docTypeId;
     fileInputRef.current?.click();
   };
 
@@ -660,7 +676,7 @@ export default function LandingPage() {
                       </Button>
                     )}
                     {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
-                    <Button variant="secondary" size="sm" disabled={uploading} onClick={handleUploadClick}>
+                    <Button variant="secondary" size="sm" disabled={uploading} onClick={() => handleUploadClick()}>
                       {uploading ? "올리는 중" : "한번에 올리기"}
                     </Button>
                   </span>
@@ -721,10 +737,7 @@ export default function LandingPage() {
                               variant="utility"
                               size="sm"
                               disabled={uploading}
-                              onClick={() => {
-                                uploadTargetRef.current = d.docTypeId;
-                                handleUploadClick();
-                              }}
+                              onClick={() => handleUploadClick(d.docTypeId)}
                             >
                               올리기
                             </Button>
@@ -736,6 +749,15 @@ export default function LandingPage() {
                 ))}
                 </div>
               </div>
+            )}
+
+            {uploadError && (
+              <p
+                role="alert"
+                className="mt-3 [font:var(--text-caption)] text-[var(--fg-danger)]"
+              >
+                {uploadError}
+              </p>
             )}
 
             {/* 유형을 못 정한 파일 — 슬롯으로 끌어다 놓으면 그 유형으로 지정된다 (수정요청v9) */}
