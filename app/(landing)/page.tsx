@@ -13,6 +13,7 @@ import {
   Card,
   DotProgress,
   Icons,
+  Input,
   Loader,
   Modal,
   Tag,
@@ -36,6 +37,12 @@ const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
 /** 올리면 좋은 서류 — 업로드 존에 칩으로 강조 (v3 개선) */
 const DOC_HINTS = ["생산일지", "발주서", "재고표", "검사성적서"];
+
+type RequiredDocs = {
+  items: { docTypeId: number; docTypeName: string; groupName: string; files: { fileId: string; name: string }[] }[];
+  filled: number;
+  total: number;
+};
 
 type SearchHit = {
   id: string | null;
@@ -117,6 +124,13 @@ export default function LandingPage() {
   const bizNoByName = useRef<Map<string, string>>(new Map());
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  /** 필수 서류 현황 — 문서유형 마스터(필수/선택)가 원본 (수정요청v9) */
+  const [requiredDocs, setRequiredDocs] = useState<RequiredDocs | null>(null);
+  /** 자료 부족 경고 팝업 */
+  const [shortageOpen, setShortageOpen] = useState(false);
+  /** 기타 프로그램 직접 입력 (수정요청v9) */
+  const [otherOpen, setOtherOpen] = useState(false);
+  const [otherInput, setOtherInput] = useState("");
   /** 검증 결과 팝업 — 차단(폐업·미등록)이면 blocked, 국세청 조회 실패면 unchecked (v9) */
   const [verifyNotice, setVerifyNotice] = useState<
     { kind: "blocked" | "unchecked"; message: string } | null
@@ -291,6 +305,26 @@ export default function LandingPage() {
     setPhase("confirm");
   };
 
+  /* 필수 서류 현황 — 업로드 단계에서 조회하고, 분류가 끝날 때까지 4초마다 갱신 */
+  useEffect(() => {
+    if (phase !== "upload" || !assessmentId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await api<RequiredDocs>(`/api/assessments/${assessmentId}/required-docs`);
+        if (!cancelled) setRequiredDocs(data);
+      } catch {
+        /* 조회 실패 시 슬롯 없이 기본 업로드 존만 노출 */
+      }
+    };
+    load();
+    const timer = setInterval(load, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [phase, assessmentId, attachedFiles.length]);
+
   /** 업로드 존 클릭 → 실제 파일 선택 (v6) */
   const handleUploadClick = () => {
     if (uploading) return;
@@ -364,6 +398,20 @@ export default function LandingPage() {
     } finally {
       setVerifying(false);
     }
+  };
+
+  /** 목록에 없는(직접 입력한) 프로그램 — 저장된 선택에서 역산한다 */
+  const otherSystems = systems.filter((s) => !SYSTEM_OPTIONS.includes(s));
+
+  /** 기타 프로그램 추가 — 중복·빈값은 무시 */
+  const addOtherSystem = () => {
+    const name = otherInput.trim();
+    if (!name || systems.includes(name)) {
+      setOtherInput("");
+      return;
+    }
+    update({ systems: [...systems.filter((s) => s !== "없음"), name] });
+    setOtherInput("");
   };
 
   /** '없음'은 배타 선택 — 없음을 고르면 나머지 해제, 다른 걸 고르면 없음 해제 */
@@ -541,12 +589,22 @@ export default function LandingPage() {
         <Card key="upload" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
           <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
           <DotProgress step={2} total={3} />
-          <h2 className="ax-heading mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
-            <b>현장 서류</b>를 올려주세요
-          </h2>
-          <p className="mt-2 text-center [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
-            자료를 올릴수록 진단이 더 정확해져요
-          </p>
+          <div className="mt-4 flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="ax-heading [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
+                <b>현장 서류</b>를 올려주세요
+              </h2>
+              <p className="mt-2 [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
+                {requiredDocs
+                  ? `필수 서류 ${requiredDocs.filled}/${requiredDocs.total} · 자료를 올릴수록 진단이 더 정확해져요`
+                  : "자료를 올릴수록 진단이 더 정확해져요"}
+              </p>
+            </div>
+            {/* 여러 건을 한 번에 올리는 경로 — 슬롯별 업로드와 같은 엔드포인트 (수정요청v9) */}
+            <Button variant="secondary" size="sm" disabled={uploading} onClick={handleUploadClick}>
+              한번에 올리기
+            </Button>
+          </div>
 
           <div className="mt-6">
             {/* 실제 파일 업로드 input — 업로드 존 클릭으로 열림 (v6) */}
@@ -602,6 +660,63 @@ export default function LandingPage() {
               )}
             </button>
 
+            {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9).
+                올린 파일이 어느 유형인지는 분류가 끝나야 정해지므로 채움 표시는 분류 결과를 따른다 */}
+            {requiredDocs && requiredDocs.items.length > 0 && (
+              <div className="ax-scrollbar-none mt-4 max-h-[300px] overflow-y-auto rounded-[var(--radius-l)] border border-line">
+                {Object.entries(
+                  requiredDocs.items.reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
+                    acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
+                    return acc;
+                  }, {}),
+                ).map(([group, docs]) => (
+                  <div key={group} className="border-b border-line last:border-b-0">
+                    <div className="flex items-baseline justify-between gap-2 bg-surface-2 px-3.5 py-2">
+                      <span className="[font:var(--text-label-s)] text-ink-2">{group}</span>
+                      <span className="[font:var(--text-caption)] text-ink-4">
+                        {docs.filter((d) => d.files.length > 0).length}/{docs.length}
+                      </span>
+                    </div>
+                    {docs.map((d) => {
+                      const done = d.files.length > 0;
+                      return (
+                        <div
+                          key={d.docTypeId}
+                          className="flex items-center gap-2.5 border-t border-line-subtle px-3.5 py-2"
+                        >
+                          <span
+                            aria-hidden
+                            className={`inline-flex size-4 flex-none items-center justify-center rounded-full ${
+                              done ? "bg-[var(--bg-success-weak)] text-[var(--fg-success)]" : "bg-surface-3 text-ink-4"
+                            }`}
+                          >
+                            {done ? <Icons.check size={10} /> : null}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate [font:var(--text-label-s)] text-ink">
+                            {d.docTypeName}
+                          </span>
+                          {done ? (
+                            <span className="flex-none truncate [font:var(--text-caption)] text-ink-4">
+                              {d.files[0].name}
+                            </span>
+                          ) : (
+                            <Button
+                              variant="utility"
+                              size="sm"
+                              disabled={uploading}
+                              onClick={handleUploadClick}
+                            >
+                              올리기
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* 업로드된 파일 리스트 — 콤팩트 행 + 파일별 삭제 (v3 개선) */}
             {attachedFiles.length > 0 && (
               <ul className="ax-scrollbar-none mt-3 flex max-h-[236px] list-none flex-col gap-1 overflow-y-auto">
@@ -636,7 +751,14 @@ export default function LandingPage() {
               size="lg"
               full
               disabled={attachedFiles.length === 0}
-              onClick={() => setPhase("systems")}
+              onClick={() => {
+                /* 필수 서류가 덜 찼으면 한 번 더 묻는다 (수정요청v9) */
+                if (requiredDocs && requiredDocs.filled < requiredDocs.total) {
+                  setShortageOpen(true);
+                  return;
+                }
+                setPhase("systems");
+              }}
             >
               다음
             </Button>
@@ -684,8 +806,38 @@ export default function LandingPage() {
                   {name}
                 </Tag>
               ))}
+              {/* 목록에 없는 프로그램을 직접 담는다 (수정요청v9) */}
+              <Tag selected={otherOpen || otherSystems.length > 0} onClick={() => setOtherOpen(true)}>
+                기타
+              </Tag>
             </div>
 
+            {/* 직접 입력한 프로그램 — 태그로 붙고 X로 뺀다 */}
+            {otherOpen && (
+              <div style={{ marginTop: 10 }}>
+                <Input
+                  value={otherInput}
+                  onChange={(e) => setOtherInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    addOtherSystem();
+                  }}
+                  placeholder="프로그램 이름을 입력하고 Enter"
+                  aria-label="기타 프로그램 이름"
+                  autoFocus
+                />
+                {otherSystems.length > 0 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                    {otherSystems.map((name) => (
+                      <Tag key={name} selected onClick={() => toggleSystem(name)}>
+                        {name} ✕
+                      </Tag>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="mt-7 flex flex-col gap-2">
@@ -705,6 +857,32 @@ export default function LandingPage() {
           setPhase("confirm");
         }}
       />
+
+      {/* 자료 부족 경고 — 필수 서류가 덜 찬 상태로 진행할 때 (수정요청v9) */}
+      <Modal open={shortageOpen} onClose={() => setShortageOpen(false)} title="자료가 부족합니다">
+        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+          필수 서류 {requiredDocs?.total ?? 0}종 중 {requiredDocs?.filled ?? 0}종만 올라왔어요.
+          그래도 진행하시겠습니까?
+        </p>
+        <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+          부족한 서류는 판정 보류로 남고, 설문으로 보완할 수 있어요.
+        </p>
+        <div style={{ marginTop: 20, display: "flex", gap: 8 }}>
+          <Button
+            variant="secondary"
+            full
+            onClick={() => {
+              setShortageOpen(false);
+              setPhase("systems");
+            }}
+          >
+            그래도 진행
+          </Button>
+          <Button variant="primary" full onClick={() => setShortageOpen(false)}>
+            자료 더 올리기
+          </Button>
+        </div>
+      </Modal>
 
       {/* 기업 확인 결과 팝업 — 차단은 검색으로 되돌리고, 확인 보류는 그대로 다음 단계로 (v9) */}
       <Modal
