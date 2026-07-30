@@ -8,6 +8,7 @@
 
 - **프레임워크**: Next.js 16 (App Router) + React 19 + TypeScript (strict)
 - **스타일**: CSS 변수 기반 디자인 토큰(`app/globals.css`) + Tailwind CSS v4
+- **서체**: Pretendard Variable 1개 (`@font-face`에 `font-weight: 45 920` 축 범위 선언)
 - **UI**: 자체 프리미티브(`components/ui`) + Radix UI 일부(dialog/tabs/tooltip/collapsible)
 - **PDF**: html2canvas + jsPDF (`lib/pdf.ts`)
 - **백엔드(예정)**: 구버전은 Contabo 서버 Docker(FastAPI + Celery + Postgres + Redis + MinIO). 리뉴얼 설계는 `docs/작업 지시/`, `docs/DB(new)/` 참고 (docs는 로컬 전용)
@@ -27,18 +28,26 @@ npm run lint    # ESLint
 
 ```
 app/                라우트 (App Router, 전 페이지 클라이언트 컴포넌트)
-├── page.tsx        S0 자료 올리기 — 기업 검색 → 확인 → 자료 업로드
-├── collect/        S1 자료 정리 — 공개 데이터 수집, HITL 확인, 설문, 워크플로우
-├── result/         S2 진단 결과 — 6축 점수, 8영역 등급, 종합 분석
-├── tasks/          S3 개선 과제 — 과제 카탈로그 탐색·담기
-├── roadmap/        S4 로드맵 — 담은 과제 기반 단계별 타임라인
-├── report/         S5 보고서 — 요약, PDF 다운로드, 문의 CTA
-├── auth/           로그인 / 회원가입
-└── mypage/         내 정보 / 내 정보 수정
+├── layout.tsx      문서 골격 + 전역 컨텍스트만 (공용 헤더·푸터는 (site) 몫)
+├── (landing)/      S0 자료 올리기 — 기업 검색 → 확인 → 자료 업로드
+│                   전용 레이아웃: 진단 스텝 숨김(StepBar showSteps={false}) + 푸터
+├── (site)/         진단 플로우 공용 레이아웃(StepBar + main + SiteFooter)
+│   ├── collect/    S1 자료 정리 — 공개데이터 수집, HITL 확인, 설문, 워크플로우
+│   ├── result/     S2 진단 결과 — 5축 점수, 8업무영역 등급, 종합 분석
+│   ├── tasks/      S3 개선 과제 — 과제 카탈로그 탐색·담기
+│   ├── roadmap/    S4 로드맵 — 담은 과제 기반 단계별 타임라인
+│   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
+│   ├── auth/       로그인(이메일 인증 착지 화면 겸용) / 회원가입
+│   └── mypage/     내 정보 / 내 정보 수정
+└── admin/          관리자 콘솔 — 대시보드·사용자·진단 이력·환경 관리
+                    role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
+
+proxy.ts            admin.* 호스트 → /admin 리라이트 (/auth는 제외 — 로그인 공용)
 
 components/
 ├── ui/             디자인 시스템 프리미티브 (Button, Card, Modal, Stepper …)
-├── auth/           인증 UI + AuthContext (현재 데모용 가짜 인증)
+├── admin/          어드민 공용 — SortableTable, 개별 관리 안내 팝업
+├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
 └── report/         ReportDocument — PDF용 A4 페이지 DOM
 
@@ -48,14 +57,16 @@ data/               ★ 더미데이터 계층 = 백엔드 대체물 (API 연동
 ├── catalog/        개선 과제 22건(tasks), AX 7단계 방법론(method)
 └── glossary.ts     용어사전 (툴팁)
 
-lib/                순수 계산 로직 (부수효과 없음 — 서버 이식 가능)
+lib/                API 클라이언트 + 순수 계산 로직
+├── api.ts          백엔드 호출 공통 (쿠키 세션 credentials 포함)
+├── companySearch.ts 기업 검색 자동완성 공용 — 첫 화면·내 정보가 공유
 ├── types.ts        도메인 타입 SSOT — 백엔드 API 계약의 출발점
 ├── scoring/        6축 채점 엔진 (앵커 판정 → 축 점수 → 레벨/균형)
 ├── roadmap.ts      선택 과제 → 의존성 해소 → 단계별 로드맵
 ├── roi.ts          선택 과제 → 연 효과·회수 기간
 └── pdf.ts          ReportDocument DOM → A4 PDF
 
-public/             로고, Paperlogy 폰트
+public/             로고, Pretendard Variable 폰트
 docs/               기획·수정요청·참고자료·작업 로그 (.gitignore — git 미추적, 로컬 전용)
 ```
 
