@@ -35,6 +35,13 @@ type AssessmentListRow = {
  * 계정 정보 + 분석 기록 구성. 비로그인 시 로그인 안내 가드.
  * v7: 회사명·직책·연락처 행, 내 정보 수정 이동, 분석 기록 재확인 팝업 추가.
  */
+/** 완료 단계 목록 → '2. 자료 정리 진행 중' (아직 못 끝낸 첫 단계가 지금 하는 일) */
+function progressLabel(completed: StepId[]): string {
+  const idx = STEPS.findIndex((s) => !completed.includes(s.id));
+  if (idx < 0) return "진행 중";
+  return `${idx + 1}. ${STEPS[idx].label} 진행 중`;
+}
+
 export default function MyPage() {
   const { user, hydrated, logout } = useAuth();
   const { update } = useDiagnosis();
@@ -53,7 +60,8 @@ export default function MyPage() {
             company: a.companyName,
             date: a.createdAt.slice(0, 10),
             level: a.level ? `Lv.${a.level} ${a.levelName ?? ""}`.trim() : "—",
-            status: a.status === "completed" ? "진단 완료" : "진행 중",
+            /* 진행 중이면 어느 단계인지 함께 표기 — 예 '2. 자료 정리 진행 중' (수정요청v9) */
+            status: a.status === "completed" ? "진단 완료" : progressLabel(a.completedSteps ?? []),
             done: a.status === "completed",
             completedSteps: a.completedSteps ?? [],
           })),

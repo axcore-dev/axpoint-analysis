@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Icons, Input, Modal, Toast } from "@/components/ui";
+import { Autocomplete, Button, Card, Icons, Input, Modal, Toast } from "@/components/ui";
 import { useAuth, type AuthUser } from "@/components/auth/AuthContext";
-import { COMPANY_DIRECTORY, companyDesc } from "@/data/scenario/companies";
+import { fmtBizNoInput, useCompanySuggestions } from "@/lib/companySearch";
 
 /* ---------- 비밀번호 규칙 (수정요청v7) ----------
    허용 특수문자 32자: ! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ ₩ ] ^ _ ` { | } ~
@@ -16,7 +16,6 @@ const RE_SPECIAL = /[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~₩]/;
 const RE_ALLOWED_ONLY = /^[A-Za-z0-9!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~₩]*$/;
 
 /** 검색 모드 — 사업자등록번호(하이픈 무시 전방 일치) / 상호명(부분 일치) */
-type SearchMode = "bizNo" | "name";
 
 /**
  * 내 정보 수정 (수정요청v7) — 가짜 인증 데모.
@@ -158,7 +157,6 @@ function EditForm({
 
   /* 회사 검색 팝업 */
   const [companyOpen, setCompanyOpen] = useState(false);
-  const [searchMode, setSearchMode] = useState<SearchMode>("bizNo");
   const [query, setQuery] = useState("");
 
   /* 비밀번호 변경 팝업 */
@@ -167,22 +165,8 @@ function EditForm({
   const [pw2, setPw2] = useState("");
   const [pwDone, setPwDone] = useState(false);
 
-  /* 기업 디렉터리 검색 결과 */
-  const results = useMemo(() => {
-    const q = query.trim();
-    if (!q) return [];
-    if (searchMode === "name") {
-      const lower = q.toLowerCase();
-      return COMPANY_DIRECTORY.filter(
-        (c) =>
-          c.name.toLowerCase().includes(lower) ||
-          c.aliases.some((a) => a.toLowerCase().includes(lower)),
-      );
-    }
-    const qNo = q.replace(/-/g, "");
-    if (!qNo) return [];
-    return COMPANY_DIRECTORY.filter((c) => c.bizNo.replace(/-/g, "").startsWith(qNo));
-  }, [query, searchMode]);
+  /* 기업 검색 자동완성 — 첫 화면과 동일한 백엔드 검색 (수정요청v9) */
+  const { items: companyItems } = useCompanySuggestions(query, companyOpen);
 
   /* 비밀번호 체크리스트 — 4개 모두 충족 시에만 변경 가능 */
   const pwChecks = [
@@ -340,136 +324,30 @@ function EditForm({
         비밀번호 변경 완료
       </Toast>
 
-      {/* 회사 검색 팝업 — data/scenario/companies.ts 기업 디렉터리 대상 */}
+      {/* 회사 검색 팝업 — 첫 화면과 같은 자동완성(백엔드 검색) 사용 (수정요청v9) */}
       <Modal open={companyOpen} onClose={closeCompanyModal} title="회사 검색">
-        {/* 검색 모드 토글 */}
-        <div
+        <Autocomplete
+          value={query}
+          onValueChange={setQuery}
+          onSelect={(name) => {
+            setCompany(name);
+            closeCompanyModal();
+          }}
+          items={query.trim() ? companyItems : []}
+          placeholder="기업명 또는 사업자번호"
+          aria-label="기업명 또는 사업자번호"
+          leading={<Icons.search size={16} />}
+          formatValue={fmtBizNoInput}
+        />
+        <p
           style={{
-            display: "flex",
-            background: "var(--bg-tertiary)",
-            borderRadius: "var(--radius-m)",
-            padding: 4,
-            marginBottom: 14,
+            margin: "14px 0 0",
+            font: "var(--text-caption)",
+            color: "var(--fg-tertiary)",
           }}
         >
-          {(
-            [
-              { mode: "bizNo", label: "사업자등록번호로 찾기" },
-              { mode: "name", label: "상호명으로 찾기" },
-            ] as const
-          ).map((m) => (
-            <button
-              key={m.mode}
-              type="button"
-              onClick={() => {
-                setSearchMode(m.mode);
-                setQuery("");
-              }}
-              style={{
-                flex: 1,
-                height: 36,
-                border: "none",
-                cursor: "pointer",
-                borderRadius: 9,
-                font: "var(--text-label-m)",
-                fontFamily: "var(--font-sans)",
-                background: searchMode === m.mode ? "var(--bg-base)" : "transparent",
-                color: searchMode === m.mode ? "var(--fg-primary)" : "var(--fg-tertiary)",
-                boxShadow: searchMode === m.mode ? "var(--shadow-1)" : "none",
-                transition: "all var(--dur-base) var(--ease)",
-              }}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={searchMode === "bizNo" ? "사업자등록번호 10자리" : "상호명으로 찾기"}
-          leadingIcon={<Icons.search size={16} />}
-          autoFocus
-        />
-
-        {/* 검색 결과 */}
-        <div style={{ marginTop: 12 }}>
-          {query.trim() !== "" && results.length === 0 && (
-            <p
-              style={{
-                margin: 0,
-                padding: "14px 0",
-                font: "var(--text-body3)",
-                color: "var(--fg-tertiary)",
-                textAlign: "center",
-              }}
-            >
-              검색 결과 없음
-            </p>
-          )}
-          <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
-            {results.map((c, i) => (
-              <li key={c.bizNo}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCompany(c.name);
-                    closeCompanyModal();
-                  }}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                    width: "100%",
-                    padding: "11px 8px",
-                    border: "none",
-                    borderTop: i > 0 ? "1px solid var(--line-default)" : "none",
-                    background: "transparent",
-                    cursor: "pointer",
-                    textAlign: "left",
-                    borderRadius: "var(--radius-s)",
-                  }}
-                >
-                  <span style={{ flex: "none", color: "var(--fg-tertiary)", display: "inline-flex" }}>
-                    <Icons.building size={16} />
-                  </span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span
-                      style={{
-                        display: "block",
-                        font: "var(--text-label-m)",
-                        color: "var(--fg-primary)",
-                      }}
-                    >
-                      {c.name}
-                    </span>
-                    <span
-                      style={{
-                        display: "block",
-                        marginTop: 2,
-                        font: "var(--text-caption)",
-                        color: "var(--fg-tertiary)",
-                      }}
-                    >
-                      {companyDesc(c)}
-                    </span>
-                  </span>
-                  <span
-                    style={{
-                      flex: "none",
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 12,
-                      color: "var(--fg-quaternary)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {c.bizNo}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
+          기업명 또는 사업자번호로 찾은 뒤 목록에서 선택해 주세요.
+        </p>
       </Modal>
 
       {/* 비밀번호 변경 팝업 — 검증만 수행, 데모라 저장 없음 */}
