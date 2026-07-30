@@ -39,6 +39,10 @@ type RequiredDocs = {
   items: { docTypeId: number; docTypeName: string; groupName: string; files: { fileId: string; name: string }[] }[];
   filled: number;
   total: number;
+  /** 분석 진행률 — 분석이 끝나야 부족 검증이 정확하다 */
+  analysis: { analyzing: number; uploaded: number; done: number };
+  /** 유형을 못 정한 파일 — 슬롯에 끌어다 놓아 지정한다 */
+  unclassified: { fileId: string; name: string }[];
 };
 
 type SearchHit = {
@@ -125,6 +129,12 @@ export default function LandingPage() {
   const [requiredDocs, setRequiredDocs] = useState<RequiredDocs | null>(null);
   /** 자료 부족 경고 팝업 */
   const [shortageOpen, setShortageOpen] = useState(false);
+  /** 슬롯에서 올릴 때의 대상 문서 유형 (파일 선택창은 하나를 공유한다) */
+  const uploadTargetRef = useRef<number | undefined>(undefined);
+  /** 부족한 슬롯만 보기 */
+  const [onlyMissing, setOnlyMissing] = useState(false);
+  /** 드래그 중인 미분류 파일 id */
+  const [draggingFileId, setDraggingFileId] = useState<string | null>(null);
   /** 기타 프로그램 직접 입력 (수정요청v9) */
   const [otherOpen, setOtherOpen] = useState(false);
   const [otherInput, setOtherInput] = useState("");
@@ -241,12 +251,14 @@ export default function LandingPage() {
   }, [company, phase]);
 
   /** 실제 업로드 — MinIO 저장 + 분류 큐 등록. 거부된 파일은 목록에서 제외 */
-  const startUpload = async (files: File[]) => {
+  const startUpload = async (files: File[], docTypeId?: number) => {
     if (!assessmentId || files.length === 0) return;
     setUploading(true);
     try {
       const form = new FormData();
       for (const f of files) form.append("files", f);
+      /* 슬롯에서 올리면 그 유형으로 확정한다 — 분석은 워커가 이어서 채운다 (수정요청v9) */
+      if (docTypeId !== undefined) form.append("docTypeId", String(docTypeId));
       const res = await fetch(`${API_URL}/api/assessments/${assessmentId}/files`, {
         method: "POST",
         credentials: "include",
@@ -331,8 +343,24 @@ export default function LandingPage() {
   /** 파일 선택 완료 → 서버 업로드 */
   const onFilesPicked = (list: FileList | null) => {
     const files = Array.from(list ?? []);
+    const target = uploadTargetRef.current;
+    uploadTargetRef.current = undefined;
     if (files.length === 0) return;
-    void startUpload(files);
+    void startUpload(files, target);
+  };
+
+  /** 미분류 파일을 슬롯에 놓아 유형을 지정한다 (드래그앤드롭, 수정요청v9) */
+  const assignDocType = async (fileId: string, docTypeId: number) => {
+    try {
+      await api(`/api/files/${fileId}/doc-type`, {
+        method: "PATCH",
+        body: JSON.stringify({ docTypeId }),
+      });
+      const data = await api<RequiredDocs>(`/api/assessments/${assessmentId}/required-docs`);
+      setRequiredDocs(data);
+    } catch {
+      /* 실패 시 다음 주기 갱신에서 원래 상태가 다시 보인다 */
+    }
   };
 
   /** 기업 확인 → 국세청 검증 + 진단 세션 생성 후 다음 단계 */
@@ -613,20 +641,38 @@ export default function LandingPage() {
             {requiredDocs && requiredDocs.items.length > 0 && (
               <div className="rounded-[var(--radius-l)] border border-line">
                 <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
-                  <span className="[font:var(--text-label-s)] text-ink">
+                  <span className="min-w-0 [font:var(--text-label-s)] text-ink">
                     필수 서류 {requiredDocs.filled}/{requiredDocs.total}
+                    {requiredDocs.analysis.analyzing > 0 && (
+                      <span className="ml-2 [font:var(--text-caption)] text-ink-3">
+                        분석 {requiredDocs.analysis.done}/{requiredDocs.analysis.uploaded}
+                      </span>
+                    )}
                   </span>
-                  {/* 업로드 진입점 — 여러 건을 한 번에 올린 뒤 유형은 분류가 정한다 (수정요청v9) */}
-                  <Button variant="secondary" size="sm" disabled={uploading} onClick={handleUploadClick}>
-                    {uploading ? "올리는 중" : "한번에 올리기"}
-                  </Button>
+                  <span className="flex flex-none items-center gap-2">
+                    {requiredDocs.filled < requiredDocs.total && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setOnlyMissing((v) => !v)}
+                      >
+                        {onlyMissing ? "전체 보기" : "부족한 것만"}
+                      </Button>
+                    )}
+                    {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
+                    <Button variant="secondary" size="sm" disabled={uploading} onClick={handleUploadClick}>
+                      {uploading ? "올리는 중" : "한번에 올리기"}
+                    </Button>
+                  </span>
                 </div>
                 <div className="ax-scrollbar-none max-h-[300px] overflow-y-auto">
                 {Object.entries(
-                  requiredDocs.items.reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
-                    acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
-                    return acc;
-                  }, {}),
+                  requiredDocs.items
+                    .filter((it) => !onlyMissing || it.files.length === 0)
+                    .reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
+                      acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
+                      return acc;
+                    }, {}),
                 ).map(([group, docs]) => (
                   <div key={group} className="border-b border-line last:border-b-0">
                     <div className="flex items-baseline justify-between gap-2 bg-surface-2 px-3.5 py-2">
@@ -640,7 +686,20 @@ export default function LandingPage() {
                       return (
                         <div
                           key={d.docTypeId}
-                          className="flex items-center gap-2.5 border-t border-line-subtle px-3.5 py-2"
+                          /* 미분류 파일을 끌어다 놓으면 이 유형으로 지정한다 (수정요청v9) */
+                          onDragOver={(e) => {
+                            if (!draggingFileId) return;
+                            e.preventDefault();
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            const fileId = e.dataTransfer.getData("text/plain") || draggingFileId;
+                            setDraggingFileId(null);
+                            if (fileId) void assignDocType(fileId, d.docTypeId);
+                          }}
+                          className={`flex items-center gap-2.5 border-t border-line-subtle px-3.5 py-2 ${
+                            draggingFileId && !done ? "bg-[var(--bg-brand-weak)]" : ""
+                          }`}
                         >
                           <span
                             aria-hidden
@@ -662,7 +721,10 @@ export default function LandingPage() {
                               variant="utility"
                               size="sm"
                               disabled={uploading}
-                              onClick={handleUploadClick}
+                              onClick={() => {
+                                uploadTargetRef.current = d.docTypeId;
+                                handleUploadClick();
+                              }}
                             >
                               올리기
                             </Button>
@@ -673,6 +735,38 @@ export default function LandingPage() {
                   </div>
                 ))}
                 </div>
+              </div>
+            )}
+
+            {/* 유형을 못 정한 파일 — 슬롯으로 끌어다 놓으면 그 유형으로 지정된다 (수정요청v9) */}
+            {requiredDocs && requiredDocs.unclassified.length > 0 && (
+              <div className="mt-3 rounded-[var(--radius-l)] border border-dashed border-[var(--grey-300)] p-3">
+                <p className="[font:var(--text-label-s)] text-ink">
+                  유형을 못 정한 자료 {requiredDocs.unclassified.length}건
+                </p>
+                <p className="mt-1 [font:var(--text-caption)] text-ink-4">
+                  위 목록의 서류 칸으로 끌어다 놓으면 그 유형으로 반영돼요.
+                </p>
+                <ul className="mt-2 flex list-none flex-wrap gap-1.5">
+                  {requiredDocs.unclassified.map((f) => (
+                    <li key={f.fileId}>
+                      <span
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", f.fileId);
+                          setDraggingFileId(f.fileId);
+                        }}
+                        onDragEnd={() => setDraggingFileId(null)}
+                        className={`inline-flex cursor-grab items-center gap-1.5 rounded-[var(--radius-full)] border border-line bg-surface px-2.5 py-1 [font:var(--text-label-s)] text-ink ${
+                          draggingFileId === f.fileId ? "opacity-50" : ""
+                        }`}
+                      >
+                        <Icons.file size={13} />
+                        {f.name}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
 
@@ -709,9 +803,10 @@ export default function LandingPage() {
               variant="primary"
               size="lg"
               full
-              disabled={attachedFiles.length === 0}
+              /* 분석이 끝나기 전에는 부족 검증이 정확하지 않아 대기시킨다 (수정요청v9) */
+              disabled={attachedFiles.length === 0 || (requiredDocs?.analysis.analyzing ?? 0) > 0}
               onClick={() => {
-                /* 필수 서류가 덜 찼으면 한 번 더 묻는다 (수정요청v9) */
+                /* 필수 서류가 덜 찼으면 한 번 더 묻는다 */
                 if (requiredDocs && requiredDocs.filled < requiredDocs.total) {
                   setShortageOpen(true);
                   return;
@@ -719,7 +814,9 @@ export default function LandingPage() {
                 setPhase("systems");
               }}
             >
-              다음
+              {(requiredDocs?.analysis.analyzing ?? 0) > 0
+                ? `자료를 분석하고 있어요 (${requiredDocs?.analysis.done}/${requiredDocs?.analysis.uploaded})`
+                : "다음"}
             </Button>
             {attachedFiles.length === 0 && (
               <Button
@@ -837,7 +934,14 @@ export default function LandingPage() {
           >
             그래도 진행
           </Button>
-          <Button variant="primary" full onClick={() => setShortageOpen(false)}>
+          <Button
+            variant="primary"
+            full
+            onClick={() => {
+              setOnlyMissing(true);
+              setShortageOpen(false);
+            }}
+          >
             자료 더 올리기
           </Button>
         </div>
