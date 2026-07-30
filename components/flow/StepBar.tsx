@@ -31,9 +31,6 @@ export function StepBar() {
   /* 내 정보 화면 — 진단 플로우 밖이므로 스텝 표시를 감춘다 (수정요청v7) */
   const hideSteps = pathname.startsWith("/mypage");
 
-  /* 어드민 — 전용 헤더를 쓰므로 사이트 헤더를 렌더하지 않는다 */
-  if (pathname.startsWith("/admin")) return null;
-
   return (
     <header
       style={{
