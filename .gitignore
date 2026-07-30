@@ -42,3 +42,5 @@ next-env.d.ts
 
 # docs - exclude reference materials and work notes, but keep update logs and design system
 /docs
+
+CLAUDE.md
