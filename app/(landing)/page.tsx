@@ -14,6 +14,7 @@ import {
   DotProgress,
   Icons,
   Loader,
+  Modal,
   Tag,
   type AutocompleteItem,
 } from "@/components/ui";
@@ -106,6 +107,10 @@ export default function LandingPage() {
   const bizNoByName = useRef<Map<string, string>>(new Map());
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  /** 검증 결과 팝업 — 차단(폐업·미등록)이면 blocked, 국세청 조회 실패면 unchecked (v9) */
+  const [verifyNotice, setVerifyNotice] = useState<
+    { kind: "blocked" | "unchecked"; message: string } | null
+  >(null);
   /** 기업 확인 카드용 — 사업자번호로 검색해도 기업명을 조회해 표시한다 */
   const [resolved, setResolved] = useState<{ name: string; bizNo: string | null } | null>(null);
 
@@ -301,6 +306,7 @@ export default function LandingPage() {
     try {
       const res = await api<{
         verified: boolean;
+        ntsChecked?: boolean;
         reason?: string;
         company?: { id: string; name: string };
       }>("/api/companies/verify", {
@@ -308,8 +314,19 @@ export default function LandingPage() {
         body: JSON.stringify({ bizNo, name }),
       });
       if (!res.verified || !res.company) {
-        setVerifyError(res.reason ?? "기업 확인에 실패했어요.");
+        /* 미등록·폐업 — 진단을 진행하지 않는다 (v9) */
+        setVerifyNotice({
+          kind: "blocked",
+          message: res.reason ?? "기업 확인에 실패했어요.",
+        });
         return;
+      }
+      /* 국세청 조회가 안 된 경우 — 확인 보류로 알리고 진단은 계속한다 (v9) */
+      if (res.ntsChecked === false) {
+        setVerifyNotice({
+          kind: "unchecked",
+          message: "국세청 확인이 지금 안 돼요. 확인은 나중에 다시 하고, 진단은 이어서 진행해요.",
+        });
       }
       // 이미 만든 진단이 있으면 재사용, 없으면 생성
       let aid = assessmentId;
@@ -323,7 +340,10 @@ export default function LandingPage() {
       update({ companyId: res.company.id, assessmentId: aid, companyInput: res.company.name });
       setPhase("upload");
     } catch (e) {
-      setVerifyError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.");
+      setVerifyNotice({
+        kind: "blocked",
+        message: e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.",
+      });
     } finally {
       setVerifying(false);
     }
@@ -461,6 +481,29 @@ export default function LandingPage() {
               >
                 {verifyError}
               </p>
+            )}
+            {/* 검증 중 — 배경을 살짝 덮어 조작을 막고 진행 중임을 보인다 (v9) */}
+            {verifying && (
+              <div
+                aria-live="polite"
+                style={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 60,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 14,
+                  background: "rgba(25,31,40,0.28)",
+                  backdropFilter: "blur(1.5px)",
+                }}
+              >
+                <Loader />
+                <span style={{ font: "var(--text-label-s)", color: "var(--white)" }}>
+                  사업자 정보를 확인하고 있어요
+                </span>
+              </div>
             )}
           </div>
           <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -643,6 +686,35 @@ export default function LandingPage() {
           setPhase("confirm");
         }}
       />
+
+      {/* 기업 확인 결과 팝업 — 차단은 검색으로 되돌리고, 확인 보류는 그대로 다음 단계로 (v9) */}
+      <Modal
+        open={verifyNotice !== null}
+        onClose={() => setVerifyNotice(null)}
+        title={verifyNotice?.kind === "blocked" ? "진단을 진행할 수 없어요" : "국세청 확인 보류"}
+      >
+        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+          {verifyNotice?.message}
+        </p>
+        <div style={{ marginTop: 20 }}>
+          {verifyNotice?.kind === "blocked" ? (
+            <Button
+              variant="primary"
+              full
+              onClick={() => {
+                setVerifyNotice(null);
+                setPhase("search");
+              }}
+            >
+              다시 검색
+            </Button>
+          ) : (
+            <Button variant="primary" full onClick={() => setVerifyNotice(null)}>
+              계속하기
+            </Button>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
