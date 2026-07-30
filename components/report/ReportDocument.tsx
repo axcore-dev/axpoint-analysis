@@ -36,7 +36,7 @@ import {
  *
  * 페이지 구성 (6~7p, 담은 과제 수에 따라 가변):
  *   ① 표지  ② 종합 소견 + 업종 대비 포지션  ③ 카테고리별 준비도(6축)
- *   ④ 기능영역 8곳 등급  ⑤ 담은 과제(6건 초과 시 분할)
+ *   ④ 업무영역 8곳 등급  ⑤ 담은 과제(6건 초과 시 분할)
  *   ⑥ AX 로드맵  ⑦ 예상 효과 산출 + 진단 방법·한계 고지
  */
 
@@ -504,10 +504,10 @@ export function ReportDocument({
     </div>,
   );
 
-  /* ── ④ 기능영역 8곳 등급 ── */
+  /* ── ④ 업무영역 8곳 등급 ── */
   bodies.push(
     <div>
-      <SectionTitle no="4">기능영역 8곳 진단</SectionTitle>
+      <SectionTitle no="4">업무영역 8곳 진단</SectionTitle>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr>
@@ -553,7 +553,7 @@ export function ReportDocument({
         </tbody>
       </table>
       <div style={note}>
-        기능영역은 숫자 점수 없이 관리 대상·보통·강점 3등급과 판단 보류로만 평가합니다.
+        업무영역은 숫자 점수 없이 관리 대상·보통·강점 3등급과 판단 보류로만 평가합니다.
         낮은 등급이 개선 과제 추천의 우선 대상입니다.
       </div>
 

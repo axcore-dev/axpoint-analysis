@@ -127,7 +127,7 @@ export const LEVELS: LevelInfo[] = [
 ];
 
 /**
- * 8대 기능영역 (F-CMN-02) — 분류·분석·과제 필터가 공유하는 단일 체계.
+ * 8대 업무영역 (F-CMN-02) — 분류·분석·과제 필터가 공유하는 단일 체계.
  * 명칭·순서를 세 화면에서 완전히 일치시킬 것 (REQ-F-02 수용 기준 ①).
  */
 export const FUNCTION_AREAS: { id: FunctionAreaId; name: string }[] = [

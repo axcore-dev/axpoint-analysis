@@ -24,7 +24,7 @@ export type JudgeMethod = "auto" | "llm" | "hitl";
 export type EvidenceKind = "upload" | "public" | "hitl";
 
 /**
- * 8대 기능영역 (F-CMN-02) — 분류·분석·과제가 공유하는 단일 체계.
+ * 8대 업무영역 (F-CMN-02) — 분류·분석·과제가 공유하는 단일 체계.
  * 경영지원/제품설계/생산관리/장비관리/품질검사/재고물류/영업관리/고객지원
  */
 export type FunctionAreaId =
