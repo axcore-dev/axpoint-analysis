@@ -30,8 +30,8 @@ type Phase = "search" | "confirm" | "upload" | "systems";
 
 const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 
-/** 플레이스홀더 타이핑 애니메이션 문구 */
-const TYPING_PHRASES = ["(주)데모기업", "123-45-67890"];
+/** 플레이스홀더 타이핑 애니메이션 문구 (수정요청v9) */
+const TYPING_PHRASES = ["(주)에이엑스 코어", "123-45-67890"];
 const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
 /** 올리면 좋은 서류 — 업로드 존에 칩으로 강조 (v3 개선) */
@@ -50,6 +50,16 @@ type SearchHit = {
 
 /** 사업자번호 표기 — 000-00-00000 */
 const fmtBizNo = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
+
+/**
+ * 입력 중 사업자번호 형식 맞추기 (수정요청v9) — 숫자·하이픈만 입력했을 때 000-00-00000으로.
+ * 기업명(한글·영문)이 섞이면 그대로 둔다.
+ */
+function fmtBizNoInput(raw: string): string {
+  if (!/^[\d-]+$/.test(raw)) return raw;
+  const d = raw.replace(/\D/g, "").slice(0, 10);
+  return [d.slice(0, 3), d.slice(3, 5), d.slice(5)].filter(Boolean).join("-");
+}
 
 /** 자동완성 상세줄 — 지역 · 업종 · 설립연도 (없으면 주소로 대체) */
 const hitDetail = (it: SearchHit) => {
@@ -207,6 +217,8 @@ export default function LandingPage() {
           items.map((it) => ({
             value: it.name,
             badge: it.bizNo ? fmtBizNo(it.bizNo) : undefined,
+            /* 지역은 맨 우측에 (수정요청v9) */
+            description: it.region ?? undefined,
             detail: hitDetail(it),
           })),
         );
@@ -298,7 +310,12 @@ export default function LandingPage() {
     const bizNo = resolved?.bizNo ?? null;
     const name = resolved?.name || company.trim();
     if (!bizNo) {
-      setVerifyError("사업자번호를 확인할 수 없어요. 검색 결과에서 기업을 선택하거나 사업자번호로 검색해 주세요.");
+      /* 사업자번호를 못 찾으면 진단을 시작하지 않는다 (수정요청v9) */
+      setVerifyNotice({
+        kind: "blocked",
+        message:
+          "사업자번호를 확인할 수 없어요. 검색 결과에서 기업을 선택하거나 사업자번호로 검색해 주세요.",
+      });
       return;
     }
     setVerifying(true);
@@ -423,6 +440,8 @@ export default function LandingPage() {
               aria-label="기업명 또는 사업자번호"
               onFocus={() => setTouched(true)}
               leading={<Icons.search size={22} />}
+              /* 숫자만 입력하면 사업자번호 형식으로 맞춘다 — 000-00-00000 (수정요청v9) */
+              formatValue={fmtBizNoInput}
               fieldClassName="ax-field--pill"
               fieldStyle={{ height: 66, paddingLeft: 26, paddingRight: 9, gap: 12 }}
               inputStyle={{ fontSize: 19 }}

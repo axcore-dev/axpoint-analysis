@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { useCombobox } from "downshift";
 
 /**
@@ -42,6 +50,8 @@ interface AutocompleteProps {
   fieldClassName?: string;
   fieldStyle?: CSSProperties;
   inputStyle?: CSSProperties;
+  /** 입력값을 즉시 다듬는다 (예: 사업자번호 하이픈). 한글 조합 중에는 적용하지 않는다 */
+  formatValue?: (raw: string) => string;
 }
 
 /** 매칭 구간 하이라이트 */
@@ -73,6 +83,7 @@ export function Autocomplete({
   fieldClassName,
   fieldStyle,
   inputStyle,
+  formatValue,
   ...aria
 }: AutocompleteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -143,6 +154,16 @@ export function Autocomplete({
     onFocus: () => {
       openMenu();
       onFocus?.();
+    },
+    /* 다듬은 값을 DOM에 먼저 반영한다 — downshift가 그 뒤에 같은 이벤트를 읽으므로
+       필터링·상위 상태도 다듬은 값으로 맞춰진다 (조합 중이면 건드리지 않음) */
+    onChange: (e: ChangeEvent<HTMLInputElement>) => {
+      if (!formatValue) return;
+      if ((e.nativeEvent as InputEvent).isComposing) return;
+      const next = formatValue(e.target.value);
+      if (next === e.target.value) return;
+      e.target.value = next;
+      e.target.setSelectionRange(next.length, next.length);
     },
   });
   void _controlledValue;
