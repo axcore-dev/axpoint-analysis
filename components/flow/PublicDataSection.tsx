@@ -45,12 +45,15 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
     startedRef.current = true;
 
     let stream: EventSource | null = null;
+    /* POST 응답을 기다리는 사이에 화면을 떠날 수 있다 — 그때 스트림을 새로 열지 않는다 */
+    let cancelled = false;
     (async () => {
       try {
         /* 수집 시작 — 같은 진단은 큐에서 중복 실행되지 않는다 */
         const first = await api<Snapshot>(`/api/assessments/${assessmentId}/public-data`, {
           method: "POST",
         });
+        if (cancelled) return;
         setSnap(first);
         if (!first.progress.running) return;
 
@@ -69,7 +72,10 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
       }
     })();
 
-    return () => stream?.close();
+    return () => {
+      cancelled = true;
+      stream?.close();
+    };
   }, [assessmentId]);
 
   if (!snap) return null;

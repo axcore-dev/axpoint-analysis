@@ -591,6 +591,16 @@ function CauseChain({ steps }: { steps: string[] }) {
 /* ============================================================
    페이지
    ============================================================ */
+/** 결과 응답의 목록 필드를 배열로 보정한다 — 한 곳에서 막아야 화면 곳곳이 안전하다 */
+const normalizeResult = (p: ResultPayload): ResultPayload => ({
+  ...p,
+  axes: p.axes ?? [],
+  judgments: p.judgments ?? [],
+  levels: p.levels ?? [],
+  benchmarks: p.benchmarks ?? [],
+  areas: p.areas ?? [],
+});
+
 export default function ResultPage() {
   const router = useRouter();
   const { companyInput, assessmentId, completedSteps, completeStep } = useDiagnosis();
@@ -611,7 +621,7 @@ export default function ResultPage() {
   useEffect(() => {
     if (!assessmentId) return;
     api<ResultPayload>(`/api/assessments/${assessmentId}/result`)
-      .then(setData)
+      .then((p) => setData(normalizeResult(p)))
       .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
   }, [assessmentId]);
 
@@ -1378,7 +1388,7 @@ export default function ResultPage() {
           onClose={() => setSurveyOpen(false)}
           onApplied={() => {
             api<ResultPayload>(`/api/assessments/${assessmentId}/result`)
-              .then(setData)
+              .then((p) => setData(normalizeResult(p)))
               .catch(() => undefined);
           }}
         />

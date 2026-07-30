@@ -53,17 +53,22 @@ export function useCompanySuggestions(query: string, enabled = true) {
       setHits([]);
       return;
     }
+    /* 디바운스를 지나도 응답 순서는 보장되지 않는다 — 지난 질의 결과가 최신을 덮지 않게 막는다 */
+    let stale = false;
     const timer = setTimeout(async () => {
       try {
         const { items } = await api<{ items: CompanyHit[] }>(
           `/api/companies/search?q=${encodeURIComponent(q)}`,
         );
-        setHits(items);
+        if (!stale) setHits(items);
       } catch {
-        setHits([]);
+        if (!stale) setHits([]);
       }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
   }, [query, enabled]);
 
   const items: AutocompleteItem[] = hits.map((it) => ({
