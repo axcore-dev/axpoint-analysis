@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button, Loader, Modal } from "@/components/ui";
 import { api } from "@/lib/api";
+import { waitForJudge } from "@/lib/judgeWait";
 
 /**
  * 결측 보완 설문 (수정요청v9)
@@ -66,14 +67,10 @@ export function SurveyModal({
       });
       /* 응답을 반영하려면 다시 판정해야 한다 */
       await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
-      for (let i = 0; i < 40; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const { assessment } = await api<{ assessment: { status: string } }>(
-          `/api/assessments/${assessmentId}`,
-        );
-        if (assessment.status === "completed") break;
-        if (assessment.status === "failed") throw new Error("재판정에 실패했어요.");
-      }
+      const outcome = await waitForJudge(assessmentId);
+      if (outcome === "failed") throw new Error("재판정에 실패했어요.");
+      if (outcome === "timeout")
+        throw new Error("재판정이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
       onApplied();
       onClose();
     } catch (e) {

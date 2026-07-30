@@ -8,6 +8,7 @@ import { RouteLoading } from "@/components/flow/RouteLoading";
 import { DIGITAL_LEVELS } from "@/data/rubric/meta";
 import { api } from "@/lib/api";
 import { Button, Card, Icons, Loader, Modal } from "@/components/ui";
+import { waitForJudge } from "@/lib/judgeWait";
 
 /**
  * S1 자료 정리 — 백엔드 실연동 + 원본 분류 그리드 레이아웃 복원.
@@ -113,15 +114,10 @@ export default function CollectPage() {
     setError(null);
     try {
       await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
-      // 판정 완료(completed/failed)까지 3초 간격 확인
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const { assessment } = await api<{ assessment: { status: string } }>(
-          `/api/assessments/${assessmentId}`,
-        );
-        if (assessment.status === "completed") break;
-        if (assessment.status === "failed") throw new Error("판정에 실패했어요. 다시 시도해 주세요.");
-      }
+      const outcome = await waitForJudge(assessmentId);
+      if (outcome === "failed") throw new Error("판정에 실패했어요. 다시 시도해 주세요.");
+      if (outcome === "timeout")
+        throw new Error("판정이 예상보다 오래 걸려요. 잠시 후 마이페이지에서 결과를 확인해 주세요.");
       completeStep("collect");
       router.push("/result");
     } catch (e) {
@@ -129,6 +125,24 @@ export default function CollectPage() {
       setSubmitting(false);
     }
   };
+
+  const total = files?.length ?? 0;
+  const doneCount =
+    files?.filter((f) => f.status && f.status !== "pending" && f.status !== "processing").length ??
+    0;
+  const classifying = total > 0 && doneCount < total;
+
+  /* 분류가 끝나야 제출할 수 있지만, 워커가 죽으면 파일이 pending으로 남아 버튼이 영영 잠긴다.
+     3분이 지나면 분류된 자료만으로 진행할 수 있게 푼다 */
+  const [classifyStuck, setClassifyStuck] = useState(false);
+  useEffect(() => {
+    if (!classifying) {
+      setClassifyStuck(false);
+      return;
+    }
+    const t = setTimeout(() => setClassifyStuck(true), 3 * 60 * 1000);
+    return () => clearTimeout(t);
+  }, [classifying]);
 
   /* 진입 가드 — 기업 식별값·세션 없이 직접 진입 (기존 정책 유지) */
   if (!companyInput || !assessmentId) {
@@ -152,11 +166,6 @@ export default function CollectPage() {
   if (booting) return <RouteLoading title={companyInput} messages={COLLECT_MESSAGES} />;
   if (submitting) return <RouteLoading messages={CLASSIFY_MESSAGES} />;
 
-  const total = files?.length ?? 0;
-  const doneCount =
-    files?.filter((f) => f.status && f.status !== "pending" && f.status !== "processing").length ??
-    0;
-  const classifying = total > 0 && doneCount < total;
 
   return (
     <main className="ax-step-enter mx-auto max-w-[980px] px-6 pb-24 pt-8">
@@ -263,13 +272,20 @@ export default function CollectPage() {
 
       {/* ── 다음 단계: 우측 하단 배치 (원본 레이아웃) ── */}
       <div className="mt-14 flex flex-col items-end gap-2">
-        <Button variant="primary" size="lg" disabled={classifying || submitting} onClick={requestSubmit}>
+        <Button
+          variant="primary"
+          size="lg"
+          disabled={(classifying && !classifyStuck) || submitting}
+          onClick={requestSubmit}
+        >
           진단 결과 보기
           <Icons.arrow size={17} />
         </Button>
         {classifying && (
           <p className="m-0 [font:var(--text-caption)] text-ink-4">
-            분류가 끝나면 진단을 시작할 수 있어요.
+            {classifyStuck
+              ? `분류가 끝나지 않은 자료 ${total - doneCount}건이 있어요. 분류된 자료만으로 진행할 수 있어요.`
+              : "분류가 끝나면 진단을 시작할 수 있어요."}
           </p>
         )}
       </div>
