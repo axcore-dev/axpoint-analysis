@@ -35,9 +35,6 @@ const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 const TYPING_PHRASES = ["(주)에이엑스 코어", "123-45-67890"];
 const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
-/** 올리면 좋은 서류 — 업로드 존에 칩으로 강조 (v3 개선) */
-const DOC_HINTS = ["생산일지", "발주서", "재고표", "검사성적서"];
-
 type RequiredDocs = {
   items: { docTypeId: number; docTypeName: string; groupName: string; files: { fileId: string; name: string }[] }[];
   filled: number;
@@ -589,25 +586,15 @@ export default function LandingPage() {
         <Card key="upload" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
           <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
           <DotProgress step={2} total={3} />
-          <div className="mt-4 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="ax-heading [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
-                <b>현장 서류</b>를 올려주세요
-              </h2>
-              <p className="mt-2 [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
-                {requiredDocs
-                  ? `필수 서류 ${requiredDocs.filled}/${requiredDocs.total} · 자료를 올릴수록 진단이 더 정확해져요`
-                  : "자료를 올릴수록 진단이 더 정확해져요"}
-              </p>
-            </div>
-            {/* 여러 건을 한 번에 올리는 경로 — 슬롯별 업로드와 같은 엔드포인트 (수정요청v9) */}
-            <Button variant="secondary" size="sm" disabled={uploading} onClick={handleUploadClick}>
-              한번에 올리기
-            </Button>
-          </div>
+          <h2 className="ax-heading mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
+            <b>현장 서류</b>를 올려주세요
+          </h2>
+          <p className="mt-2 text-center [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
+            자료를 올릴수록 진단이 더 정확해져요
+          </p>
 
           <div className="mt-6">
-            {/* 실제 파일 업로드 input — 업로드 존 클릭으로 열림 (v6) */}
+            {/* 실제 파일 업로드 input — '한번에 올리기'·슬롯 올리기가 이 input을 연다 */}
             <input
               ref={fileInputRef}
               type="file"
@@ -621,49 +608,20 @@ export default function LandingPage() {
               aria-hidden
               tabIndex={-1}
             />
-            {/* 업로드 존 — 업로드 후에도 남아 추가 업로드 가능 */}
-            <button
-              type="button"
-              onClick={handleUploadClick}
-              disabled={uploading}
-              aria-label="자료 올리기"
-              className="box-border w-full cursor-pointer rounded-[var(--radius-l)] border-[1.5px] border-dashed border-[var(--grey-300)] bg-surface-2 px-4 py-7 text-center font-[family-name:var(--font-sans)] transition-colors duration-[var(--dur-base)] hover:border-line-strong hover:bg-surface-3 disabled:cursor-default disabled:hover:border-[var(--grey-300)] disabled:hover:bg-surface-2"
-            >
-              {uploading ? (
-                <span className="flex min-h-[124px] flex-col items-center justify-center gap-3 text-ink-2">
-                  <Loader style={{ color: "var(--fg-brand)" }} />
-                  <span className="[font:var(--text-body2)]">자료를 읽고 있어요</span>
-                </span>
-              ) : (
-                <span className="flex flex-col items-center gap-3.5">
-                  <span className="flex size-11 items-center justify-center rounded-[var(--radius-m)] border border-line bg-surface text-ink-2 shadow-[var(--shadow-1)]">
-                    <Icons.upload size={20} />
-                  </span>
-                  <span className="[font:var(--text-label-m)] text-ink">
-                    파일 업로드, 또는 가져다 놓기
-                  </span>
-                  {/* 올리면 좋은 서류 — 칩으로 강조 (v3 개선) */}
-                  <span className="flex flex-wrap items-center justify-center gap-1.5">
-                    {DOC_HINTS.map((hint) => (
-                      <span
-                        key={hint}
-                        className="inline-flex items-center rounded-[var(--radius-full)] border border-line bg-surface px-2.5 py-1 [font:var(--text-label-s)] text-ink-2"
-                      >
-                        {hint}
-                      </span>
-                    ))}
-                  </span>
-                  <span className="[font:var(--text-caption)] text-ink-4">
-                    PDF · 엑셀(xlsx) · 사진(jpg/png) · 한글(hwp)/워드(docx)
-                  </span>
-                </span>
-              )}
-            </button>
-
             {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9).
                 올린 파일이 어느 유형인지는 분류가 끝나야 정해지므로 채움 표시는 분류 결과를 따른다 */}
             {requiredDocs && requiredDocs.items.length > 0 && (
-              <div className="ax-scrollbar-none mt-4 max-h-[300px] overflow-y-auto rounded-[var(--radius-l)] border border-line">
+              <div className="rounded-[var(--radius-l)] border border-line">
+                <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
+                  <span className="[font:var(--text-label-s)] text-ink">
+                    필수 서류 {requiredDocs.filled}/{requiredDocs.total}
+                  </span>
+                  {/* 업로드 진입점 — 여러 건을 한 번에 올린 뒤 유형은 분류가 정한다 (수정요청v9) */}
+                  <Button variant="secondary" size="sm" disabled={uploading} onClick={handleUploadClick}>
+                    {uploading ? "올리는 중" : "한번에 올리기"}
+                  </Button>
+                </div>
+                <div className="ax-scrollbar-none max-h-[300px] overflow-y-auto">
                 {Object.entries(
                   requiredDocs.items.reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
                     acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
@@ -714,6 +672,7 @@ export default function LandingPage() {
                     })}
                   </div>
                 ))}
+                </div>
               </div>
             )}
 
