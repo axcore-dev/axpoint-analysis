@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, DotStepper, Icons, Modal, TermTooltip } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { RouteLoading } from "@/components/flow/RouteLoading";
+import { SurveyModal } from "@/components/flow/SurveyModal";
 import { api } from "@/lib/api";
 import { getGlossary } from "@/data/glossary";
 
@@ -601,6 +602,8 @@ export default function ResultPage() {
   const [showAllAxes, setShowAllAxes] = useState(false);
   /* 점수 근거 팝업 대상 축 (null이면 닫힘) */
   const [basisAxis, setBasisAxis] = useState<string | null>(null);
+  /* 결측 보완 설문 팝업 */
+  const [surveyOpen, setSurveyOpen] = useState(false);
   /* 사유 보기 팝업 대상 영역 (null이면 닫힘) */
   const [chainArea, setChainArea] = useState<AreaView | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
@@ -788,9 +791,16 @@ export default function ResultPage() {
                         color: "var(--fg-quaternary)",
                       }}
                     >
-                      자료가 부족해 일부 문항은 판정을 보류했어요. 자료를 더 올리면 진단이
-                      정확해져요.
+                      자료가 부족해 일부 문항은 판정을 보류했어요. 설문에 답하면 그 문항도 점수에
+                      반영돼요.
                     </p>
+                  )}
+                  {lowCoverage && (
+                    <div style={{ marginTop: 10 }}>
+                      <Button variant="secondary" size="sm" onClick={() => setSurveyOpen(true)}>
+                        설문으로 보완하기
+                      </Button>
+                    </div>
                   )}
                   {/* Lv.1~5 단계 흐름 — 현재·목표 단계 시각화 */}
                   {stepperSteps.length > 0 && (
@@ -803,15 +813,21 @@ export default function ResultPage() {
                   )}
                 </>
               ) : (
-                <p
-                  style={{
-                    margin: "10px 0 0",
-                    font: "var(--text-body1)",
-                    color: "var(--fg-tertiary)",
-                  }}
-                >
-                  판정 가능한 자료가 부족해 점수를 산출하지 못했어요.
-                </p>
+                /* 점수를 못 낸 상태를 그대로 알리지 않고 보완 경로를 준다 (수정요청v9) */
+                <div style={{ marginTop: 10 }}>
+                  <p style={{ margin: 0, font: "var(--text-body1)", color: "var(--fg-secondary)" }}>
+                    아직 판정할 자료가 모자라 점수를 내지 못했어요. 설문에 답하거나 자료를 더
+                    올리면 바로 점수가 나와요.
+                  </p>
+                  <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                    <Button variant="primary" onClick={() => setSurveyOpen(true)}>
+                      설문으로 보완하기
+                    </Button>
+                    <Button variant="secondary" onClick={() => router.push("/")}>
+                      자료 더 올리기
+                    </Button>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -1353,6 +1369,20 @@ export default function ResultPage() {
           </div>
         </Inner>
       </section>
+
+      {/* 결측 보완 설문 — 응답을 저장하고 재판정까지 끝나면 결과를 다시 불러온다 (수정요청v9) */}
+      {assessmentId && (
+        <SurveyModal
+          assessmentId={assessmentId}
+          open={surveyOpen}
+          onClose={() => setSurveyOpen(false)}
+          onApplied={() => {
+            api<ResultPayload>(`/api/assessments/${assessmentId}/result`)
+              .then(setData)
+              .catch(() => undefined);
+          }}
+        />
+      )}
 
       {/* ================= 팝업 — 점수 근거 (문항·판정·근거) ================= */}
       <Modal

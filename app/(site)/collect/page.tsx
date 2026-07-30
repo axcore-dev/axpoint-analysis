@@ -3,10 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
+import { PublicDataSection } from "@/components/flow/PublicDataSection";
 import { RouteLoading } from "@/components/flow/RouteLoading";
 import { DIGITAL_LEVELS } from "@/data/rubric/meta";
 import { api } from "@/lib/api";
-import { Button, Card, Icons, Loader } from "@/components/ui";
+import { Button, Card, Icons, Loader, Modal } from "@/components/ui";
 
 /**
  * S1 자료 정리 — 백엔드 실연동 + 원본 분류 그리드 레이아웃 복원.
@@ -49,6 +50,8 @@ export default function CollectPage() {
   const [booting, setBooting] = useState(!completedSteps.includes("collect"));
   const [files, setFiles] = useState<FileRow[] | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** 자료 부족 경고 — 필수 서류가 하나도 없을 때 */
+  const [shortage, setShortage] = useState<{ filled: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -85,6 +88,23 @@ export default function CollectPage() {
       if (pollTimer.current) clearInterval(pollTimer.current);
     };
   }, [assessmentId, fetchFiles]);
+
+  /* 제출 전 점검 — 필수 서류가 하나도 없으면 점수를 낼 수 없다. 결과 화면에서 처음 알리지 않는다 (v9) */
+  const requestSubmit = async () => {
+    if (!assessmentId || submitting) return;
+    try {
+      const rd = await api<{ filled: number; total: number }>(
+        `/api/assessments/${assessmentId}/required-docs`,
+      );
+      if (rd.filled === 0) {
+        setShortage(rd);
+        return;
+      }
+    } catch {
+      /* 점검 실패는 진행을 막지 않는다 */
+    }
+    void submit();
+  };
 
   /* 제출 → 판정 완료 폴링 → 진단 결과로 이동 */
   const submit = async () => {
@@ -202,15 +222,48 @@ export default function CollectPage() {
         </section>
       )}
 
+      {/* ── 공개 데이터 수집 — 진입 시 수집 시작, 진행률은 SSE (수정요청v9·v10) ── */}
+      {assessmentId && <PublicDataSection assessmentId={assessmentId} />}
+
       {error && (
         <p style={{ margin: "24px 0 0", font: "var(--text-caption)", color: "var(--fg-danger, #d4380d)" }}>
           {error}
         </p>
       )}
 
+      {/* 자료 부족 경고 — 이대로 진단하면 점수가 나오지 않는다 (수정요청v9) */}
+      <Modal
+        open={shortage !== null}
+        onClose={() => setShortage(null)}
+        title="자료가 부족합니다"
+      >
+        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+          필수 서류 {shortage?.total ?? 0}종 중 올라온 자료가 없어요. 이대로 진단하면 점수를
+          산출하지 못해요.
+        </p>
+        <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+          자료를 올리면 판정이 되고, 부족한 문항은 진단 결과에서 설문으로 보완할 수 있어요.
+        </p>
+        <div style={{ marginTop: 20, display: "flex", gap: 8 }}>
+          <Button variant="secondary" full onClick={() => router.push("/")}>
+            자료 올리러 가기
+          </Button>
+          <Button
+            variant="primary"
+            full
+            onClick={() => {
+              setShortage(null);
+              void submit();
+            }}
+          >
+            그래도 진행
+          </Button>
+        </div>
+      </Modal>
+
       {/* ── 다음 단계: 우측 하단 배치 (원본 레이아웃) ── */}
       <div className="mt-14 flex flex-col items-end gap-2">
-        <Button variant="primary" size="lg" disabled={classifying || submitting} onClick={submit}>
+        <Button variant="primary" size="lg" disabled={classifying || submitting} onClick={requestSubmit}>
           진단 결과 보기
           <Icons.arrow size={17} />
         </Button>
