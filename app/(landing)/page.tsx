@@ -477,6 +477,10 @@ export default function LandingPage() {
   /** '기타' 토글 — 다시 누르면 입력창을 닫고 직접 입력한 프로그램도 함께 해제한다 */
   const toggleOther = () => {
     if (!otherSelected) {
+      /* '없음'과의 배타는 양방향 — 기타를 켜는 순간 '없음'을 푼다 */
+      if (systems.includes("없음")) {
+        update({ systems: systems.filter((s) => s !== "없음") });
+      }
       setOtherOpen(true);
       return;
     }
