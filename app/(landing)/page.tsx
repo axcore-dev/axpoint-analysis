@@ -9,6 +9,7 @@ import { api, API_URL } from "@/lib/api";
 import {
   Autocomplete,
   BackIconButton,
+  Badge,
   Button,
   Card,
   DotProgress,
@@ -17,7 +18,6 @@ import {
   Loader,
   Modal,
   Tag,
-  type AutocompleteItem,
 } from "@/components/ui";
 
 /**
@@ -46,15 +46,15 @@ type RequiredDocs = {
 };
 
 type SearchHit = {
-  id: string | null;
   name: string;
-  bizNo: string | null;
-  region: string | null;
-  industry: string | null;
-  estDate: string | null;
-  address: string | null;
-  source: string;
+  bizNo: string;
+  corpRegNo: string | null; // 법인등록번호 — 동명 기업 구분용
+  statusCode: string | null; // 01 계속 / 02 휴업 / 그 외·null 미확인 (폐업은 서버가 제외)
+  status: string | null;
 };
+
+/** 법인등록번호 표기 — 000000-0000000 */
+const fmtCorpRegNo = (v: string) => (v.length === 13 ? `${v.slice(0, 6)}-${v.slice(6)}` : v);
 
 /** 사업자번호 표기 — 000-00-00000 */
 const fmtBizNo = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
@@ -68,14 +68,6 @@ function fmtBizNoInput(raw: string): string {
   const d = raw.replace(/\D/g, "").slice(0, 10);
   return [d.slice(0, 3), d.slice(3, 5), d.slice(5)].filter(Boolean).join("-");
 }
-
-/** 자동완성 상세줄 — 지역 · 업종 · 설립연도 (없으면 주소로 대체) */
-const hitDetail = (it: SearchHit) => {
-  const parts = [it.region, it.industry, it.estDate ? `설립 ${it.estDate.slice(0, 4)}` : null].filter(
-    Boolean,
-  );
-  return parts.length > 0 ? parts.join(" · ") : (it.address ?? "");
-};
 
 const stepCardStyle: CSSProperties = {
   width: "100%",
@@ -119,10 +111,12 @@ export default function LandingPage() {
   /** 업로드 판독 로딩 — 완료 시 파일을 첨부 목록에 합침 (v6 개편) */
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  /** 자동완성 — 백엔드 검색(디렉터리+비즈노) 결과 */
-  const [suggestions, setSuggestions] = useState<AutocompleteItem[]>([]);
-  /** 검색 결과의 기업명 → 사업자번호 (기업 확인 단계의 국세청 검증에 사용) */
-  const bizNoByName = useRef<Map<string, string>>(new Map());
+  /** 검색 결과 — 사용자가 검색을 실행했을 때만 채워진다 (null = 아직 검색 전) */
+  const [results, setResults] = useState<SearchHit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  /** 목록에서 고른 기업 — 확인 단계는 이 값만 쓴다(재조회 없음) */
+  const [selected, setSelected] = useState<SearchHit | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   /** 필수 서류 현황 — 문서유형 마스터(필수/선택)가 원본 (수정요청v9) */
@@ -144,37 +138,6 @@ export default function LandingPage() {
   const [verifyNotice, setVerifyNotice] = useState<
     { kind: "blocked" | "unchecked"; message: string } | null
   >(null);
-  /** 기업 확인 카드용 — 사업자번호로 검색해도 기업명을 조회해 표시한다 */
-  const [resolved, setResolved] = useState<{ name: string; bizNo: string | null } | null>(null);
-
-  /* 기업 확인 진입 시 기업명·사업자번호 해석 — 번호로 검색했으면 이름을 찾아온다 */
-  useEffect(() => {
-    if (phase !== "confirm") return;
-    const input = company.trim();
-    const raw = input.replace(/\D/g, "");
-    const isBizNo = raw.length === 10;
-    setResolved(null);
-    let cancelled = false;
-    (async () => {
-      try {
-        const { items } = await api<{ items: SearchHit[] }>(
-          `/api/companies/search?q=${encodeURIComponent(input)}`,
-        );
-        const hit = isBizNo
-          ? (items.find((it) => it.bizNo === raw) ?? items[0])
-          : (items.find((it) => it.name === input) ?? items[0]);
-        if (cancelled) return;
-        if (hit) setResolved({ name: hit.name, bizNo: hit.bizNo });
-        else setResolved({ name: isBizNo ? "" : input, bizNo: isBizNo ? raw : (bizNoByName.current.get(input) ?? null) });
-      } catch {
-        if (!cancelled)
-          setResolved({ name: isBizNo ? "" : input, bizNo: isBizNo ? raw : (bizNoByName.current.get(input) ?? null) });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [phase, company]);
 
   /* 뒤로 돌아왔을 때 진행 중 입력값 복원 */
   useEffect(() => {
@@ -223,34 +186,37 @@ export default function LandingPage() {
     return () => clearTimeout(timer);
   }, [phase, touched, idle]);
 
-  /* 자동완성 — 입력 후 300ms 디바운스로 백엔드 검색 (검색 API는 공개, 오류는 빈 목록) */
-  useEffect(() => {
+  /* 검색은 사용자가 실행할 때만 나간다 — 타이핑마다 외부 API를 부르지 않는다 */
+  const runSearch = async () => {
     const q = company.trim();
-    if (phase !== "search" || !q) {
-      setSuggestions([]);
+    if (q.length < 2 || searching) return;
+    setSearching(true);
+    setSearchError(null);
+    setResults(null);
+    update({ companyInput: q });
+    try {
+      const { items } = await api<{ items: SearchHit[] }>(
+        `/api/companies/search?q=${encodeURIComponent(q)}`,
+      );
+      setResults(items);
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "검색에 실패했어요.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  /** 목록에서 기업 선택 → 로그인 확인 후 기업 확인 단계로 */
+  const pickCompany = (hit: SearchHit) => {
+    setSelected(hit);
+    setCompany(hit.name);
+    update({ companyInput: hit.name });
+    if (!user) {
+      setLoginOpen(true); // 선택은 state에 남아 로그인 후 그대로 이어진다
       return;
     }
-    const timer = setTimeout(async () => {
-      try {
-        const { items } = await api<{ items: SearchHit[] }>(
-          `/api/companies/search?q=${encodeURIComponent(q)}`,
-        );
-        for (const it of items) if (it.bizNo) bizNoByName.current.set(it.name, it.bizNo);
-        setSuggestions(
-          items.map((it) => ({
-            value: it.name,
-            badge: it.bizNo ? fmtBizNo(it.bizNo) : undefined,
-            /* 지역은 맨 우측에 (수정요청v9) */
-            description: it.region ?? undefined,
-            detail: hitDetail(it),
-          })),
-        );
-      } catch {
-        setSuggestions([]);
-      }
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [company, phase]);
+    setPhase("confirm");
+  };
 
   /** 실제 업로드 — MinIO 저장 + 분류 큐 등록. 거부된 파일은 목록에서 제외 */
   const startUpload = async (files: File[], docTypeId?: number) => {
@@ -304,38 +270,16 @@ export default function LandingPage() {
     }
   };
 
-  const canSubmit = company.trim().length >= 1;
-
   /* 다시 검색 — 입력창·자동완성 후보를 비우고 처음 상태로 돌린다.
      이전 검색어가 남아 있으면 새 기업을 찾는 흐름에서 그대로 확정돼 버린다 */
   const backToSearch = () => {
     setCompany("");
-    setSuggestions([]);
+    setResults(null);
+    setSelected(null);
+    setSearchError(null);
     setVerifyError(null);
     update({ companyInput: "" });
     setPhase("search");
-  };
-
-  const submitSearch = () => {
-    if (!canSubmit) return;
-    /* 검색 기업을 즉시 저장 — 로그인 왕복에도 기업 확인 단계로 그대로 전달 (v6 버그 수정) */
-    update({ companyInput: company.trim() });
-    if (!user) {
-      setLoginOpen(true); // 검색 입력값은 state에 그대로 보존
-      return;
-    }
-    setPhase("confirm");
-  };
-
-  /** 예상 검색어 선택 → 입력값 채우고 동일 제출 흐름(로그인 체크) */
-  const pickSuggestion = (value: string) => {
-    setCompany(value);
-    update({ companyInput: value.trim() });
-    if (!user) {
-      setLoginOpen(true);
-      return;
-    }
-    setPhase("confirm");
   };
 
   /* 필수 서류 현황 — 업로드 단계에서 조회하고, 분류가 끝날 때까지 4초마다 갱신 */
@@ -392,43 +336,25 @@ export default function LandingPage() {
   /** 기업 확인 → 국세청 검증 + 진단 세션 생성 후 다음 단계 */
   const confirmCompany = async () => {
     if (verifying) return;
-    const bizNo = resolved?.bizNo ?? null;
-    const name = resolved?.name || company.trim();
-    if (!bizNo) {
-      /* 사업자번호를 못 찾으면 진단을 시작하지 않는다 (수정요청v9) */
-      setVerifyNotice({
-        kind: "blocked",
-        message:
-          "사업자번호를 확인할 수 없어요. 검색 결과에서 기업을 선택하거나 사업자번호로 검색해 주세요.",
-      });
+    if (!selected) {
+      setVerifyNotice({ kind: "blocked", message: "검색 결과에서 기업을 선택해 주세요." });
       return;
     }
     setVerifying(true);
     setVerifyError(null);
     try {
+      /* 상호는 보내지 않는다 — 서버가 사업자번호로 다시 확인해 정한다 */
       const res = await api<{
-        verified: boolean;
-        ntsChecked?: boolean;
+        confirmed: boolean;
         reason?: string;
         company?: { id: string; name: string };
-      }>("/api/companies/verify", {
+      }>("/api/companies/confirm", {
         method: "POST",
-        body: JSON.stringify({ bizNo, name }),
+        body: JSON.stringify({ bizNo: selected.bizNo }),
       });
-      if (!res.verified || !res.company) {
-        /* 미등록·폐업 — 진단을 진행하지 않는다 (v9) */
-        setVerifyNotice({
-          kind: "blocked",
-          message: res.reason ?? "기업 확인에 실패했어요.",
-        });
+      if (!res.confirmed || !res.company) {
+        setVerifyNotice({ kind: "blocked", message: res.reason ?? "기업 확인에 실패했어요." });
         return;
-      }
-      /* 국세청 조회가 안 된 경우 — 확인 보류로 알리고 진단은 계속한다 (v9) */
-      if (res.ntsChecked === false) {
-        setVerifyNotice({
-          kind: "unchecked",
-          message: "국세청 확인이 지금 안 돼요. 확인은 나중에 다시 하고, 진단은 이어서 진행해요.",
-        });
       }
       // 이미 만든 진단이 있으면 재사용, 없으면 생성
       let aid = assessmentId;
@@ -550,21 +476,28 @@ export default function LandingPage() {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              submitSearch();
+              runSearch();
+            }}
+            /* 콤보박스가 Enter를 자기 것으로 삼켜 submit이 오지 않는다 —
+               캡처 단계에서 먼저 받아 검색을 실행한다 */
+            onKeyDownCapture={(e) => {
+              if (e.key !== "Enter") return;
+              e.preventDefault();
+              runSearch();
             }}
             className="relative w-full"
           >
             <Autocomplete
               value={company}
               onValueChange={setCompany}
-              onSelect={pickSuggestion}
-              /* v6: 입력 전에는 드롭다운 미노출. 목록은 백엔드 검색(디렉터리+비즈노) 결과 */
-              items={company.trim() ? suggestions : []}
+              /* 후보를 비워 자동완성 드롭다운을 끈다 — 검색은 버튼·엔터로만 나간다 */
+              items={[]}
+              onSelect={() => {}}
               placeholder={placeholder}
               aria-label="기업명 또는 사업자번호"
               onFocus={() => setTouched(true)}
               leading={<Icons.search size={22} />}
-              /* 숫자만 입력하면 사업자번호 형식으로 맞춘다 — 000-00-00000 (수정요청v9) */
+              /* 숫자만 입력하면 사업자번호 형식으로 맞춘다 — 000-00-00000 */
               formatValue={fmtBizNoInput}
               fieldClassName="ax-field--pill"
               fieldStyle={{ height: 66, paddingLeft: 26, paddingRight: 9, gap: 12 }}
@@ -574,16 +507,84 @@ export default function LandingPage() {
                   type="submit"
                   variant="primary"
                   size="lg"
-                  disabled={!canSubmit}
-                  aria-label="진단 시작"
+                  disabled={company.trim().length < 2 || searching}
+                  aria-label="기업 검색"
                   style={{ borderRadius: "var(--radius-full)", flex: "none", height: 50 }}
                 >
-                  진단 시작
+                  {searching ? "찾는 중" : "기업 찾기"}
                   <Icons.arrow size={16} />
                 </Button>
               }
             />
           </form>
+
+          {searchError && (
+            <p role="alert" className="mt-4 text-center [font:var(--text-caption)] text-[var(--fg-danger)]">
+              {searchError}
+            </p>
+          )}
+
+          {results !== null && (
+            <div className="mt-5">
+              {results.length === 0 ? (
+                <p className="text-center [font:var(--text-body3)] text-ink-3">
+                  검색 결과가 없어요. 상호를 조금 더 정확히 적거나 사업자번호로 찾아 주세요.
+                </p>
+              ) : (
+                <>
+                  <p className="mb-2 [font:var(--text-caption)] text-ink-4">
+                    <span className="[font-family:var(--font-mono)]">{results.length}</span>곳 —
+                    진단할 기업을 선택해 주세요
+                  </p>
+                  <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
+                    {results.map((hit) => (
+                      <li key={hit.bizNo}>
+                        <Card
+                          radius="l"
+                          padded={false}
+                          interactive
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => pickCompany(hit)}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter" && e.key !== " ") return;
+                            e.preventDefault();
+                            pickCompany(hit);
+                          }}
+                          style={{ cursor: "pointer" }}
+                        >
+                          <div className="flex items-center justify-between gap-3 px-4 py-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="truncate [font:var(--text-label-m)] text-ink">
+                                  {hit.name}
+                                </span>
+                                {hit.statusCode === "02" && <Badge tone="warning">휴업</Badge>}
+                                {hit.statusCode !== "01" && hit.statusCode !== "02" && (
+                                  <Badge tone="outline">상태 미확인</Badge>
+                                )}
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap gap-x-3 [font:var(--text-caption)] text-ink-4">
+                                <span className="[font-family:var(--font-mono)]">
+                                  사업자 {fmtBizNo(hit.bizNo)}
+                                </span>
+                                {hit.corpRegNo && (
+                                  <span className="[font-family:var(--font-mono)]">
+                                    법인 {fmtCorpRegNo(hit.corpRegNo)}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <Icons.chevronRight size={16} />
+                          </div>
+                        </Card>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -602,8 +603,7 @@ export default function LandingPage() {
                 overflowWrap: "anywhere",
               }}
             >
-              {/* 기업명 우선 표시 — 사업자번호로 검색해도 조회된 기업명을 보여준다 */}
-              {resolved === null ? "…" : resolved.name || company.trim()}
+              {selected?.name ?? company.trim()}
             </div>
             <div
               style={{
@@ -612,7 +612,8 @@ export default function LandingPage() {
                 color: "var(--fg-tertiary)",
               }}
             >
-              {resolved?.bizNo ? `사업자번호 ${fmtBizNo(resolved.bizNo)}` : ""}
+              {selected ? `사업자번호 ${fmtBizNo(selected.bizNo)}` : ""}
+              {selected?.corpRegNo ? ` · 법인번호 ${fmtCorpRegNo(selected.corpRegNo)}` : ""}
             </div>
             {verifyError && (
               <p
