@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Badge, Card, Input } from "@/components/ui";
+import { Badge, Button, Card, Input } from "@/components/ui";
 import { SortableTable, type Column } from "@/components/admin/SortableTable";
 import { api } from "@/lib/api";
 
@@ -26,11 +26,20 @@ function providerLabel(u: AdminUser): string {
   return labels.length ? [...new Set(labels)].join(" · ") : "—";
 }
 
+/* 권한 탭 — 게스트가 목록을 채우면 관리자·일반 계정이 묻힌다 */
+const ROLE_TABS: { key: string; label: string; match: (u: AdminUser) => boolean }[] = [
+  { key: "all", label: "전체", match: () => true },
+  { key: "admin", label: "관리자", match: (u) => u.role === "admin" },
+  { key: "user", label: "일반", match: (u) => u.role !== "admin" && !u.isAnonymous },
+  { key: "guest", label: "체험", match: (u) => u.isAnonymous },
+];
+
 /** 사용자 관리 — 가입 사용자 실목록 (GET /api/admin/users) */
 export default function AdminUsersPage() {
   const [items, setItems] = useState<AdminUser[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [roleTab, setRoleTab] = useState("all");
 
   useEffect(() => {
     api<{ items: AdminUser[] }>("/api/admin/users")
@@ -40,11 +49,10 @@ export default function AdminUsersPage() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return items ?? [];
-    return (items ?? []).filter(
-      (u) => u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q),
-    );
-  }, [items, search]);
+    return (items ?? [])
+      .filter((u) => ROLE_TABS.find((t) => t.key === roleTab)?.match(u) ?? true)
+      .filter((u) => !q || u.email.toLowerCase().includes(q) || u.name.toLowerCase().includes(q));
+  }, [items, search, roleTab]);
 
   const columns: Column<AdminUser>[] = [
     {
@@ -113,13 +121,30 @@ export default function AdminUsersPage() {
         가입 사용자 목록 · 권한 · 상태
       </p>
 
-      <div style={{ maxWidth: 420, marginBottom: 16 }}>
-        <Input
-          placeholder="이메일 또는 이름 검색"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          aria-label="사용자 검색"
-        />
+      <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          {ROLE_TABS.map((t) => {
+            const count = (items ?? []).filter(t.match).length;
+            return (
+              <Button
+                key={t.key}
+                variant={roleTab === t.key ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setRoleTab(t.key)}
+              >
+                {t.label} {count}
+              </Button>
+            );
+          })}
+        </div>
+        <div style={{ flex: 1, minWidth: 220, maxWidth: 420 }}>
+          <Input
+            placeholder="이메일 또는 이름 검색"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="사용자 검색"
+          />
+        </div>
       </div>
 
       <Card radius="xl" padded={false}>

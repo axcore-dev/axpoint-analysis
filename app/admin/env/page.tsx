@@ -1,35 +1,35 @@
 "use client";
 
-import { useState } from "react";
-import { Badge, Button, Card } from "@/components/ui";
-import { ManagedModal } from "@/components/admin/ManagedModal";
+import { Badge, Card } from "@/components/ui";
 
 /**
  * 환경 관리 — 서비스가 쓰는 환경 변수 키 목록 (키 이름만 표시, 값은 어디에도 노출하지 않음).
- * 값 변경·연동 동작은 API 연동 전까지 "개별 관리 중" 팝업.
+ * 외부 API 키는 여기 없다 — 어드민 '외부 연동'에서 등록·교체한다.
  */
 const KEY_GROUPS: { group: string; keys: { name: string; desc: string }[] }[] = [
-  {
-    group: "AI",
-    keys: [{ name: "OPENAI_API_KEY", desc: "문서 분류·문항 판정·서사 생성·스캔 텍스트 추출" }],
-  },
   {
     group: "인증·메일",
     keys: [
       { name: "BETTER_AUTH_SECRET", desc: "세션·토큰 서명 비밀키" },
-      { name: "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET", desc: "구글 소셜 로그인 OAuth" },
-      { name: "RESEND_API_KEY", desc: "회원가입 인증 메일 발송" },
+      { name: "BETTER_AUTH_URL", desc: "인증 콜백 기준 URL" },
+      { name: "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET", desc: "구글 소셜 로그인 OAuth (기동 시 조립 — 런타임 교체 불가)" },
       { name: "AUTH_EMAIL_FROM", desc: "인증 메일 발신 주소" },
     ],
   },
   {
-    group: "외부 데이터",
+    group: "외부 연동 키 저장소",
     keys: [
-      { name: "BIZNO_API_KEY", desc: "기업명 검색 자동완성" },
-      { name: "NTS_API_KEY", desc: "국세청 사업자 상태 조회" },
-      { name: "DART_API_KEY", desc: "전자공시 프로필·재무 교차검증" },
-      { name: "KIPRIS_API_KEY", desc: "특허정보 교차검증" },
-      { name: "EMPLOYMENT_API_KEY", desc: "고용정보 교차검증 (도입 보류)" },
+      {
+        name: "ADMIN_ENCRYPTION_KEY",
+        desc: "외부 연동에 등록한 API 키의 암호화 키 (AES-256-GCM) — 없으면 키 저장이 막힌다",
+      },
+    ],
+  },
+  {
+    group: "AI 호출 옵션",
+    keys: [
+      { name: "OPENAI_MODEL", desc: "사용 모델 (기본 gpt-4o-mini)" },
+      { name: "OPENAI_TIMEOUT_MS", desc: "응답 대기 상한 (기본 90000)" },
     ],
   },
   {
@@ -44,8 +44,6 @@ const KEY_GROUPS: { group: string; keys: { name: string; desc: string }[] }[] = 
 ];
 
 export default function AdminEnvPage() {
-  const [managed, setManaged] = useState(false);
-
   return (
     <section style={{ maxWidth: 1040 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
@@ -110,16 +108,11 @@ export default function AdminEnvPage() {
                 >
                   {desc}
                 </span>
-                <Button variant="utility" size="sm" onClick={() => setManaged(true)}>
-                  관리
-                </Button>
               </div>
             ))}
           </Card>
         ))}
       </div>
-
-      <ManagedModal open={managed} onClose={() => setManaged(false)} />
     </section>
   );
 }

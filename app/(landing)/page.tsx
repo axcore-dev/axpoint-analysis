@@ -32,7 +32,7 @@ type Phase = "search" | "confirm" | "upload" | "systems";
 const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 
 /** 플레이스홀더 타이핑 애니메이션 문구 (수정요청v9) */
-const TYPING_PHRASES = ["(주)에이엑스 코어", "123-45-67890"];
+const TYPING_PHRASES = ["(주)에이엑스코어", "123-45-67890"];
 const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
 type RequiredDocs = {

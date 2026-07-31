@@ -7,20 +7,19 @@ import { api } from "@/lib/api";
 /**
  * 외부 연동 — API 키 등록·테스트 (어드민)
  * 값은 서버가 AES-256-GCM으로 저장하고 응답은 항상 마스킹(앞 4자)이다. 평문 조회는 없다.
- * 키를 등록하지 않은 서비스는 서버 env 값으로 동작한다(폴백) — 등록은 선택 사항.
+ * 키는 여기 등록한 값만 쓴다 — 서버 env 폴백은 없으므로 미등록 서비스는 동작하지 않는다.
  */
 type Integration = {
   service: string;
   label: string;
   desc: string;
-  keyLabel: string | null;
+  group: "data" | "ai";
+  keyLabel: string;
   secretLabel: string | null;
   note: string | null;
   keyMasked: string | null;
   secretMasked: string | null;
-  envSet: boolean;
   corrupted: boolean;
-  testable: boolean;
   updatedAt: string | null;
 };
 
@@ -105,8 +104,130 @@ export default function AdminIntegrationsPage() {
     }
   };
 
+  const renderCard = (svc: Integration) => {
+    const dbSet = svc.keyMasked !== null;
+    const result = testResult[svc.service];
+    return (
+      <Card key={svc.service} radius="xl" padded={false}>
+        <div style={{ padding: "16px 20px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+              {svc.label}
+            </span>
+            {svc.corrupted ? (
+              <Badge tone="warning">복호화 오류 — 재등록 필요</Badge>
+            ) : dbSet ? (
+              <Badge tone="success">등록됨</Badge>
+            ) : (
+              <Badge tone="outline">미설정</Badge>
+            )}
+          </div>
+          <p style={{ margin: "4px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+            {svc.desc}
+            {svc.note ? ` · ${svc.note}` : ""}
+          </p>
+
+          <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <span
+                style={{
+                  font: "var(--text-caption)",
+                  color: "var(--fg-tertiary)",
+                  minWidth: 90,
+                  flex: "none",
+                }}
+              >
+                {svc.keyLabel}
+              </span>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <Input
+                  value={keyInput[svc.service] ?? ""}
+                  onChange={(e) => setKeyInput((p) => ({ ...p, [svc.service]: e.target.value }))}
+                  placeholder={dbSet ? `${svc.keyMasked} — 새 값 입력 시 교체` : "키 입력"}
+                  aria-label={`${svc.label} ${svc.keyLabel}`}
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            {svc.secretLabel && (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <span
+                  style={{
+                    font: "var(--text-caption)",
+                    color: "var(--fg-tertiary)",
+                    minWidth: 90,
+                    flex: "none",
+                  }}
+                >
+                  {svc.secretLabel}
+                </span>
+                <div style={{ flex: 1, minWidth: 200 }}>
+                  <Input
+                    value={secretInput[svc.service] ?? ""}
+                    onChange={(e) =>
+                      setSecretInput((p) => ({ ...p, [svc.service]: e.target.value }))
+                    }
+                    placeholder={
+                      svc.secretMasked ? `${svc.secretMasked} — 새 값 입력 시 교체` : "시크릿 입력"
+                    }
+                    aria-label={`${svc.label} ${svc.secretLabel}`}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={
+                  !encryptionReady ||
+                  busy === svc.service ||
+                  !(keyInput[svc.service]?.trim() || secretInput[svc.service]?.trim())
+                }
+                onClick={() => save(svc)}
+              >
+                저장
+              </Button>
+              <Button
+                variant="utility"
+                size="sm"
+                disabled={busy === svc.service}
+                onClick={() => runTest(svc)}
+              >
+                {busy === svc.service ? "확인 중" : "테스트"}
+              </Button>
+              {dbSet && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy === svc.service}
+                  onClick={() => removeKey(svc)}
+                >
+                  등록 키 삭제
+                </Button>
+              )}
+              {result && (
+                <span
+                  style={{
+                    font: "var(--text-caption)",
+                    color: result.ok ? "var(--fg-success, var(--fg-secondary))" : "var(--fg-danger)",
+                  }}
+                >
+                  {result.ok ? "✓" : "✕"} {result.message}
+                  {result.latencyMs !== undefined ? ` · ${result.latencyMs}ms` : ""}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </Card>
+    );
+  };
+
   return (
-    <section style={{ maxWidth: 1040 }}>
+    <section style={{ maxWidth: 1160 }}>
       <h1
         style={{
           margin: "0 0 6px",
@@ -125,7 +246,7 @@ export default function AdminIntegrationsPage() {
         <Card radius="l" style={{ marginBottom: 16, borderColor: "var(--line-warning, var(--line-default))" }}>
           <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
             서버에 암호화 키(<code style={{ fontFamily: "var(--font-mono)" }}>ADMIN_ENCRYPTION_KEY</code>)가
-            없어 키 저장이 비활성 상태예요. env 폴백으로는 정상 동작해요.
+            없어 키 저장이 비활성 상태예요. 키를 등록할 수 없으면 외부 연동 기능도 동작하지 않아요.
           </p>
         </Card>
       )}
@@ -141,138 +262,26 @@ export default function AdminIntegrationsPage() {
           <Loader />
         </div>
       ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {items.map((svc) => {
-            const dbSet = svc.keyMasked !== null;
-            const result = testResult[svc.service];
-            return (
-              <Card key={svc.service} radius="xl" padded={false}>
-                <div style={{ padding: "16px 20px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                    <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                      {svc.label}
-                    </span>
-                    {svc.corrupted ? (
-                      <Badge tone="warning">복호화 오류 — 재등록 필요</Badge>
-                    ) : dbSet ? (
-                      <Badge tone="success">등록됨</Badge>
-                    ) : svc.envSet ? (
-                      <Badge tone="neutral">env 사용 중</Badge>
-                    ) : svc.keyLabel ? (
-                      <Badge tone="outline">미설정</Badge>
-                    ) : (
-                      <Badge tone="outline">출처 미정</Badge>
-                    )}
-                  </div>
-                  <p style={{ margin: "4px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                    {svc.desc}
-                    {svc.note ? ` · ${svc.note}` : ""}
-                  </p>
-
-                  {svc.keyLabel && (
-                    <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                        <span
-                          style={{
-                            font: "var(--text-caption)",
-                            color: "var(--fg-tertiary)",
-                            minWidth: 90,
-                            flex: "none",
-                          }}
-                        >
-                          {svc.keyLabel}
-                        </span>
-                        <div style={{ flex: 1, minWidth: 220 }}>
-                          <Input
-                            value={keyInput[svc.service] ?? ""}
-                            onChange={(e) =>
-                              setKeyInput((p) => ({ ...p, [svc.service]: e.target.value }))
-                            }
-                            placeholder={dbSet ? `${svc.keyMasked} — 새 값 입력 시 교체` : "키 입력"}
-                            aria-label={`${svc.label} ${svc.keyLabel}`}
-                            autoComplete="off"
-                          />
-                        </div>
-                      </div>
-                      {svc.secretLabel && (
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                          <span
-                            style={{
-                              font: "var(--text-caption)",
-                              color: "var(--fg-tertiary)",
-                              minWidth: 90,
-                              flex: "none",
-                            }}
-                          >
-                            {svc.secretLabel}
-                          </span>
-                          <div style={{ flex: 1, minWidth: 220 }}>
-                            <Input
-                              value={secretInput[svc.service] ?? ""}
-                              onChange={(e) =>
-                                setSecretInput((p) => ({ ...p, [svc.service]: e.target.value }))
-                              }
-                              placeholder={
-                                svc.secretMasked ? `${svc.secretMasked} — 새 값 입력 시 교체` : "시크릿 입력"
-                              }
-                              aria-label={`${svc.label} ${svc.secretLabel}`}
-                              autoComplete="off"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={
-                            !encryptionReady ||
-                            busy === svc.service ||
-                            !(keyInput[svc.service]?.trim() || secretInput[svc.service]?.trim())
-                          }
-                          onClick={() => save(svc)}
-                        >
-                          저장
-                        </Button>
-                        {svc.testable && (
-                          <Button
-                            variant="utility"
-                            size="sm"
-                            disabled={busy === svc.service}
-                            onClick={() => runTest(svc)}
-                          >
-                            {busy === svc.service ? "확인 중" : "테스트"}
-                          </Button>
-                        )}
-                        {dbSet && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            disabled={busy === svc.service}
-                            onClick={() => removeKey(svc)}
-                          >
-                            등록 키 삭제
-                          </Button>
-                        )}
-                        {result && (
-                          <span
-                            style={{
-                              font: "var(--text-caption)",
-                              color: result.ok ? "var(--fg-success, var(--fg-secondary))" : "var(--fg-danger)",
-                            }}
-                          >
-                            {result.ok ? "✓" : "✕"} {result.message}
-                            {result.latencyMs !== undefined ? ` · ${result.latencyMs}ms` : ""}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            );
-          })}
+        <div
+          style={{
+            display: "grid",
+            gap: 24,
+            gridTemplateColumns: "minmax(0, 1fr) minmax(0, 360px)",
+            alignItems: "start",
+          }}
+        >
+          <div style={{ display: "grid", gap: 12 }}>
+            <h2 style={{ margin: 0, font: "var(--text-label-m)", color: "var(--fg-secondary)" }}>
+              데이터·메일
+            </h2>
+            {items.filter((s) => s.group === "data").map(renderCard)}
+          </div>
+          <div style={{ display: "grid", gap: 12 }}>
+            <h2 style={{ margin: 0, font: "var(--text-label-m)", color: "var(--fg-secondary)" }}>
+              AI API KEY
+            </h2>
+            {items.filter((s) => s.group === "ai").map(renderCard)}
+          </div>
         </div>
       )}
     </section>
