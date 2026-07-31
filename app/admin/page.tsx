@@ -85,7 +85,7 @@ export default function AdminDashboardPage() {
   ];
 
   return (
-    <section style={{ maxWidth: 1040 }}>
+    <section style={{ maxWidth: 1440 }}>
       <h1
         style={{
           margin: "0 0 6px",

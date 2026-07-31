@@ -6,10 +6,10 @@ import type { ReactNode } from "react";
 import { useAuth } from "@/components/auth/AuthContext";
 import { Button, Card, Icons, type IconName } from "@/components/ui";
 
-/** 어드민 내비게이션 — 대시보드 · 사용자 관리 · 진단 이력 · 외부 연동 · 환경 관리 */
+/** 어드민 내비게이션 — 대시보드 · 회원 관리 · 진단 이력 · 외부 연동 · 환경 관리 */
 const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "/admin", label: "대시보드", icon: "gauge" },
-  { path: "/admin/users", label: "사용자 관리", icon: "user" },
+  { path: "/admin/users", label: "회원 관리", icon: "user" },
   { path: "/admin/analyses", label: "진단 이력", icon: "clipboard" },
   { path: "/admin/integrations", label: "외부 연동", icon: "globe" },
   { path: "/admin/env", label: "환경 관리", icon: "plug" },

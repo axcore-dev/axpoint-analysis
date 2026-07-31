@@ -1,6 +1,6 @@
 "use client";
 
-import { Badge, Card } from "@/components/ui";
+import { Card } from "@/components/ui";
 
 /**
  * 환경 관리 — 서비스가 쓰는 환경 변수 키 목록 (키 이름만 표시, 값은 어디에도 노출하지 않음).
@@ -35,9 +35,11 @@ const KEY_GROUPS: { group: string; keys: { name: string; desc: string }[] }[] = 
   {
     group: "인프라",
     keys: [
-      { name: "DATABASE_URL", desc: "PostgreSQL 접속" },
+      { name: "DATABASE_URL", desc: "PostgreSQL 접속 문자열" },
+      { name: "POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB", desc: "DB 컨테이너 계정 (compose가 읽는다)" },
       { name: "REDIS_URL", desc: "작업 큐(BullMQ)" },
-      { name: "MINIO_ACCESS_KEY / MINIO_SECRET_KEY", desc: "업로드 원본 저장소" },
+      { name: "MINIO_ACCESS_KEY / MINIO_SECRET_KEY", desc: "업로드 원본 저장소 접근" },
+      { name: "MINIO_ROOT_USER / MINIO_ROOT_PASSWORD", desc: "MinIO 컨테이너 관리자 계정 (compose가 읽는다)" },
       { name: "FRONT_ORIGIN", desc: "CORS·신뢰 출처 (콤마 목록)" },
     ],
   },
@@ -45,7 +47,7 @@ const KEY_GROUPS: { group: string; keys: { name: string; desc: string }[] }[] = 
 
 export default function AdminEnvPage() {
   return (
-    <section style={{ maxWidth: 1040 }}>
+    <section style={{ maxWidth: 1440 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
         <h1
           style={{
@@ -57,7 +59,6 @@ export default function AdminEnvPage() {
         >
           환경 관리
         </h1>
-        <Badge tone="neutral">API 연동 예정</Badge>
       </div>
       <p style={{ margin: "0 0 24px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
         서비스 환경 변수 키 목록 — 값은 표시하지 않음
