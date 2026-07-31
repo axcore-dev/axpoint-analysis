@@ -7,8 +7,9 @@ import { NextResponse, type NextRequest } from "next/server";
 export function proxy(request: NextRequest) {
   const host = request.headers.get("host") ?? "";
   const { pathname } = request.nextUrl;
-  // /auth는 사이트 공용 로그인 화면 — 어드민 호스트에서도 그대로 열어야 로그인이 가능하다
-  if (host.startsWith("admin.") && !pathname.startsWith("/admin") && !pathname.startsWith("/auth")) {
+  /* 어드민 호스트에는 사이트 화면을 노출하지 않는다 — 로그인도 /admin/login 전용 화면을 쓴다
+     (예전엔 /auth를 열어 뒀는데, 회원가입·체험하기가 그대로 보이는 사이트 로그인이 떴다) */
+  if (host.startsWith("admin.") && !pathname.startsWith("/admin")) {
     const url = request.nextUrl.clone();
     url.pathname = pathname === "/" ? "/admin" : `/admin${pathname}`;
     return NextResponse.rewrite(url);

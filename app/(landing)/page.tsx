@@ -306,6 +306,16 @@ export default function LandingPage() {
 
   const canSubmit = company.trim().length >= 1;
 
+  /* 다시 검색 — 입력창·자동완성 후보를 비우고 처음 상태로 돌린다.
+     이전 검색어가 남아 있으면 새 기업을 찾는 흐름에서 그대로 확정돼 버린다 */
+  const backToSearch = () => {
+    setCompany("");
+    setSuggestions([]);
+    setVerifyError(null);
+    update({ companyInput: "" });
+    setPhase("search");
+  };
+
   const submitSearch = () => {
     if (!canSubmit) return;
     /* 검색 기업을 즉시 저장 — 로그인 왕복에도 기업 확인 단계로 그대로 전달 (v6 버그 수정) */
@@ -643,7 +653,7 @@ export default function LandingPage() {
             <Button variant="primary" size="lg" full disabled={verifying} onClick={confirmCompany}>
               {verifying ? "확인하고 있어요" : "맞아요, 계속할게요"}
             </Button>
-            <Button variant="ghost" size="md" full onClick={() => setPhase("search")}>
+            <Button variant="ghost" size="md" full onClick={backToSearch}>
               다시 검색
             </Button>
           </div>
@@ -1010,7 +1020,7 @@ export default function LandingPage() {
               full
               onClick={() => {
                 setVerifyNotice(null);
-                setPhase("search");
+                backToSearch();
               }}
             >
               다시 검색

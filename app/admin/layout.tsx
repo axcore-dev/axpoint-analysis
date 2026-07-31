@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import type { ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, type ReactNode } from "react";
 import { useAuth } from "@/components/auth/AuthContext";
-import { Button, Card, Icons, type IconName } from "@/components/ui";
+import { Button, Icons, type IconName } from "@/components/ui";
 
 /** 어드민 내비게이션 — 대시보드 · 회원 관리 · 진단 이력 · 외부 연동 · 환경 관리 */
 const NAV: { path: string; label: string; icon: IconName }[] = [
@@ -17,46 +17,22 @@ const NAV: { path: string; label: string; icon: IconName }[] = [
 
 /**
  * 어드민 셸 — 전용 헤더 + 좌측 내비 + 콘텐츠.
- * 접근 가드: 세션 없음 → 로그인 안내, role !== 'admin' → 권한 안내.
+ * 접근 가드: 관리자가 아니면 어드민 전용 로그인(`/admin/login`)으로 보낸다.
+ * 로그인 화면 자체는 셸 밖에서 그린다 — 가드가 자기 자신을 막으면 안 된다.
  */
 export default function AdminLayout({ children }: { children: ReactNode }) {
   const { user, hydrated, logout } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
+  const isLoginPage = pathname === "/admin/login";
+  const allowed = user?.role === "admin";
 
-  if (!hydrated) return null;
+  useEffect(() => {
+    if (hydrated && !allowed && !isLoginPage) router.replace("/admin/login");
+  }, [hydrated, allowed, isLoginPage, router]);
 
-  if (!user || user.role !== "admin") {
-    return (
-      <section
-        style={{
-          padding: "var(--space-20) var(--gutter)",
-          display: "flex",
-          justifyContent: "center",
-        }}
-      >
-        <Card radius="2xl" style={{ maxWidth: 520, textAlign: "center" }}>
-          <h2
-            style={{
-              margin: "0 0 10px",
-              font: "var(--text-h4)",
-              letterSpacing: "var(--track-heading)",
-              color: "var(--fg-primary)",
-            }}
-          >
-            관리자 콘솔
-          </h2>
-          <p style={{ margin: "0 0 20px", font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-            {user
-              ? "관리자 권한이 있는 계정으로 로그인해 주세요."
-              : "관리자 계정으로 로그인한 뒤에 이용할 수 있어요."}
-          </p>
-          <Button variant="primary" href="/auth/login">
-            로그인
-          </Button>
-        </Card>
-      </section>
-    );
-  }
+  if (isLoginPage) return <>{children}</>;
+  if (!hydrated || !allowed) return null;
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: "var(--bg-primary)" }}>

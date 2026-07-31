@@ -24,10 +24,23 @@ type SourceCard = {
   summaryStatus: string | null;
 };
 
+/** 화면 상단 기업 개요 — 대표·소재지는 DART 기업개황에서 채워지므로 없을 수 있다 */
+type CompanyBrief = {
+  name: string;
+  bizNo: string | null;
+  ceoName: string | null;
+  address: string | null;
+};
+
 type Snapshot = {
+  company: CompanyBrief | null;
   items: SourceCard[];
   progress: { settled: number; total: number; running: boolean };
 };
+
+/** 사업자번호 000-00-00000 표기 */
+const formatBizNo = (v: string) =>
+  /^\d{10}$/.test(v) ? `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}` : v;
 
 const STATUS_TEXT: Record<SourceCard["status"], string> = {
   pending: "대기",
@@ -95,6 +108,28 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
             : `${collected}건 수집`}
         </span>
       </div>
+
+      {snap.company && (
+        <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-[var(--radius-l)] bg-surface-3 px-4 py-3 sm:grid-cols-3">
+          {[
+            { label: "사업자번호", value: snap.company.bizNo && formatBizNo(snap.company.bizNo), mono: true },
+            { label: "대표", value: snap.company.ceoName },
+            { label: "사업지 주소", value: snap.company.address },
+          ].map(({ label, value, mono }) => (
+            <div key={label} className="flex min-w-0 gap-2">
+              <dt className="flex-none [font:var(--text-caption)] text-ink-4">{label}</dt>
+              <dd
+                className={`m-0 min-w-0 truncate [font:var(--text-caption)] text-ink-2 ${
+                  mono ? "[font-family:var(--font-mono)]" : ""
+                }`}
+                title={value || undefined}
+              >
+                {value || "—"}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {snap.items.map((s) => {
