@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Card, Icons, Loader, Modal } from "@/components/ui";
 import { api, API_URL } from "@/lib/api";
 
@@ -19,6 +19,9 @@ type SourceCard = {
   items: PublicItem[];
   note: string | null;
   error: string | null;
+  /** AI 요약 — 수집 직후 워커가 생성. 없으면 요약 탭을 숨긴다 */
+  summary: string[] | null;
+  summaryStatus: string | null;
 };
 
 type Snapshot = {
@@ -37,13 +40,11 @@ const STATUS_TEXT: Record<SourceCard["status"], string> = {
 export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [opened, setOpened] = useState<SourceCard | null>(null);
-  const [tab, setTab] = useState<"items" | "source">("items");
-  const startedRef = useRef(false);
+  const [tab, setTab] = useState<"summary" | "items" | "source">("items");
 
   useEffect(() => {
-    if (!assessmentId || startedRef.current) return;
-    startedRef.current = true;
-
+    if (!assessmentId) return;
+    /* 재마운트(StrictMode 포함) 시 다시 시작해도 안전하다 — 서버가 jobId로 중복 수집을 막는다 */
     let stream: EventSource | null = null;
     /* POST 응답을 기다리는 사이에 화면을 떠날 수 있다 — 그때 스트림을 새로 열지 않는다 */
     let cancelled = false;
@@ -109,13 +110,13 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
               tabIndex={clickable ? 0 : undefined}
               onClick={() => {
                 if (!clickable) return;
-                setTab("items");
+                setTab(s.summary?.length ? "summary" : "items");
                 setOpened(s);
               }}
               onKeyDown={(e) => {
                 if (!clickable || (e.key !== "Enter" && e.key !== " ")) return;
                 e.preventDefault();
-                setTab("items");
+                setTab(s.summary?.length ? "summary" : "items");
                 setOpened(s);
               }}
               style={{ cursor: clickable ? "pointer" : "default" }}
@@ -147,21 +148,37 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
         {opened && (
           <div>
             <div className="mb-3 flex gap-1 rounded-[var(--radius-m)] bg-surface-3 p-1">
-              {(["items", "source"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setTab(t)}
-                  className={`h-8 flex-1 cursor-pointer rounded-[9px] border-0 [font:var(--text-label-s)] [font-family:var(--font-sans)] transition-colors ${
-                    tab === t ? "bg-surface text-ink shadow-[var(--shadow-1)]" : "bg-transparent text-ink-3"
-                  }`}
-                >
-                  {t === "items" ? `목록 ${opened.itemCount}건` : "출처"}
-                </button>
-              ))}
+              {([...(opened.summary?.length ? ["summary"] : []), "items", "source"] as const).map(
+                (t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTab(t as "summary" | "items" | "source")}
+                    className={`h-8 flex-1 cursor-pointer rounded-[9px] border-0 [font:var(--text-label-s)] [font-family:var(--font-sans)] transition-colors ${
+                      tab === t ? "bg-surface text-ink shadow-[var(--shadow-1)]" : "bg-transparent text-ink-3"
+                    }`}
+                  >
+                    {t === "summary" ? "요약" : t === "items" ? `원본 ${opened.itemCount}건` : "출처"}
+                  </button>
+                ),
+              )}
             </div>
 
-            {tab === "items" ? (
+            {tab === "summary" && opened.summary?.length ? (
+              <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
+                {opened.summary.map((line, i) => (
+                  <li key={i} className="flex gap-2 [font:var(--text-body3)] text-ink-2">
+                    <span aria-hidden className="flex-none text-ink-4">
+                      •
+                    </span>
+                    <span className="min-w-0">{line}</span>
+                  </li>
+                ))}
+                <li className="mt-1 [font:var(--text-caption)] text-ink-4">
+                  AI가 수집 원본을 정리한 요약이에요 — 원문은 원본 탭에서 확인해 주세요.
+                </li>
+              </ul>
+            ) : tab === "items" ? (
               <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
                 {opened.items.map((it, i) => (
                   <li
