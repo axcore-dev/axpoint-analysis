@@ -8,7 +8,8 @@
 
 - **프레임워크**: Next.js 16 (App Router) + React 19 + TypeScript (strict)
 - **스타일**: CSS 변수 기반 디자인 토큰(`app/globals.css`) + Tailwind CSS v4
-- **서체**: Pretendard Variable 1개 (`@font-face`에 `font-weight: 45 920` 축 범위 선언)
+- **서체**: Pretendard Variable woff2 1개 (`@font-face`에 `font-weight: 45 920` 축 범위 선언,
+  `layout.tsx`에서 preload). 축 범위를 빼면 브라우저가 굵은 글씨를 합성해 뭉갠다
 - **UI**: 자체 프리미티브(`components/ui`) + Radix UI 일부(dialog/tabs/tooltip/collapsible)
 - **PDF**: html2canvas + jsPDF (`lib/pdf.ts`)
 - **백엔드(예정)**: 구버전은 Contabo 서버 Docker(FastAPI + Celery + Postgres + Redis + MinIO). 리뉴얼 설계는 `docs/작업 지시/`, `docs/DB(new)/` 참고 (docs는 로컬 전용)
@@ -66,7 +67,7 @@ lib/                API 클라이언트 + 순수 계산 로직
 ├── roi.ts          선택 과제 → 연 효과·회수 기간
 └── pdf.ts          ReportDocument DOM → A4 PDF
 
-public/             로고, Pretendard Variable 폰트
+public/             로고, fonts/PretendardVariable.woff2 (본문 서체 — 유일한 웹폰트)
 docs/               기획·수정요청·참고자료·작업 로그 (.gitignore — git 미추적, 로컬 전용)
 ```
 

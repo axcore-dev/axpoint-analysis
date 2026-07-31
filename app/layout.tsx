@@ -20,6 +20,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ko">
+      <head>
+        {/* 본문 서체는 CSS를 다 읽어야 요청이 나간다 — 2MB짜리라 그만큼 늦게 뜬다.
+            문서와 함께 내려받도록 미리 알린다. crossOrigin은 폰트 요청이 CORS 방식이라 필수 */}
+        <link
+          rel="preload"
+          href="/fonts/PretendardVariable.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body>
         <AuthProvider>
           <DiagnosisProvider>{children}</DiagnosisProvider>

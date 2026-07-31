@@ -14,12 +14,15 @@
    font-weight에 축의 범위(45~920)를 적는다 — 이 범위를 적어야 브라우저가 축을 보간해
    타입 램프의 400·600·700을 실제 굵기로 그린다. 범위를 빼면 400짜리 정적 폰트로 보고
    굵은 글씨를 가짜 볼드(합성)로 뭉개서 그린다.
-   local()을 먼저 두어 기기에 이미 설치된 경우 내려받지 않는다. */
+   local()을 먼저 두어 기기에 이미 설치된 경우 내려받지 않는다.
+   웹 전용 woff2를 쓴다 — 같은 글자를 담고도 ttf보다 훨씬 작다(2.0MB). 축을 가진 woff2라도
+   format은 "woff2"로 적는다. 예전에 쓰던 "woff2-variations"는 모르는 브라우저가 통째로
+   건너뛰어 오히려 폰트가 빠진다. */
 @font-face {
   font-family: "Pretendard";
   src:
     local("Pretendard Variable"),
-    url("/fonts/PretendardVariable.ttf") format("truetype");
+    url("/fonts/PretendardVariable.woff2") format("woff2");
   font-weight: 45 920;
   font-style: normal;
   font-display: swap;
