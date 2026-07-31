@@ -39,7 +39,7 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
 │   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
 │   ├── auth/       로그인(이메일 인증 착지 화면 겸용) / 회원가입
 │   └── mypage/     내 정보 / 내 정보 수정
-└── admin/          관리자 콘솔 — 대시보드·사용자·진단 이력·환경 관리
+└── admin/          관리자 콘솔 — 대시보드·사용자·진단 이력·외부 연동(API 키 등록·테스트)·환경 관리
                     role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
 
 proxy.ts            admin.* 호스트 → /admin 리라이트 (/auth는 제외 — 로그인 공용)
