@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { PublicDataSection } from "@/components/flow/PublicDataSection";
+import { WorkflowSection } from "@/components/flow/WorkflowSection";
 import { RouteLoading } from "@/components/flow/RouteLoading";
 import { DIGITAL_LEVELS } from "@/data/rubric/meta";
 import { api } from "@/lib/api";
@@ -233,6 +234,9 @@ export default function CollectPage() {
 
       {/* ── 공개 데이터 수집 — 진입 시 수집 시작, 진행률은 SSE (수정요청v9·v10) ── */}
       {assessmentId && <PublicDataSection assessmentId={assessmentId} />}
+
+      {/* ── 워크플로우 — 표준 정의 전까지 접힌 데모 ── */}
+      <WorkflowSection />
 
       {error && (
         <p style={{ margin: "24px 0 0", font: "var(--text-caption)", color: "var(--fg-danger, #d4380d)" }}>
