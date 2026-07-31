@@ -51,6 +51,9 @@ type SearchHit = {
   corpRegNo: string | null; // 법인등록번호 — 동명 기업 구분용
   statusCode: string | null; // 01 계속 / 02 휴업 / 그 외·null 미확인 (폐업은 서버가 제외)
   status: string | null;
+  /** DART에 같은 사업자번호로 등록된 기업 — 공시·재무를 받아올 수 있다는 뜻 */
+  dart: boolean;
+  region: string | null; // 시·도 + 시·군·구
 };
 
 /** 법인등록번호 표기 — 000000-0000000 */
@@ -536,7 +539,7 @@ export default function LandingPage() {
                     <span className="[font-family:var(--font-mono)]">{results.length}</span>곳 —
                     진단할 기업을 선택해 주세요
                   </p>
-                  <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
+                  <ul className="ax-scrollbar-thin m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0 pr-1">
                     {results.map((hit) => (
                       <li key={hit.bizNo}>
                         <Card
@@ -559,6 +562,7 @@ export default function LandingPage() {
                                 <span className="truncate [font:var(--text-label-m)] text-ink">
                                   {hit.name}
                                 </span>
+                                {hit.dart && <Badge tone="accent">DART</Badge>}
                                 {hit.statusCode === "02" && <Badge tone="warning">휴업</Badge>}
                                 {hit.statusCode !== "01" && hit.statusCode !== "02" && (
                                   <Badge tone="outline">상태 미확인</Badge>
@@ -573,6 +577,7 @@ export default function LandingPage() {
                                     법인 {fmtCorpRegNo(hit.corpRegNo)}
                                   </span>
                                 )}
+                                {hit.region && <span>{hit.region}</span>}
                               </div>
                             </div>
                             <Icons.chevronRight size={16} />
