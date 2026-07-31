@@ -455,15 +455,36 @@ export default function LandingPage() {
     setOtherInput("");
   };
 
+  /** '기타'는 태그 자체가 선택 상태 — 입력창이 열렸거나 직접 입력한 프로그램이 있으면 켜짐 */
+  const otherSelected = otherOpen || otherSystems.length > 0;
+
   /** '없음'은 배타 선택 — 없음을 고르면 나머지 해제, 다른 걸 고르면 없음 해제 */
   const toggleSystem = (name: string) => {
     if (systems.includes(name)) {
       update({ systems: systems.filter((s) => s !== name) });
       return;
     }
-    update({
-      systems: name === "없음" ? ["없음"] : [...systems.filter((s) => s !== "없음"), name],
-    });
+    if (name === "없음") {
+      /* 직접 입력한 프로그램과 입력창도 함께 정리한다 — 없음과 같이 켜져 있으면 안 된다 */
+      setOtherOpen(false);
+      setOtherInput("");
+      update({ systems: ["없음"] });
+      return;
+    }
+    update({ systems: [...systems.filter((s) => s !== "없음"), name] });
+  };
+
+  /** '기타' 토글 — 다시 누르면 입력창을 닫고 직접 입력한 프로그램도 함께 해제한다 */
+  const toggleOther = () => {
+    if (!otherSelected) {
+      setOtherOpen(true);
+      return;
+    }
+    setOtherOpen(false);
+    setOtherInput("");
+    if (otherSystems.length > 0) {
+      update({ systems: systems.filter((s) => SYSTEM_OPTIONS.includes(s)) });
+    }
   };
 
   const startDiagnosis = async () => {
@@ -885,7 +906,7 @@ export default function LandingPage() {
                 </Tag>
               ))}
               {/* 목록에 없는 프로그램을 직접 담는다 (수정요청v9) */}
-              <Tag selected={otherOpen || otherSystems.length > 0} onClick={() => setOtherOpen(true)}>
+              <Tag selected={otherSelected} onClick={toggleOther}>
                 기타
               </Tag>
             </div>
