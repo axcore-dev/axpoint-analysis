@@ -43,6 +43,7 @@ const STATUS_LABEL: Record<string, string> = {
   processing: "분류 중",
   failed: "분류 실패",
   unclassified: "미분류",
+  split: "양식집 · 페이지별 분류", // 묶음 PDF — 페이지가 개별 파일로 분할되어 각각 분류된다
 };
 
 export default function CollectPage() {
