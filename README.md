@@ -2,7 +2,7 @@
 
 중소기업 AX(AI 전환) 진단 플랫폼. 기업 자료를 수집·분석해 6축 채점 기반의 진단 결과와 개선 과제, 로드맵, 보고서를 제공한다.
 
-> 현재 상태: **프론트엔드 데모 완성 단계.** 모든 데이터는 `data/`의 시나리오 더미로 동작하며, 백엔드는 리뉴얼 설계 진행 중이다. 더미데이터 전체가 담긴 데모 버전은 `archive/dummy-data-demo` 브랜치에 보존되어 있다.
+> 현재 상태: **전 화면 실 API 연동.** 백엔드는 `axpoint-analysis-api`(Hono :3001, 쿠키 세션). `data/`의 시나리오 더미는 더 이상 어떤 화면도 참조하지 않는다(정리 대기 — `docs/로직.md` §5). 더미데이터 데모 버전은 `archive/dummy-data-demo` 브랜치에 보존되어 있다.
 
 ## 기술 스택
 
@@ -30,11 +30,15 @@ npm run lint    # ESLint
 ```
 app/                라우트 (App Router, 전 페이지 클라이언트 컴포넌트)
 ├── layout.tsx      문서 골격 + 전역 컨텍스트만 (공용 헤더·푸터는 (site) 몫)
-├── (landing)/      S0 자료 올리기 — 기업 검색 → 확인 → 자료 업로드
+├── (landing)/      S0 자료 올리기 — 기업 검색 → 확인 → 모두 업로드(중앙 드롭존, 업로드 시 AI 분류 없음)
 │                   전용 레이아웃: 진단 스텝 숨김(StepBar showSteps={false}) + 푸터
 ├── (site)/         진단 플로우 공용 레이아웃(StepBar + main + SiteFooter)
-│   ├── collect/    S1 자료 정리 — 공개데이터 수집, HITL 확인, 설문, 워크플로우
-│   ├── result/     S2 진단 결과 — 5축 점수, 8업무영역 등급, 종합 분석
+│   ├── collect/    S1 자료 정리 — 2단계. ① 자료 확인(필수 서류 패널·사용 프로그램 선택·사전 설문 4)
+│   │               → '자료가 충분해요/자료 없이 진행' 게이트에서 분류 시작(POST classify)
+│   │               ② 자료 분류(분류 진행 로그·자료 편집 칸반 팝업·공개데이터 수집·표준 워크플로우·보완 설문)
+│   ├── result/     S2 진단 결과 — 5축 점수, 8업무영역 등급, 표준 워크플로우, 종합 분석
+│   │               판정 중 진행률 프로그레스바(%), 데이터 로딩 스켈레톤, 통계 칩(공개데이터 연동),
+│   │               강등 사유(달성 조건 미충족)·검토 필요(근거 상충) 표시
 │   ├── tasks/      S3 개선 과제 — 과제 카탈로그 탐색·담기
 │   ├── roadmap/    S4 로드맵 — 담은 과제 기반 단계별 타임라인
 │   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
@@ -50,6 +54,9 @@ components/
 ├── admin/          어드민 공용 — SortableTable, 개별 관리 안내 팝업
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
+│                   WorkflowStandard(표준 워크플로우 3행 카드 — collect·result 공용 데이터),
+│                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
+│                   PublicDataSection(공개데이터 수집·SSE), SurveyModal(보완 설문)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM
 
 data/               ★ 더미데이터 계층 = 백엔드 대체물 (API 연동 시 이 계층을 교체)

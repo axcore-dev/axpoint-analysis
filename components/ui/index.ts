@@ -8,6 +8,8 @@ export { Icons, type IconName } from "./icons";
 export { Modal } from "./Modal";
 export { Toast } from "./Toast";
 export { Loader } from "./Loader";
+export { ProgressBar } from "./ProgressBar";
+export { Skeleton } from "./Skeleton";
 export { TermTooltip } from "./Tooltip";
 export { DotStepper, type StepperStep } from "./Stepper";
 export { Autocomplete, type AutocompleteItem } from "./Autocomplete";

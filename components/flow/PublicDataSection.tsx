@@ -132,7 +132,8 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
       )}
 
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-        {snap.items.map((s) => {
+        {/* 자료 많은 순 정렬 — 동률은 카탈로그 순서 유지 (sort는 stable) */}
+        {[...snap.items].sort((a, b) => b.itemCount - a.itemCount).map((s) => {
           const busy = s.status === "pending" || s.status === "running";
           const clickable = s.itemCount > 0;
           return (
@@ -164,7 +165,16 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
                   <Loader style={{ width: 14, height: 14 }} />
                 ) : (
                   <span className="flex flex-none items-center gap-1.5">
-                    {s.status === "failed" && <Badge tone="warning">실패</Badge>}
+                    {s.status === "failed" && (
+                      <span
+                        role="img"
+                        aria-label="수집 실패"
+                        title="수집 실패"
+                        className="flex flex-none text-[var(--fg-warning)]"
+                      >
+                        <Icons.alertCircle size={14} />
+                      </span>
+                    )}
                     {s.status === "skipped" && <Badge tone="outline">보류</Badge>}
                     <span className="[font-family:var(--font-mono)] text-[13px] font-semibold text-ink">
                       {s.itemCount}건

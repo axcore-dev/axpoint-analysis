@@ -12,6 +12,7 @@ import { waitForJudge } from "@/lib/judgeWait";
  */
 type SurveyItem = {
   code: string;
+  kind: string; // primary(사전 설문) / supplement(보완 설문)
   text: string;
   choices: { value: string; label: string }[];
   answer: { choiceValues: string[] } | null;
@@ -22,12 +23,18 @@ export function SurveyModal({
   open,
   onClose,
   onApplied,
+  supplementOnly = false,
 }: {
   assessmentId: string;
   open: boolean;
   onClose: () => void;
   /** 재판정까지 끝난 뒤 — 호출부가 결과를 다시 불러온다 */
   onApplied: () => void;
+  /**
+   * 보완 설문(kind=supplement)만 보여주고, 저장 후 재판정을 걸지 않는다.
+   * 자료 정리(collect) 단계에서 쓴다 — 아직 첫 판정 전이라 submit을 부르면 안 된다.
+   */
+  supplementOnly?: boolean;
 }) {
   const [items, setItems] = useState<SurveyItem[] | null>(null);
   const [picked, setPicked] = useState<Record<string, string>>({});
@@ -39,17 +46,18 @@ export function SurveyModal({
     setError(null);
     api<{ items: SurveyItem[] }>(`/api/assessments/${assessmentId}/surveys`)
       .then(({ items }) => {
-        setItems(items);
+        const list = supplementOnly ? items.filter((i) => i.kind === "supplement") : items;
+        setItems(list);
         setPicked(
           Object.fromEntries(
-            items
+            list
               .filter((i) => i.answer?.choiceValues?.[0] !== undefined)
               .map((i) => [i.code, i.answer!.choiceValues[0]]),
           ),
         );
       })
       .catch((e) => setError(e instanceof Error ? e.message : "설문을 불러오지 못했어요."));
-  }, [open, assessmentId]);
+  }, [open, assessmentId, supplementOnly]);
 
   const submit = async () => {
     if (saving) return;
@@ -65,12 +73,14 @@ export function SurveyModal({
           })),
         }),
       });
-      /* 응답을 반영하려면 다시 판정해야 한다 */
-      await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
-      const outcome = await waitForJudge(assessmentId);
-      if (outcome === "failed") throw new Error("재판정에 실패했어요.");
-      if (outcome === "timeout")
-        throw new Error("재판정이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
+      /* 응답을 반영하려면 다시 판정해야 한다 — 첫 판정 전(collect)에는 저장만 한다 */
+      if (!supplementOnly) {
+        await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
+        const outcome = await waitForJudge(assessmentId);
+        if (outcome === "failed") throw new Error("재판정에 실패했어요.");
+        if (outcome === "timeout")
+          throw new Error("재판정이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
+      }
       onApplied();
       onClose();
     } catch (e) {

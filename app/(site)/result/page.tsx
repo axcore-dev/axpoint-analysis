@@ -3,11 +3,22 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
-import { Badge, Button, Card, DotStepper, Icons, Modal, TermTooltip } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  DotStepper,
+  Icons,
+  Modal,
+  ProgressBar,
+  Skeleton,
+  TermTooltip,
+} from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
-import { RouteLoading } from "@/components/flow/RouteLoading";
 import { SurveyModal } from "@/components/flow/SurveyModal";
+import { WorkflowStandard } from "@/components/flow/WorkflowStandard";
 import { api } from "@/lib/api";
+import { waitForJudge, type JudgeProgress } from "@/lib/judgeWait";
 import { getGlossary } from "@/data/glossary";
 
 /* ============================================================
@@ -62,6 +73,12 @@ type AreaView = {
   evidence: EvidenceItem[];
 };
 
+/** 달성 조건 미충족 강등 사유 — 점수 구간(scoreLevel)보다 낮은 level로 판정된 이유 */
+type CapReasons = { level: number; reasons: string[]; taskNos: number[] };
+
+/** 공개 데이터 수집 현황 — source: news/patent/dart/finance/procurement/employment/rnd/venture/innobiz */
+type PublicStat = { source: string; status: string; itemCount: number; note: string | null };
+
 type ResultPayload = {
   status: string;
   axes: {
@@ -80,7 +97,10 @@ type ResultPayload = {
     estDate: string | null;
     employees: number | null;
     revenueMillion: number | null;
+    /** 재무 데이터가 DART 전자공시로 검증됨 — 헤더 출처 칩 표시 */
+    dartVerified?: boolean;
   } | null;
+  publicStats?: PublicStat[];
   areas: AreaView[];
   judgments: {
     questionCode: string;
@@ -92,12 +112,18 @@ type ResultPayload = {
     axisCode: string;
     anchorCriteria: string | null;
     evidence: EvidenceItem[];
+    /** 근거 상충으로 사람 검토가 필요한 문항 */
+    reviewNeeded?: boolean;
+    reviewReason?: string | null;
   }[];
   benchmarks: { axisCode: string | null; avgScore: string }[];
   result: {
     totalScore: string;
     level: number;
     levelName: string;
+    /** 점수 구간 기준 Lv — 달성 조건 미충족이면 level보다 높을 수 있다 */
+    scoreLevel?: number;
+    capReasons?: CapReasons | null;
     balanceLabel: string | null;
     strengths: string[];
     bottlenecks: string[];
@@ -599,6 +625,7 @@ const normalizeResult = (p: ResultPayload): ResultPayload => ({
   levels: p.levels ?? [],
   benchmarks: p.benchmarks ?? [],
   areas: p.areas ?? [],
+  publicStats: p.publicStats ?? [],
 });
 
 export default function ResultPage() {
@@ -616,13 +643,46 @@ export default function ResultPage() {
   const [surveyOpen, setSurveyOpen] = useState(false);
   /* 사유 보기 팝업 대상 영역 (null이면 닫힘) */
   const [chainArea, setChainArea] = useState<AreaView | null>(null);
+  /* 판정 진행 중 — 완료를 기다리는 동안 진행 현황 프로그레스바를 보여준다 */
+  const [judging, setJudging] = useState(false);
+  const [judgeProgress, setJudgeProgress] = useState<JudgeProgress | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!assessmentId) return;
-    api<ResultPayload>(`/api/assessments/${assessmentId}/result`)
-      .then((p) => setData(normalizeResult(p)))
-      .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
+    let cancelled = false;
+    const load = () =>
+      api<ResultPayload>(`/api/assessments/${assessmentId}/result`)
+        .then((p) => {
+          if (cancelled) return;
+          if (p.status === "judging") {
+            /* 아직 판정 중 — 문항 판정 진행 수를 받아 보여주고, 끝나면 결과를 다시 불러온다 */
+            setJudging(true);
+            void waitForJudge(assessmentId, {
+              isCancelled: () => cancelled,
+              onProgress: setJudgeProgress,
+            }).then((outcome) => {
+              if (cancelled || outcome === "cancelled") return;
+              setJudging(false);
+              if (outcome === "failed") {
+                setError("판정에 실패했어요. 다시 시도해 주세요.");
+              } else if (outcome === "timeout") {
+                setError("판정이 예상보다 오래 걸려요. 잠시 후 마이페이지에서 결과를 확인해 주세요.");
+              } else {
+                void load();
+              }
+            });
+            return;
+          }
+          setData(normalizeResult(p));
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.");
+        });
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, [assessmentId]);
 
   /* 진입 가드 — 자료 정리 미완료 (기존 정책 유지) */
@@ -649,7 +709,66 @@ export default function ResultPage() {
         <p style={{ font: "var(--text-body1)", color: "var(--fg-tertiary)" }}>{error}</p>
       </div>
     );
-  if (!data) return <RouteLoading messages={["진단 결과를 불러오고 있어요"]} />;
+
+  /* 판정 진행 중 — 3-dot 대신 문항 판정 진행 현황 프로그레스바 */
+  if (judging) {
+    const percent =
+      judgeProgress && judgeProgress.total > 0
+        ? Math.round((judgeProgress.judged / judgeProgress.total) * 100)
+        : 0;
+    return (
+      <div
+        className="ax-step-enter"
+        role="status"
+        style={{
+          minHeight: "60vh",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 20,
+          padding: "0 24px",
+          textAlign: "center",
+        }}
+      >
+        <ProgressBar percent={percent} style={{ width: "min(360px, 100%)" }} />
+        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
+          진단 결과를 불러오고 있어요
+        </p>
+      </div>
+    );
+  }
+
+  /* 데이터 로딩 — 페이지 골격 스켈레톤 (헤더 블록 + 카드 그리드 자리) */
+  if (!data)
+    return (
+      <div className="ax-step-enter" style={{ padding: "40px 0 80px" }} role="status">
+        <Inner>
+          <Card radius="2xl" style={{ padding: 28 }}>
+            <Skeleton width={240} height={26} />
+            <Skeleton width={320} height={14} style={{ marginTop: 12 }} />
+            <Skeleton width={280} height={44} style={{ marginTop: 30 }} />
+            <Skeleton width={200} height={14} style={{ marginTop: 12 }} />
+          </Card>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+              gap: 12,
+              marginTop: 24,
+            }}
+          >
+            {Array.from({ length: 6 }, (_, i) => (
+              <Card key={i} radius="l" style={{ padding: "18px 20px" }}>
+                <Skeleton width={120} height={16} />
+                <Skeleton height={12} style={{ marginTop: 12 }} />
+                <Skeleton width="70%" height={12} style={{ marginTop: 8 }} />
+              </Card>
+            ))}
+          </div>
+        </Inner>
+      </div>
+    );
 
   const { areas, result } = data;
   /* 업종 벤치마크 — 축별 평균 + 종합 평균 (없으면 관련 UI 미렌더) */
@@ -706,10 +825,28 @@ export default function ResultPage() {
     sub: i === targetIdx ? "목표 단계" : undefined,
   }));
 
-  /* ---- 통계 칩 — 수집된 값만 (외부 데이터 연동 전까지는 비어 있을 수 있음) ---- */
+  /* ---- 통계 칩 — 기존 연 매출·고용 + 공개 데이터 수집 현황(publicStats) ---- */
+  const statBySource = new Map((data.publicStats ?? []).map((s) => [s.source, s]));
+  /** 수집된 소스만 칩으로 — itemCount 0이어도 '0건'으로 표시한다 */
+  const countChip = (source: string, label: string) => {
+    const s = statBySource.get(source);
+    return s ? { label, value: `${s.itemCount ?? 0}건` } : null;
+  };
+  const hasCertSource = statBySource.has("venture") || statBySource.has("innobiz");
+  const certLabels = [
+    (statBySource.get("venture")?.itemCount ?? 0) > 0 ? "벤처" : null,
+    (statBySource.get("innobiz")?.itemCount ?? 0) > 0 ? "이노비즈" : null,
+  ].filter(Boolean) as string[];
   const companyStats = [
     co?.revenueMillion != null ? { label: "연 매출", value: fmtRevenue(co.revenueMillion) } : null,
     co?.employees != null ? { label: "고용", value: `${co.employees}명` } : null,
+    countChip("patent", "특허"),
+    countChip("rnd", "정부 R&D 과제"),
+    countChip("news", "최근 보도"),
+    countChip("procurement", "조달 실적"),
+    hasCertSource
+      ? { label: "인증", value: certLabels.length > 0 ? certLabels.join(" · ") : "—" }
+      : null,
   ].filter(Boolean) as { label: string; value: string }[];
 
   const sortedAreas = [...areas].sort(
@@ -760,6 +897,25 @@ export default function ResultPage() {
                     {fmtBizNo(co.bizNo)}
                   </span>
                 )}
+                {/* 출처 칩 — 재무 데이터가 DART 전자공시로 검증된 경우 */}
+                {co?.dartVerified && (
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      alignSelf: "center",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: "5px 10px",
+                      borderRadius: "var(--radius-full)",
+                      border: "1px solid var(--line-default)",
+                      font: "var(--text-caption)",
+                      color: "var(--fg-tertiary)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    출처 · DART 전자공시 (재무 데이터)
+                  </span>
+                )}
               </span>
             )}
             {infoParts.length > 0 && (
@@ -793,6 +949,27 @@ export default function ResultPage() {
                     종합 {fmtScore(totalScore)}점 · 판정 {answered}/{totalQ}문항
                     {result.balanceLabel ? ` · ${result.balanceLabel}` : ""}
                   </p>
+                  {/* 강등 사유 — 점수 구간 Lv과 판정 Lv이 다른 이유 */}
+                  {result.capReasons && (
+                    <div style={{ marginTop: 10 }}>
+                      <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-warning)" }}>
+                        점수 구간은 Lv.{result.scoreLevel ?? result.level}이지만 달성 조건 미충족으로
+                        Lv.{result.capReasons.level}로 판정됐어요
+                      </p>
+                      {result.capReasons.reasons.length > 0 && (
+                        <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 2 }}>
+                          {result.capReasons.reasons.map((r) => (
+                            <li
+                              key={r}
+                              style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}
+                            >
+                              {r}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                   {lowCoverage && (
                     <p
                       style={{
@@ -1265,6 +1442,9 @@ export default function ResultPage() {
         </section>
       )}
 
+      {/* ================= 섹션 3.5 — 표준 워크플로우 (8대 기능 + 문서 보유 여부) ================= */}
+      <WorkflowStandard assessmentId={assessmentId} />
+
       {/* ============ 섹션 4 — 종합 분석 결과 ============ */}
       <section style={{ padding: "56px 0 80px" }}>
         <Inner>
@@ -1451,6 +1631,7 @@ export default function ResultPage() {
                         {j.questionText}
                       </strong>
                       {deferred && <Badge tone="outline">판정 보류</Badge>}
+                      {j.reviewNeeded && <Badge tone="warning">검토 필요</Badge>}
                     </div>
                     {!deferred && j.anchorCriteria && (
                       <p
@@ -1472,6 +1653,27 @@ export default function ResultPage() {
                     >
                       {j.rationale}
                     </p>
+                    {/* 근거 상충 — 검토 사유와 자료 보완 경로 */}
+                    {j.reviewNeeded && (
+                      <div
+                        style={{
+                          margin: "0 0 10px",
+                          display: "flex",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: 10,
+                        }}
+                      >
+                        {j.reviewReason && (
+                          <span style={{ font: "var(--text-caption)", color: "var(--fg-warning)" }}>
+                            {j.reviewReason}
+                          </span>
+                        )}
+                        <Button variant="secondary" size="sm" href="/collect">
+                          자료 보완하기
+                        </Button>
+                      </div>
+                    )}
                     <EvidenceTextList items={j.evidence} />
                   </div>
                 );

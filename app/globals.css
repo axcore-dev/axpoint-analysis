@@ -545,6 +545,11 @@ body {
 .ax-modal--wide {
   width: min(640px, calc(100vw - 32px));
 }
+.ax-modal--full {
+  width: calc(100vw - 40px);
+  max-width: 1560px;
+  max-height: calc(100vh - 40px);
+}
 @keyframes ax-fade-in {
   from {
     opacity: 0;

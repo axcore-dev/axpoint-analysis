@@ -30,7 +30,16 @@ type TaskRow = {
   coveredBySystem: string | null;
   selected: boolean;
   dependsOn: number[];
+  /** 고정 추천 4카드 — 추천 목록 최상단에 고정 표시 */
+  pinned: boolean;
+  /** 대상 (예: 작업표준서, 점검표) — 고정 카드 하단 2행 표기용 */
+  target: string | null;
+  /** 서비스 구성 (예: 스캔·OCR·인덱싱) */
+  services: string | null;
 };
+
+/** 달성 조건 미충족 강등 사유 — 연계 과제(taskNos)는 이미 추천 최상단에 온다 */
+type CapReasons = { level: number; reasons: string[]; taskNos: number[] };
 
 function duration(t: TaskRow): string | null {
   if (t.durationMinMonths == null) return null;
@@ -183,6 +192,46 @@ function TaskCard({
         </div>
       )}
 
+      {/* 고정 추천 카드 — 대상·서비스 2행 (파란 라벨 + 구분선, image-4 스타일) */}
+      {task.pinned && (task.target || task.services) && (
+        <div style={{ borderTop: "1px solid var(--line-subtle)" }}>
+          {(
+            [
+              { label: "대상", text: task.target },
+              { label: "서비스", text: task.services },
+            ] as { label: string; text: string | null }[]
+          )
+            .filter((row) => row.text)
+            .map((row, i) => (
+              <div
+                key={row.label}
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 12,
+                  padding: "8px 0",
+                  borderTop: i > 0 ? "1px solid var(--line-subtle)" : undefined,
+                }}
+              >
+                <span
+                  style={{
+                    flex: "none",
+                    minWidth: 42,
+                    font: "var(--text-label-s)",
+                    fontWeight: 700,
+                    color: "var(--fg-brand)",
+                  }}
+                >
+                  {row.label}
+                </span>
+                <span style={{ font: "var(--text-caption)", color: "var(--fg-secondary)" }}>
+                  {row.text}
+                </span>
+              </div>
+            ))}
+        </div>
+      )}
+
       {/* 예상 기간 — 서버에 기간이 있을 때만 */}
       {duration(task) && (
         <div
@@ -237,6 +286,7 @@ export default function TasksPage() {
   const { assessmentId, completedSteps, completeStep } = useDiagnosis();
 
   const [tasks, setTasks] = useState<TaskRow[] | null>(null);
+  const [capReasons, setCapReasons] = useState<CapReasons | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [filter, setFilter] = useState<string>("recommended");
   /** 담을 때 미담긴 선행 과제가 있으면 함께 담기를 제안하는 토스트 */
@@ -246,22 +296,22 @@ export default function TasksPage() {
 
   useEffect(() => {
     if (!assessmentId) return;
-    api<{ items: TaskRow[] }>(`/api/assessments/${assessmentId}/tasks`)
-      .then(({ items }) => {
+    api<{ items: TaskRow[]; capReasons?: CapReasons | null }>(
+      `/api/assessments/${assessmentId}/tasks`,
+    )
+      .then(({ items, capReasons }) => {
         setTasks(items);
+        setCapReasons(capReasons ?? null);
         setSelected(new Set(items.filter((t) => t.selected).map((t) => t.no)));
       })
       .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
   }, [assessmentId]);
 
-  /* 추천순 정렬 — 추천 먼저, 이후 서버 카탈로그 순서 유지 */
-  const sorted = useMemo(
-    () =>
-      [...(tasks ?? [])].sort((a, b) =>
-        a.recommended === b.recommended ? 0 : a.recommended ? -1 : 1,
-      ),
-    [tasks],
-  );
+  /* 추천순 정렬 — 고정 카드 최상단 → 추천 → 나머지. 그룹 안에서는 서버 우선순위 순서 유지 */
+  const sorted = useMemo(() => {
+    const rank = (t: TaskRow) => (t.pinned ? 0 : t.recommended ? 1 : 2);
+    return [...(tasks ?? [])].sort((a, b) => rank(a) - rank(b));
+  }, [tasks]);
   const areas = useMemo(() => [...new Set((tasks ?? []).map((t) => t.functionArea))], [tasks]);
   const taskByNo = useMemo(() => new Map((tasks ?? []).map((t) => [t.no, t])), [tasks]);
 
@@ -308,7 +358,7 @@ export default function TasksPage() {
   const recommendedCount = tasks.filter((t) => t.recommended).length;
   const filtered =
     filter === "recommended"
-      ? sorted.filter((t) => t.recommended)
+      ? sorted.filter((t) => t.recommended || t.pinned)
       : filter === "all"
         ? sorted
         : sorted.filter((t) => t.functionArea === filter);
@@ -461,6 +511,45 @@ export default function TasksPage() {
             </Tag>
           ))}
         </Card>
+
+        {/* ---- 안내 배너 — 달성 조건 미충족 강등 사유 (연계 과제는 이미 추천 최상단) ---- */}
+        {capReasons && capReasons.reasons.length > 0 && (
+          <Card
+            radius="2xl"
+            style={{
+              background: "var(--bg-warning-weak)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 8,
+            }}
+          >
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                font: "var(--text-label-m)",
+                fontWeight: 700,
+                color: "var(--fg-warning)",
+              }}
+            >
+              <span style={{ flex: "none", display: "inline-flex" }}>
+                <Icons.alert size={15} />
+              </span>
+              우선 해결 과제
+            </span>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4 }}>
+              {capReasons.reasons.map((r) => (
+                <li key={r} style={{ font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
+                  {r}
+                </li>
+              ))}
+            </ul>
+            <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+              아래 추천 과제부터 담는 것을 권해요
+            </p>
+          </Card>
+        )}
 
         {/* ---- 카드 그리드 ---- */}
         <div className="axp-task-grid">

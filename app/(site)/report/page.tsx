@@ -298,8 +298,8 @@ export default function ReportPage() {
               </SummaryValue>
             </Card>
 
-            {/* ② 포지션 — 업종 평균 대비 (벤치마크 있을 때만) */}
-            {diffLabel !== null && summary.industryAvg !== null && (
+            {/* ② 포지션 — 업종 평균 대비 (벤치마크 없으면 종합 점수로 대체) */}
+            {diffLabel !== null && summary.industryAvg !== null ? (
               <Card>
                 <SummaryLabel>포지션</SummaryLabel>
                 <SummaryValue>
@@ -311,6 +311,13 @@ export default function ReportPage() {
                 <SummaryCaption>
                   업종 표본 평균 <span style={mono}>{Math.round(summary.industryAvg)}</span>점 대비
                 </SummaryCaption>
+              </Card>
+            ) : (
+              <Card>
+                <SummaryLabel>종합 점수</SummaryLabel>
+                <SummaryValue>
+                  <span style={{ ...mono, color: "var(--fg-brand)" }}>{summary.totalScore}점</span>
+                </SummaryValue>
               </Card>
             )}
 
