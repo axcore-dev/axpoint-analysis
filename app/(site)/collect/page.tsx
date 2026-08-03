@@ -46,12 +46,49 @@ const STATUS_LABEL: Record<string, string> = {
   split: "양식집 · 페이지별 분류", // 묶음 PDF — 페이지가 개별 파일로 분할되어 각각 분류된다
 };
 
+/** 파일 1건 행 — 그리드와 '모두 보기' 팝업이 같은 표기를 쓴다 */
+function FileCell({ f }: { f: FileRow }) {
+  const busy = f.status === "pending" || f.status === "processing";
+  return (
+    <div className="flex items-center gap-2 rounded-[var(--radius-m)] border border-solid border-line bg-surface px-3.5 py-2.5">
+      <span className="flex-none text-ink-4">
+        <Icons.file size={12} />
+      </span>
+      <span className="min-w-0 flex-1 truncate [font:var(--text-body3)] tracking-[var(--track-body)] text-ink">
+        {f.name}
+      </span>
+      {busy ? (
+        <span className="flex flex-none items-center gap-1.5 [font:var(--text-caption)] text-ink-3">
+          <Loader style={{ width: 14, height: 14 }} />
+          {STATUS_LABEL[f.status ?? "pending"]}
+        </span>
+      ) : f.status === "done" ? (
+        <span className="flex flex-none items-center gap-1.5 [font:var(--text-caption)] text-ink-2">
+          {f.docTypeName}
+          {f.digitalLevel != null && (
+            <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-3">
+              {DIGITAL_LEVELS[`L${f.digitalLevel}`] ?? `L${f.digitalLevel}`}
+            </span>
+          )}
+          <Icons.check size={14} />
+        </span>
+      ) : (
+        <span className="flex-none [font:var(--text-caption)] text-ink-4">
+          {STATUS_LABEL[f.status ?? "failed"]}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function CollectPage() {
   const router = useRouter();
   const { companyInput, assessmentId, completedSteps, completeStep } = useDiagnosis();
 
   const [booting, setBooting] = useState(!completedSteps.includes("collect"));
   const [files, setFiles] = useState<FileRow[] | null>(null);
+  /** 파일 전체 보기 팝업 — 그리드에는 최대 9개만 보인다 */
+  const [allFilesOpen, setAllFilesOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   /** 자료 부족 경고 — 필수 서류가 하나도 없을 때 */
   const [shortage, setShortage] = useState<{ filled: number; total: number } | null>(null);
@@ -189,47 +226,39 @@ export default function CollectPage() {
         </p>
       </header>
 
-      {/* ── 파일별 분류 결과 그리드 — 문서유형·디지털화 수준(L1~L4)·진행 상태 ── */}
+      {/* ── 파일별 분류 결과 그리드 — 최대 9개, 나머지는 팝업으로 (문서유형·디지털화 수준·진행 상태) ── */}
       {files && files.length > 0 && (
         <section className="mt-10">
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
-            {files.map((f) => {
-              const busy = f.status === "pending" || f.status === "processing";
-              return (
-                <div
-                  key={f.id}
-                  className="flex items-center gap-2 rounded-[var(--radius-m)] border border-solid border-line bg-surface px-3.5 py-2.5"
-                >
-                  <span className="flex-none text-ink-4">
-                    <Icons.file size={12} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate [font:var(--text-body3)] tracking-[var(--track-body)] text-ink">
-                    {f.name}
-                  </span>
-                  {busy ? (
-                    <span className="flex flex-none items-center gap-1.5 [font:var(--text-caption)] text-ink-3">
-                      <Loader style={{ width: 14, height: 14 }} />
-                      {STATUS_LABEL[f.status ?? "pending"]}
-                    </span>
-                  ) : f.status === "done" ? (
-                    <span className="flex flex-none items-center gap-1.5 [font:var(--text-caption)] text-ink-2">
-                      {f.docTypeName}
-                      {f.digitalLevel != null && (
-                        <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-3">
-                          {DIGITAL_LEVELS[`L${f.digitalLevel}`] ?? `L${f.digitalLevel}`}
-                        </span>
-                      )}
-                      <Icons.check size={14} />
-                    </span>
-                  ) : (
-                    <span className="flex-none [font:var(--text-caption)] text-ink-4">
-                      {STATUS_LABEL[f.status ?? "failed"]}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+            {files.slice(0, 9).map((f) => (
+              <FileCell key={f.id} f={f} />
+            ))}
           </div>
+          {files.length > 9 && (
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setAllFilesOpen(true)}
+                className="cursor-pointer border-0 bg-transparent p-0 [font:var(--text-label-s)] text-[var(--fg-brand)]"
+              >
+                모두 보기 →
+              </button>
+            </div>
+          )}
+
+          {/* 파일 전체 목록 팝업 */}
+          <Modal
+            open={allFilesOpen}
+            onClose={() => setAllFilesOpen(false)}
+            title={`자료 ${files.length}건`}
+            wide
+          >
+            <div className="ax-scrollbar-none flex max-h-[60vh] flex-col gap-1.5 overflow-y-auto">
+              {files.map((f) => (
+                <FileCell key={f.id} f={f} />
+              ))}
+            </div>
+          </Modal>
         </section>
       )}
 

@@ -20,19 +20,26 @@ type PromptItem = {
   usingDefault: boolean;
   activeVersion: number | null;
   versions: { version: number; isActive: boolean; createdAt: string }[];
+  /** 이 프롬프트가 실제 호출에 쓰는 공급자·모델 */
+  provider: string;
+  model: string;
 };
+
+type Providers = Record<string, { label: string; models: string[] }>;
 
 export default function AdminPromptsPage() {
   const [items, setItems] = useState<PromptItem[] | null>(null);
+  const [providers, setProviders] = useState<Providers>({});
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    api<{ items: PromptItem[] }>("/api/admin/prompts")
+    api<{ items: PromptItem[]; providers: Providers }>("/api/admin/prompts")
       .then((res) => {
         setItems(res.items);
+        setProviders(res.providers);
         setDraft(Object.fromEntries(res.items.map((p) => [p.key, p.system])));
       })
       .catch((e) => setError(e instanceof Error ? e.message : "불러오지 못했어요."));
@@ -52,6 +59,28 @@ export default function AdminPromptsPage() {
     } finally {
       setBusy(null);
     }
+  };
+
+  /** 공급자·모델 저장 — 선택 즉시 반영. 해당 공급자 키는 외부 연동에 등록돼 있어야 호출된다 */
+  const saveModel = (key: string, provider: string, model: string) =>
+    run(
+      key,
+      () =>
+        api(`/api/admin/prompts/${key}/model`, {
+          method: "PUT",
+          body: JSON.stringify({ provider, model }),
+        }),
+      "모델을 저장했어요",
+    );
+
+  const selectStyle: React.CSSProperties = {
+    height: 32,
+    padding: "0 8px",
+    borderRadius: "var(--radius-m)",
+    border: "1px solid var(--line-default)",
+    background: "transparent",
+    color: "var(--fg-secondary)",
+    font: "var(--text-caption)",
   };
 
   return (
@@ -81,6 +110,14 @@ export default function AdminPromptsPage() {
           <Loader />
         </div>
       ) : (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) 300px",
+            gap: 16,
+            alignItems: "start",
+          }}
+        >
         <div style={{ display: "grid", gap: 12 }}>
           {items.map((p) => {
             const changed = (draft[p.key] ?? "") !== p.system;
@@ -102,19 +139,39 @@ export default function AdminPromptsPage() {
                     {p.desc}
                   </p>
 
-                  {p.vars.length > 0 && (
-                    <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                      자리표시자:{" "}
-                      {p.vars.map((v) => (
-                        <span key={v.name} style={{ marginRight: 10 }}>
-                          <code style={{ fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>
-                            {`{${v.name}}`}
-                          </code>{" "}
-                          {v.desc}
-                        </span>
+                  {/* 공급자·모델 — 이 프롬프트의 실제 호출 대상. 선택 즉시 저장된다 */}
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
+                    <select
+                      value={p.provider}
+                      disabled={busy === p.key}
+                      onChange={(e) => {
+                        const provider = e.target.value;
+                        const models = providers[provider]?.models ?? [];
+                        void saveModel(p.key, provider, models[0] ?? p.model);
+                      }}
+                      style={selectStyle}
+                      aria-label={`${p.label} 공급자`}
+                    >
+                      {Object.entries(providers).map(([id, prov]) => (
+                        <option key={id} value={id}>
+                          {prov.label}
+                        </option>
                       ))}
-                    </p>
-                  )}
+                    </select>
+                    <select
+                      value={p.model}
+                      disabled={busy === p.key}
+                      onChange={(e) => void saveModel(p.key, p.provider, e.target.value)}
+                      style={selectStyle}
+                      aria-label={`${p.label} 모델`}
+                    >
+                      {(providers[p.provider]?.models ?? [p.model]).map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
                   <textarea
                     value={draft[p.key] ?? ""}
@@ -227,6 +284,42 @@ export default function AdminPromptsPage() {
               </Card>
             );
           })}
+        </div>
+
+        {/* 우측 패널 — 프롬프트별 자리표시자 모음. 지시문에 {이름} 그대로 쓰면 저장 시 치환된다 */}
+        <Card radius="xl" padded={false} style={{ position: "sticky", top: 24 }}>
+          <div style={{ padding: "16px 20px" }}>
+            <p style={{ margin: 0, font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+              자리표시자
+            </p>
+            <p style={{ margin: "4px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+              지시문에 아래 이름을 그대로 쓰면 실행 시 값으로 치환돼요
+            </p>
+            {items.filter((p) => p.vars.length > 0).length === 0 ? (
+              <p style={{ margin: "12px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                자리표시자를 쓰는 프롬프트가 없어요
+              </p>
+            ) : (
+              items
+                .filter((p) => p.vars.length > 0)
+                .map((p) => (
+                  <div key={p.key} style={{ marginTop: 14 }}>
+                    <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-secondary)", fontWeight: 600 }}>
+                      {p.label}
+                    </p>
+                    {p.vars.map((v) => (
+                      <p key={v.name} style={{ margin: "4px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                        <code style={{ fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>
+                          {`{${v.name}}`}
+                        </code>{" "}
+                        {v.desc}
+                      </p>
+                    ))}
+                  </div>
+                ))
+            )}
+          </div>
+        </Card>
         </div>
       )}
     </section>

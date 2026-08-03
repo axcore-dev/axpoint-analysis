@@ -53,7 +53,7 @@ const STATUS_TEXT: Record<SourceCard["status"], string> = {
 export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [opened, setOpened] = useState<SourceCard | null>(null);
-  const [tab, setTab] = useState<"summary" | "items" | "source">("items");
+  const [tab, setTab] = useState<"summary" | "items">("items");
 
   useEffect(() => {
     if (!assessmentId) return;
@@ -178,26 +178,26 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
         })}
       </div>
 
-      {/* 상세 팝업 — 탭1 목록 / 탭2 출처 */}
+      {/* 상세 팝업 — 요약 / 원본(제목에 출처 링크) */}
       <Modal open={opened !== null} onClose={() => setOpened(null)} title={opened?.label} wide>
         {opened && (
           <div>
-            <div className="mb-3 flex gap-1 rounded-[var(--radius-m)] bg-surface-3 p-1">
-              {([...(opened.summary?.length ? ["summary"] : []), "items", "source"] as const).map(
-                (t) => (
+            {opened.summary?.length ? (
+              <div className="mb-3 flex gap-1 rounded-[var(--radius-m)] bg-surface-3 p-1">
+                {(["summary", "items"] as const).map((t) => (
                   <button
                     key={t}
                     type="button"
-                    onClick={() => setTab(t as "summary" | "items" | "source")}
+                    onClick={() => setTab(t)}
                     className={`h-8 flex-1 cursor-pointer rounded-[9px] border-0 [font:var(--text-label-s)] [font-family:var(--font-sans)] transition-colors ${
                       tab === t ? "bg-surface text-ink shadow-[var(--shadow-1)]" : "bg-transparent text-ink-3"
                     }`}
                   >
-                    {t === "summary" ? "요약" : t === "items" ? `원본 ${opened.itemCount}건` : "출처"}
+                    {t === "summary" ? "요약" : `원본 ${opened.itemCount}건`}
                   </button>
-                ),
-              )}
-            </div>
+                ))}
+              </div>
+            ) : null}
 
             {tab === "summary" && opened.summary?.length ? (
               <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
@@ -213,47 +213,43 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
                   AI가 수집 원본을 정리한 요약이에요 — 원문은 원본 탭에서 확인해 주세요.
                 </li>
               </ul>
-            ) : tab === "items" ? (
-              <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
-                {opened.items.map((it, i) => (
-                  <li
-                    key={`${it.title}-${i}`}
-                    className="border-t border-line-subtle pt-2 first:border-t-0 first:pt-0"
-                  >
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="min-w-0 [font:var(--text-label-m)] text-ink">{it.title}</span>
-                      {it.date && (
-                        <span className="flex-none [font-family:var(--font-mono)] text-[12px] text-ink-4">
-                          {it.date}
-                        </span>
-                      )}
-                    </div>
-                    {it.summary && (
-                      <p className="mt-1 mb-0 [font:var(--text-body3)] text-ink-3">{it.summary}</p>
-                    )}
-                  </li>
-                ))}
-              </ul>
             ) : (
-              <div className="[font:var(--text-body3)] text-ink-2">
-                <p className="m-0">
-                  {opened.note ?? opened.error ?? "공개 데이터 제공처에서 수집했어요."}
-                </p>
-                <ul className="ax-scrollbar-none mt-3 flex max-h-[36vh] list-none flex-col gap-1.5 overflow-y-auto p-0">
-                  {opened.items
-                    .filter((it) => it.sourceUrl)
-                    .map((it, i) => (
-                      <li key={`${it.sourceUrl}-${i}`} className="truncate">
-                        <a
-                          href={it.sourceUrl ?? undefined}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="[font:var(--text-caption)] text-[var(--fg-brand)]"
-                        >
-                          {it.title}
-                        </a>
-                      </li>
-                    ))}
+              <div>
+                {(opened.note ?? opened.error) && (
+                  <p className="mt-0 mb-2 [font:var(--text-caption)] text-ink-3">
+                    {opened.note ?? opened.error}
+                  </p>
+                )}
+                <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
+                  {opened.items.map((it, i) => (
+                    <li
+                      key={`${it.title}-${i}`}
+                      className="border-t border-line-subtle pt-2 first:border-t-0 first:pt-0"
+                    >
+                      <div className="flex items-baseline justify-between gap-3">
+                        {it.sourceUrl ? (
+                          <a
+                            href={it.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="min-w-0 [font:var(--text-label-m)] text-[var(--fg-brand)] hover:underline"
+                          >
+                            {it.title}
+                          </a>
+                        ) : (
+                          <span className="min-w-0 [font:var(--text-label-m)] text-ink">{it.title}</span>
+                        )}
+                        {it.date && (
+                          <span className="flex-none [font-family:var(--font-mono)] text-[12px] text-ink-4">
+                            {it.date}
+                          </span>
+                        )}
+                      </div>
+                      {it.summary && (
+                        <p className="mt-1 mb-0 [font:var(--text-body3)] text-ink-3">{it.summary}</p>
+                      )}
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}

@@ -113,6 +113,8 @@ export default function LandingPage() {
   const [placeholder, setPlaceholder] = useState("");
   /** 업로드 판독 로딩 — 완료 시 파일을 첨부 목록에 합침 (v6 개편) */
   const [uploading, setUploading] = useState(false);
+  /** 업로드 전송 진행률(0~100) — 전송 중일 때만 값이 있다 */
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   /** 검색 결과 — 사용자가 검색을 실행했을 때만 채워진다 (null = 아직 검색 전) */
   const [results, setResults] = useState<SearchHit[] | null>(null);
@@ -225,22 +227,40 @@ export default function LandingPage() {
   const startUpload = async (files: File[], docTypeId?: number) => {
     if (!assessmentId || files.length === 0) return;
     setUploading(true);
+    setUploadProgress(0);
     setUploadError(null);
     try {
       const form = new FormData();
       for (const f of files) form.append("files", f);
       /* 슬롯에서 올리면 그 유형으로 확정한다 — 분석은 워커가 이어서 채운다 (수정요청v9) */
       if (docTypeId !== undefined) form.append("docTypeId", String(docTypeId));
-      const res = await fetch(`${API_URL}/api/assessments/${assessmentId}/files`, {
-        method: "POST",
-        credentials: "include",
-        body: form,
+      /* fetch는 업로드 진행률을 주지 않는다 — XHR upload.onprogress로 프로그레스바를 채운다 */
+      const { ok, body } = await new Promise<{
+        ok: boolean;
+        body: {
+          saved?: { id: string; name: string }[];
+          rejected?: { name: string; reason: string }[];
+          error?: string;
+        };
+      }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${API_URL}/api/assessments/${assessmentId}/files`);
+        xhr.withCredentials = true;
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setUploadProgress(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => {
+          let parsed = {};
+          try {
+            parsed = JSON.parse(xhr.responseText || "{}");
+          } catch {
+            /* 본문이 JSON이 아니면 빈 응답으로 처리 */
+          }
+          resolve({ ok: xhr.status >= 200 && xhr.status < 300, body: parsed });
+        };
+        xhr.onerror = () => reject(new Error("network"));
+        xhr.send(form);
       });
-      const body = (await res.json().catch(() => ({}))) as {
-        saved?: { id: string; name: string }[];
-        rejected?: { name: string; reason: string }[];
-        error?: string;
-      };
       const added: AttachedFileInfo[] = (body.saved ?? []).map((s) => ({
         key: s.id,
         name: s.name,
@@ -253,13 +273,14 @@ export default function LandingPage() {
       if (rejected.length > 0) {
         /* 사유가 있으면 사유를 그대로 — 왜 빠졌는지 알아야 다시 올릴 수 있다 */
         setUploadError(rejected.map((r) => `${r.name} — ${r.reason}`).join(" / "));
-      } else if (!res.ok && added.length === 0) {
+      } else if (!ok && added.length === 0) {
         setUploadError(body.error ?? "파일을 올리지 못했어요. 잠시 후 다시 시도해 주세요.");
       }
     } catch {
       setUploadError("파일을 올리지 못했어요. 연결을 확인하고 다시 시도해 주세요.");
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   };
 
@@ -722,6 +743,22 @@ export default function LandingPage() {
                     </Button>
                   </span>
                 </div>
+                {/* 업로드 진행률 — 전송 중일 때만. 100%가 되면 서버 판독을 기다리는 상태다 */}
+                {uploadProgress !== null && (
+                  <div className="border-b border-line px-3.5 py-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface-3">
+                        <div
+                          className="h-full rounded-full bg-[var(--fg-brand)] transition-[width] duration-200"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <span className="flex-none [font-family:var(--font-mono)] text-[11px] text-ink-3">
+                        {uploadProgress}%
+                      </span>
+                    </div>
+                  </div>
+                )}
                 <div className="ax-scrollbar-none max-h-[300px] overflow-y-auto">
                 {Object.entries(
                   requiredDocs.items
