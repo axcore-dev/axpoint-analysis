@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icons, Loader } from "@/components/ui";
 
 /**
  * 분류 진행 로그 — AI가 파일을 하나씩 분류해 가는 과정을 텍스트 리스트로 보여준다 (자료 정리 2단계).
  *
  * collect가 폴링 중인 files를 그대로 받아 완료 → 진행 중 → 대기 순으로 쌓는다.
- * 완료 행이 늘면 진행 중인 행이 보이게 프로그램 스크롤만 한다 — 휠 스크롤은
- * overflow: hidden으로 막고, 위쪽 페이드 마스크로 로그가 흘러가는 연출을 만든다.
+ * 진행 중: 완료 행이 늘면 진행 중인 행이 보이게 프로그램 스크롤만 한다 — 휠 스크롤은
+ * overflow: hidden으로 막고, 항목이 2개 이상일 때만 위쪽 페이드 마스크로 흘러가는 연출을 만든다.
+ * 완료(done): 우측 정렬 접힌 아코디언('분류 과정 보기')으로 최종 로그를 보존한다 —
+ * 펼치면 휠 스크롤을 허용하고 자동 스크롤·마스크는 끈다.
  */
 
 type ClassifyFile = {
@@ -29,8 +31,10 @@ const TERMINAL_LABEL: Record<string, string> = {
 const isTerminal = (f: ClassifyFile) =>
   f.status !== null && f.status !== "pending" && f.status !== "processing";
 
-export function ClassifyProgress({ files }: { files: ClassifyFile[] }) {
+export function ClassifyProgress({ files, done = false }: { files: ClassifyFile[]; done?: boolean }) {
   const boxRef = useRef<HTMLDivElement>(null);
+  /* 완료 후 아코디언 펼침 여부 — 기본은 접힘 */
+  const [open, setOpen] = useState(false);
 
   /* 완료 → 진행 중 → 대기 순으로 정렬 (그룹 내 원래 순서 유지) — 로그처럼 완료 행이 위로 쌓인다 */
   const rank = (f: ClassifyFile) => (isTerminal(f) ? 0 : f.status === "processing" ? 1 : 2);
@@ -41,8 +45,9 @@ export function ClassifyProgress({ files }: { files: ClassifyFile[] }) {
   /* 스크롤 기준 행 — 진행 중인 행, 없으면 마지막 완료 행 */
   const anchorIdx = processingIdx >= 0 ? processingIdx : Math.max(terminalCount - 1, 0);
 
-  /* 완료 행이 늘 때마다 기준 행이 하단에 보이게 스크롤 — 사용자 스크롤은 없다 */
+  /* 완료 행이 늘 때마다 기준 행이 하단에 보이게 스크롤 — 진행 중에만, 사용자 스크롤은 없다 */
   useEffect(() => {
+    if (done) return;
     const box = boxRef.current;
     const anchor = box?.children[anchorIdx] as HTMLElement | undefined;
     if (!box || !anchor) return;
@@ -50,20 +55,28 @@ export function ClassifyProgress({ files }: { files: ClassifyFile[] }) {
       top: anchor.offsetTop + anchor.offsetHeight - box.clientHeight + 12,
       behavior: "smooth",
     });
-  }, [anchorIdx, terminalCount]);
+  }, [anchorIdx, terminalCount, done]);
 
-  return (
+  /* 위쪽 페이드 마스크 — 진행 중이면서 항목이 2개 이상일 때만 (1개면 또렷하게) */
+  const fade = !done && rows.length >= 2;
+
+  const log = (
     <div
       ref={boxRef}
       style={{
         position: "relative" /* 자식 offsetTop 기준을 이 컨테이너로 */,
         maxHeight: 180,
-        overflow: "hidden" /* 휠 스크롤 차단 — 스크롤은 위 effect만 수행한다 */,
+        /* 진행 중엔 휠 스크롤 차단(스크롤은 위 effect만), 완료 펼침 상태에선 휠 스크롤 허용 */
+        overflowY: done ? "auto" : "hidden",
         display: "flex",
         flexDirection: "column",
         gap: 6,
-        maskImage: "linear-gradient(to bottom, transparent 0, #000 36px)",
-        WebkitMaskImage: "linear-gradient(to bottom, transparent 0, #000 36px)",
+        ...(fade
+          ? {
+              maskImage: "linear-gradient(to bottom, transparent 0, #000 36px)",
+              WebkitMaskImage: "linear-gradient(to bottom, transparent 0, #000 36px)",
+            }
+          : {}),
       }}
     >
       {rows.map((f) => {
@@ -115,6 +128,35 @@ export function ClassifyProgress({ files }: { files: ClassifyFile[] }) {
           </div>
         );
       })}
+    </div>
+  );
+
+  if (!done) return log;
+
+  /* 분류 완료 — 우측 정렬 접힌 아코디언으로 최종 로그 보존 */
+  return (
+    <div>
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 [font:var(--text-caption)] text-ink-3"
+        >
+          분류 과정 보기
+          <span
+            aria-hidden
+            style={{
+              display: "inline-flex",
+              transition: "transform 150ms",
+              transform: open ? "rotate(90deg)" : "none",
+            }}
+          >
+            <Icons.chevronRight size={14} />
+          </span>
+        </button>
+      </div>
+      {open && <div className="mt-2">{log}</div>}
     </div>
   );
 }

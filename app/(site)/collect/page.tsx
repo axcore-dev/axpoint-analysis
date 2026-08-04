@@ -133,7 +133,6 @@ export default function CollectPage() {
   /* ── 1단계 상태 — 필수 서류·슬롯 업로드·프로그램·사전 설문 ── */
   const [requiredDocs, setRequiredDocs] = useState<RequiredDocs | null>(null);
   /** 부족한 슬롯만 보기 */
-  const [onlyMissing, setOnlyMissing] = useState(false);
   const [uploading, setUploading] = useState(false);
   /** 업로드 실패·거부 안내 */
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -531,19 +530,26 @@ export default function CollectPage() {
               tabIndex={-1}
             />
 
-            {/* 분류 진행 로그 — 진입과 동시에 시작된 분류가 도는 동안 카드로 표시 (라벨은 2단계 문구 재사용) */}
-            {classifying && files && (
-              <section className="mt-8 rounded-[var(--radius-l)] border border-line">
-                <div className="border-b border-line px-3.5 py-2.5">
-                  <span className="[font:var(--text-label-s)] text-ink">
-                    AI가 자료를 분류하고 있어요 ({doneCount}/{total})
-                  </span>
+            {/* 분류 진행 로그 — 분류가 도는 동안 카드로 표시(라벨은 2단계 문구 재사용),
+                끝나면 우측 접힌 아코디언('분류 과정 보기')으로 보존 */}
+            {files &&
+              files.length > 0 &&
+              (classifying ? (
+                <section className="mt-8 rounded-[var(--radius-l)] border border-line">
+                  <div className="border-b border-line px-3.5 py-2.5">
+                    <span className="[font:var(--text-label-s)] text-ink">
+                      AI가 자료를 분류하고 있어요 ({doneCount}/{total})
+                    </span>
+                  </div>
+                  <div className="px-3.5 py-3">
+                    <ClassifyProgress files={files} />
+                  </div>
+                </section>
+              ) : (
+                <div className="mt-8">
+                  <ClassifyProgress files={files} done />
                 </div>
-                <div className="px-3.5 py-3">
-                  <ClassifyProgress files={files} />
-                </div>
-              </section>
-            )}
+              ))}
 
             {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9) */}
             {requiredDocs && requiredDocs.items.length > 0 && (
@@ -553,11 +559,6 @@ export default function CollectPage() {
                     필수 서류 {requiredDocs.filled}/{requiredDocs.total}
                   </span>
                   <span className="flex flex-none items-center gap-2">
-                    {requiredDocs.filled < requiredDocs.total && (
-                      <Button variant="ghost" size="sm" onClick={() => setOnlyMissing((v) => !v)}>
-                        {onlyMissing ? "전체 보기" : "부족한 것만"}
-                      </Button>
-                    )}
                     {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
                     <Button
                       variant="secondary"
@@ -573,7 +574,6 @@ export default function CollectPage() {
                 <div className="ax-scrollbar-none max-h-[max(300px,60vh)] overflow-y-auto">
                   {Object.entries(
                     requiredDocs.items
-                      .filter((it) => !onlyMissing || it.files.length === 0)
                       .reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
                         acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
                         return acc;
@@ -866,12 +866,10 @@ export default function CollectPage() {
       {/* ── 파일별 분류 결과 그리드 — 최대 9개, 나머지는 팝업으로 (문서유형·디지털화 수준·진행 상태) ── */}
       {files && files.length > 0 && (
         <section className="mt-10">
-          {/* 분류 진행 로그 — 미완료 파일이 있는 동안만, 전부 끝나면 자연히 사라진다 */}
-          {classifying && (
-            <div className="mb-4">
-              <ClassifyProgress files={files} />
-            </div>
-          )}
+          {/* 분류 진행 로그 — 진행 중엔 흐르는 로그, 끝나면 우측 접힌 아코디언('분류 과정 보기')으로 보존 */}
+          <div className="mb-4">
+            <ClassifyProgress files={files} done={!classifying} />
+          </div>
           {/* 그리드 헤더 — 자료 편집(칸반 보드) 진입 */}
           <div className="mb-2 flex justify-end">
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>

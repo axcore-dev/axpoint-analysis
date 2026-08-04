@@ -77,7 +77,16 @@ type AreaView = {
 type CapReasons = { level: number; reasons: string[]; taskNos: number[] };
 
 /** 공개 데이터 수집 현황 — source: news/patent/dart/finance/procurement/employment/rnd/venture/innobiz */
-type PublicStat = { source: string; status: string; itemCount: number; note: string | null };
+type PublicStat = {
+  source: string;
+  status: string;
+  itemCount: number;
+  note: string | null;
+  /** patent 행 — 등록 상태 특허 건수 */
+  registeredCount?: number;
+  /** procurement 행 — 조달 계약 금액 합계(원) */
+  amountWon?: number;
+};
 
 type ResultPayload = {
   status: string;
@@ -235,6 +244,9 @@ function RadarChart({
   const cy = 168;
   const R = 114;
   const step = 360 / axes.length;
+  /* viewBox 좌우 여백 — 좌·우 끝 축 라벨(예: 'AI활용 및 성과')이 잘리지 않게 음수 x부터 그린다 */
+  const vbX = -40;
+  const vbW = 440;
 
   const pt = (i: number, v: number): [number, number] => {
     const ang = (Math.PI / 180) * (-90 + i * step);
@@ -250,7 +262,7 @@ function RadarChart({
   return (
     <figure style={{ margin: 0 }}>
       <svg
-        viewBox="0 0 360 336"
+        viewBox={`${vbX} 0 ${vbW} 336`}
         role="img"
         aria-label={`카테고리별 준비도 차트${hasAvg ? " — 자사 점수와 평균 비교" : ""}. ${axes
           .map(
@@ -405,7 +417,7 @@ function RadarChart({
             const [x, y] = pt(hover, ownVals[hover]);
             const w = Math.max(ownLine.length, avgLine?.length ?? 0) * 7 + 22;
             const h = avgLine ? 40 : 25;
-            const tx = Math.min(Math.max(x, w / 2 + 4), 360 - w / 2 - 4);
+            const tx = Math.min(Math.max(x, vbX + w / 2 + 4), vbX + vbW - w / 2 - 4);
             const ty = Math.max(y - h - 10, 4);
             return (
               <g
@@ -827,23 +839,37 @@ export default function ResultPage() {
 
   /* ---- 통계 칩 — 기존 연 매출·고용 + 공개 데이터 수집 현황(publicStats) ---- */
   const statBySource = new Map((data.publicStats ?? []).map((s) => [s.source, s]));
-  /** 수집된 소스만 칩으로 — itemCount 0이어도 '0건'으로 표시한다 */
-  const countChip = (source: string, label: string) => {
-    const s = statBySource.get(source);
-    return s ? { label, value: `${s.itemCount ?? 0}건` } : null;
-  };
   const hasCertSource = statBySource.has("venture") || statBySource.has("innobiz");
   const certLabels = [
     (statBySource.get("venture")?.itemCount ?? 0) > 0 ? "벤처" : null,
     (statBySource.get("innobiz")?.itemCount ?? 0) > 0 ? "이노비즈" : null,
   ].filter(Boolean) as string[];
+  const smartFactory = statBySource.get("rnd"); // rnd 행 = 스마트공장 사업 수혜 이력
+  const patent = statBySource.get("patent");
+  const news = statBySource.get("news");
+  const procurement = statBySource.get("procurement");
+  const procurementAmountWon = procurement?.amountWon ?? 0;
   const companyStats = [
     co?.revenueMillion != null ? { label: "연 매출", value: fmtRevenue(co.revenueMillion) } : null,
+    smartFactory
+      ? {
+          label: "스마트공장",
+          value: (smartFactory.itemCount ?? 0) > 0 ? "수혜 기업" : "수혜 이력 없음",
+        }
+      : null,
+    patent ? { label: "특허", value: `등록 ${patent.registeredCount ?? 0}건` } : null,
+    news ? { label: "최근 보도", value: `${news.itemCount ?? 0}건` } : null,
     co?.employees != null ? { label: "고용", value: `${co.employees}명` } : null,
-    countChip("patent", "특허"),
-    countChip("rnd", "정부 R&D 과제"),
-    countChip("news", "최근 보도"),
-    countChip("procurement", "조달 실적"),
+    procurement
+      ? {
+          label: "조달 실적",
+          value:
+            procurementAmountWon > 0
+              ? /* 원 단위 합계를 억 원 소수 1자리로 */
+                `${procurement.itemCount ?? 0}건 · ${Math.round(procurementAmountWon / 1e7) / 10}억 원`
+              : `${procurement.itemCount ?? 0}건`,
+        }
+      : null,
     hasCertSource
       ? { label: "인증", value: certLabels.length > 0 ? certLabels.join(" · ") : "—" }
       : null,

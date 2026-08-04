@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { Badge, Card } from "@/components/ui";
 import { api } from "@/lib/api";
 
@@ -25,6 +25,26 @@ export type WorkflowStage = {
     outputDocs: OutputDoc[];
   }[];
 };
+
+/** 긴 텍스트 2줄 말줄임 — 카드 안 Task명·문서명이 잘리지 않게 (WorkflowSection 공용) */
+export const clamp2: CSSProperties = {
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
+
+/** 산출 문서 뱃지 — 긴 문서명은 한 줄 잘림 대신 2줄까지 표시 (WorkflowSection 공용) */
+export function DocBadge({ doc }: { doc: OutputDoc }) {
+  return (
+    <Badge
+      tone={doc.covered ? "accent" : "outline"}
+      style={{ height: "auto", minHeight: 22, padding: "3px 8px", whiteSpace: "normal", lineHeight: 1.3 }}
+    >
+      <span style={clamp2}>{doc.name}</span>
+    </Badge>
+  );
+}
 
 /** 활동들의 산출 문서를 문서유형 단위로 합친다 — 하나라도 covered면 보유로 본다 */
 export function stageDocs(stage: WorkflowStage): OutputDoc[] {
@@ -78,7 +98,8 @@ export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
                 key={stage.code}
                 radius="l"
                 style={{
-                  minWidth: 260,
+                  minWidth: 300,
+                  maxWidth: 340,
                   flex: "0 0 auto",
                   padding: "18px 20px",
                   display: "flex",
@@ -96,7 +117,7 @@ export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
                   {stage.activities.map((a) => (
                     <li
                       key={a.name}
-                      style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}
+                      style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", ...clamp2 }}
                     >
                       · {a.name}
                     </li>
@@ -116,9 +137,7 @@ export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
                     }}
                   >
                     {docs.map((d) => (
-                      <Badge key={String(d.docTypeId)} tone={d.covered ? "accent" : "outline"}>
-                        {d.name}
-                      </Badge>
+                      <DocBadge key={String(d.docTypeId)} doc={d} />
                     ))}
                   </div>
                 )}

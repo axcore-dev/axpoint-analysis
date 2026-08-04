@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Card, Icons } from "@/components/ui";
+import { Card, Icons } from "@/components/ui";
 import { api } from "@/lib/api";
-import { stageDocs, type WorkflowStage } from "@/components/flow/WorkflowStandard";
+import { clamp2, DocBadge, stageDocs, type WorkflowStage } from "@/components/flow/WorkflowStandard";
 
 /**
  * 워크플로우 — 8대 영역 표준 워크플로우와 이 기업의 문서 보유 현황 (자료 정리 화면)
@@ -75,7 +75,8 @@ export function WorkflowSection({
                   key={stage.code}
                   radius="l"
                   style={{
-                    minWidth: 260,
+                    minWidth: 300,
+                    maxWidth: 340,
                     flex: "0 0 auto",
                     padding: "18px 20px",
                     display: "flex",
@@ -100,7 +101,7 @@ export function WorkflowSection({
                     {stage.activities.map((a) => (
                       <li
                         key={a.name}
-                        style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}
+                        style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", ...clamp2 }}
                       >
                         · {a.name}
                       </li>
@@ -120,9 +121,7 @@ export function WorkflowSection({
                       }}
                     >
                       {docs.map((d) => (
-                        <Badge key={String(d.docTypeId)} tone={d.covered ? "accent" : "outline"}>
-                          {d.name}
-                        </Badge>
+                        <DocBadge key={String(d.docTypeId)} doc={d} />
                       ))}
                     </div>
                   )}
