@@ -15,13 +15,19 @@ import { Button, Card, Icons, Input, Loader, Modal, Tag } from "@/components/ui"
 import { waitForJudge } from "@/lib/judgeWait";
 
 /**
- * S1 자료 정리 — 2단계 구성 (진단 플로우 개편 1차)
- * 1단계 '자료 확인': 분류 실행 전. 필수 서류 슬롯 점검·추가 업로드, 사용 중인 프로그램,
- *   사전 설문(kind=primary) 응답. '자료가 충분해요'/'자료 없이 진행'으로 분류 시작.
+ * S1 자료 정리 — 2단계 구성 (진단 플로우 개편 2차)
+ * 1단계: 진입과 동시에 분류를 시작하고(pending 전체, 파일 0건이면 생략) 순차 스텝 위저드로 진행.
+ *   ① 자료 확인 — 분류 진행 로그 → 분류 결과가 반영된 필수 서류 충족/부족 검증.
+ *     추가 업로드는 그 건만 바로 분류(fileIds 지정).
+ *   ② 사용 중인 프로그램 — '다음'에 PATCH {systems} 저장.
+ *   ③ 사전 설문(kind=primary) — '다음'에 PUT surveys 저장 후 2단계로 전환.
  * 2단계 '자료 분류': 기존 분류 결과 그리드·공개데이터·워크플로우. 보완 설문(kind=supplement)이
  *   내려오면 배너 + SurveyModal로 응답.
- * 분류가 이미 시작된 진단(분류 행 중 pending 아닌 것이 있음)은 2단계로 직행한다.
+ * 프로그램 선택을 마친 적 있는 진단(assessment.systems 비어 있지 않음)은 재방문으로 보고 2단계 직행.
  */
+
+/** 1단계 위저드 스텝 이름 — 상단 단계 표시용 */
+const REVIEW_STEP_LABELS = ["자료 확인", "사용 프로그램", "사전 설문"];
 
 /** 최초 진입 수집 로딩 문구 (기존 문구 유지) */
 const COLLECT_MESSAGES = [
@@ -113,6 +119,8 @@ export default function CollectPage() {
   const [booting, setBooting] = useState(!completedSteps.includes("collect"));
   /** 1단계(자료 확인) / 2단계(자료 분류) — null은 판별 전 */
   const [stage, setStage] = useState<"review" | "classify" | null>(null);
+  /** 1단계 내 순차 스텝 — ① 자료 확인 ② 사용 프로그램 ③ 사전 설문 */
+  const [reviewStep, setReviewStep] = useState<1 | 2 | 3>(1);
   const [files, setFiles] = useState<FileRow[] | null>(null);
   /** 파일 전체 보기 팝업 — 그리드에는 최대 9개만 보인다 */
   const [allFilesOpen, setAllFilesOpen] = useState(false);
@@ -170,29 +178,45 @@ export default function CollectPage() {
     }
   }, [assessmentId]);
 
-  /* 단계 판별 — 분류 행 중 pending 아닌 것이 있으면 분류가 시작된 진단으로 보고 2단계 직행 */
+  /* 진입 판별 — 프로그램 선택을 마친 적 있으면(assessment.systems 비어 있지 않음) 재방문으로 보고
+     2단계 직행. 그 외에는 1단계 진입과 동시에 분류를 시작한다(파일 0건이면 호출 생략) */
   useEffect(() => {
     if (!assessmentId) return;
     let cancelled = false;
-    api<{ items: FileRow[] }>(`/api/assessments/${assessmentId}/files`)
-      .then(({ items }) => {
+    (async () => {
+      try {
+        const { assessment } = await api<{ assessment: { systems: string[] | null } }>(
+          `/api/assessments/${assessmentId}`,
+        );
+        if (cancelled) return;
+        if ((assessment.systems ?? []).length > 0) {
+          setStage("classify");
+          return;
+        }
+        const { items } = await api<{ items: FileRow[] }>(
+          `/api/assessments/${assessmentId}/files`,
+        );
         if (cancelled) return;
         setFiles(items);
-        setStage(
-          items.some((f) => f.status !== null && f.status !== "pending") ? "classify" : "review",
-        );
-      })
-      .catch(() => {
+        /* body 없이 호출 — 미분류(pending) 전체를 분류 큐에 등록. 실패해도 진행은 막지 않는다 */
+        if (items.length > 0)
+          void api(`/api/assessments/${assessmentId}/classify`, { method: "POST" }).catch(
+            () => {},
+          );
+        setStage("review");
+      } catch {
         if (!cancelled) setStage("review");
-      });
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [assessmentId]);
 
-  /* 2단계에서만 분류 현황 폴링 */
+  /* 분류 현황 폴링 — 1단계 자료 확인 스텝과 2단계에서 동작. 전부 끝나면 fetchFiles가 스스로 멈춘다 */
   useEffect(() => {
-    if (!assessmentId || stage !== "classify") return;
+    if (!assessmentId || stage === null) return;
+    if (stage === "review" && reviewStep !== 1) return;
     void fetchFiles();
     pollTimer.current = setInterval(fetchFiles, 3000);
     return () => {
@@ -201,13 +225,13 @@ export default function CollectPage() {
         pollTimer.current = null;
       }
     };
-  }, [assessmentId, stage, fetchFiles]);
+  }, [assessmentId, stage, reviewStep, fetchFiles]);
 
   const total = files?.length ?? 0;
   const doneCount =
     files?.filter((f) => f.status && f.status !== "pending" && f.status !== "processing").length ??
     0;
-  const classifying = stage === "classify" && total > 0 && doneCount < total;
+  const classifying = total > 0 && doneCount < total;
 
   /* ── 필수 서류 현황 — 1단계에서 조회, 슬롯 업로드 후 갱신 ── */
   const loadRequiredDocs = useCallback(async () => {
@@ -219,9 +243,11 @@ export default function CollectPage() {
     }
   }, [assessmentId]);
 
+  /* 분류가 끝난 시점에 조회 — 필수 서류 패널이 분류 결과가 반영된 충족/부족(검증 결과)을 보여준다.
+     추가 업로드·자료 편집으로 분류가 다시 돌면 끝난 뒤 재조회된다 */
   useEffect(() => {
-    if (stage === "review") void loadRequiredDocs();
-  }, [stage, loadRequiredDocs]);
+    if (stage === "review" && reviewStep === 1 && !classifying) void loadRequiredDocs();
+  }, [stage, reviewStep, classifying, loadRequiredDocs]);
 
   /* ── 설문 조회 — 1단계는 사전 설문 표시용, 2단계는 분류가 끝난 뒤 보완 설문 배너용 ── */
   const loadSurveys = useCallback(async () => {
@@ -271,6 +297,15 @@ export default function CollectPage() {
       if (rejected.length > 0) {
         /* 사유가 있으면 사유를 그대로 — 왜 빠졌는지 알아야 다시 올릴 수 있다 */
         setUploadError(rejected.map((r) => `${r.name} — ${r.reason}`).join(" / "));
+      }
+      /* 1단계 추가 업로드는 그 건만 바로 분류 — 멈춰 있던 폴링을 재개해 진행을 이어받는다 */
+      const savedIds = (res.saved ?? []).map((s) => s.id);
+      if (savedIds.length > 0) {
+        await api(`/api/assessments/${assessmentId}/classify`, {
+          method: "POST",
+          body: JSON.stringify({ fileIds: savedIds }),
+        }).catch(() => {});
+        if (!pollTimer.current) pollTimer.current = setInterval(fetchFiles, 3000);
       }
       await Promise.all([loadRequiredDocs(), fetchFiles()]);
     } catch {
@@ -348,36 +383,36 @@ export default function CollectPage() {
     }
   };
 
-  /* ── 1단계 → 2단계: 프로그램·설문 저장 후 분류 시작 ── */
-  const proceed = async () => {
+  /* ── 스텝 전환 — 프로그램·설문 저장 실패는 진행을 막지 않는다 (기존 정책 유지) ── */
+
+  /** 스텝 ② → ③: 사용 중인 프로그램 저장 */
+  const proceedSystems = async () => {
     if (!assessmentId || proceeding) return;
     setProceeding(true);
-    setError(null);
-    try {
-      /* 프로그램·설문 저장 실패는 진행을 막지 않는다 — 분류 시작이 이 게이트의 본질이다 */
-      await api(`/api/assessments/${assessmentId}`, {
-        method: "PATCH",
-        body: JSON.stringify({ systems }),
+    await api(`/api/assessments/${assessmentId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ systems }),
+    }).catch(() => {});
+    setProceeding(false);
+    setReviewStep(3);
+  };
+
+  /** 스텝 ③ → 2단계: 사전 설문 응답 저장 후 자료 분류 화면으로 */
+  const proceedSurveys = async () => {
+    if (!assessmentId || proceeding) return;
+    setProceeding(true);
+    const answers = Object.entries(picked).map(([surveyCode, value]) => ({
+      surveyCode,
+      choiceValues: [value],
+    }));
+    if (answers.length > 0) {
+      await api(`/api/assessments/${assessmentId}/surveys`, {
+        method: "PUT",
+        body: JSON.stringify({ answers }),
       }).catch(() => {});
-      const answers = Object.entries(picked).map(([surveyCode, value]) => ({
-        surveyCode,
-        choiceValues: [value],
-      }));
-      if (answers.length > 0) {
-        await api(`/api/assessments/${assessmentId}/surveys`, {
-          method: "PUT",
-          body: JSON.stringify({ answers }),
-        }).catch(() => {});
-      }
-      /* body 없이 호출 — 미분류(pending) 전체를 분류 큐에 등록한다 */
-      await api(`/api/assessments/${assessmentId}/classify`, { method: "POST" });
-      await fetchFiles();
-      setStage("classify");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.");
-    } finally {
-      setProceeding(false);
     }
+    setProceeding(false);
+    setStage("classify");
   };
 
   /* 제출 전 점검 — 필수 서류가 하나도 없으면 점수를 낼 수 없다. 결과 화면에서 처음 알리지 않는다 (v9) */
@@ -451,250 +486,345 @@ export default function CollectPage() {
     return <RouteLoading title={companyInput} messages={COLLECT_MESSAGES} />;
   if (submitting) return <RouteLoading messages={CLASSIFY_MESSAGES} />;
 
-  /* ═══════════ 1단계 — 자료 확인 (분류 실행 전) ═══════════ */
+  /* ═══════════ 1단계 — 순차 스텝 위저드 (① 자료 확인 ② 사용 프로그램 ③ 사전 설문) ═══════════ */
   if (stage === "review") {
     return (
       <main className="ax-step-enter mx-auto max-w-[760px] px-6 pb-24 pt-8">
-        <header className="mt-10">
-          <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
-            자료 확인
-          </h2>
-        </header>
-
-        {/* 실제 파일 업로드 input — '한번에 올리기'·슬롯 올리기가 이 input을 연다 */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png,.hwp,.docx,.doc"
-          onChange={(e) => {
-            onFilesPicked(e.target.files);
-            e.target.value = "";
-          }}
-          style={{ display: "none" }}
-          aria-hidden
-          tabIndex={-1}
-        />
-
-        {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9) */}
-        {requiredDocs && requiredDocs.items.length > 0 && (
-          <section className="mt-8 rounded-[var(--radius-l)] border border-line">
-            <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
-              <span className="min-w-0 [font:var(--text-label-s)] text-ink">
-                필수 서류 {requiredDocs.filled}/{requiredDocs.total}
-              </span>
-              <span className="flex flex-none items-center gap-2">
-                {requiredDocs.filled < requiredDocs.total && (
-                  <Button variant="ghost" size="sm" onClick={() => setOnlyMissing((v) => !v)}>
-                    {onlyMissing ? "전체 보기" : "부족한 것만"}
-                  </Button>
-                )}
-                {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  disabled={uploading}
-                  onClick={() => handleUploadClick()}
-                >
-                  {uploading ? "올리는 중" : "한번에 올리기"}
-                </Button>
-              </span>
-            </div>
-            <div className="ax-scrollbar-none max-h-[300px] overflow-y-auto">
-              {Object.entries(
-                requiredDocs.items
-                  .filter((it) => !onlyMissing || it.files.length === 0)
-                  .reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
-                    acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
-                    return acc;
-                  }, {}),
-              ).map(([group, docs]) => (
-                <div key={group} className="border-b border-line last:border-b-0">
-                  <div className="flex items-baseline justify-between gap-2 bg-surface-2 px-3.5 py-2">
-                    <span className="[font:var(--text-label-s)] text-ink-2">{group}</span>
-                    <span className="[font:var(--text-caption)] text-ink-4">
-                      {docs.filter((d) => d.files.length > 0).length}/{docs.length}
-                    </span>
-                  </div>
-                  {docs.map((d) => {
-                    const done = d.files.length > 0;
-                    return (
-                      <div
-                        key={d.docTypeId}
-                        className="flex items-center gap-2.5 border-t border-line-subtle px-3.5 py-2"
-                      >
-                        <span
-                          aria-hidden
-                          className={`inline-flex size-4 flex-none items-center justify-center rounded-full ${
-                            done
-                              ? "bg-[var(--bg-success-weak)] text-[var(--fg-success)]"
-                              : "bg-surface-3 text-ink-4"
-                          }`}
-                        >
-                          {done ? <Icons.check size={10} /> : null}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate [font:var(--text-label-s)] text-ink">
-                          {d.docTypeName}
-                        </span>
-                        {done ? (
-                          <span className="flex-none truncate [font:var(--text-caption)] text-ink-4">
-                            {d.files[0].name}
-                          </span>
-                        ) : (
-                          <Button
-                            variant="utility"
-                            size="sm"
-                            disabled={uploading}
-                            onClick={() => handleUploadClick(d.docTypeId)}
-                          >
-                            올리기
-                          </Button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
-
-        {uploadError && (
-          <p role="alert" className="mt-3 [font:var(--text-caption)] text-[var(--fg-danger)]">
-            {uploadError}
-          </p>
-        )}
-
-        {/* 사용 중인 프로그램 — 랜딩 3단계에서 이동 */}
-        <section className="mt-8">
-          <div
-            style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)", marginBottom: 10 }}
-          >
-            사용 중인 프로그램
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {SYSTEM_OPTIONS.map((name) => (
-              <Tag key={name} selected={systems.includes(name)} onClick={() => toggleSystem(name)}>
-                {name}
-              </Tag>
-            ))}
-            {/* 목록에 없는 프로그램을 직접 담는다 (수정요청v9) */}
-            <Tag selected={otherSelected} onClick={toggleOther}>
-              기타
-            </Tag>
-          </div>
-
-          {/* 직접 입력한 프로그램 — 태그로 붙고 X로 뺀다 */}
-          {otherOpen && (
-            <div style={{ marginTop: 10 }}>
-              <Input
-                value={otherInput}
-                onChange={(e) => setOtherInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== "Enter") return;
-                  e.preventDefault();
-                  addOtherSystem();
+        {/* 단계 표시 — 랜딩 DotProgress 패턴의 축소판 (도트 + 스텝 이름) */}
+        <div aria-label={`3단계 중 ${reviewStep}단계`} className="mt-10 flex items-center gap-4">
+          {REVIEW_STEP_LABELS.map((label, i) => (
+            <span
+              key={label}
+              className="flex items-center gap-1.5 [font:var(--text-caption)]"
+              style={{
+                color: reviewStep === i + 1 ? "var(--fg-brand)" : "var(--fg-quaternary)",
+              }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "var(--radius-full)",
+                  background: reviewStep >= i + 1 ? "var(--bg-brand)" : "var(--grey-300)",
+                  transition: "background-color var(--dur-base) var(--ease)",
                 }}
-                placeholder="프로그램 이름을 입력하고 Enter"
-                aria-label="기타 프로그램 이름"
-                autoFocus
               />
-              {otherSystems.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                  {otherSystems.map((name) => (
-                    <Tag key={name} selected onClick={() => toggleSystem(name)}>
-                      {name} ✕
-                    </Tag>
+              {label}
+            </span>
+          ))}
+        </div>
+
+        {/* ── 스텝 ① 자료 확인 — 분류 진행 로그 → 분류 결과가 반영된 필수 서류 검증 ── */}
+        {reviewStep === 1 && (
+          <>
+            <header className="mt-6">
+              <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
+                자료 확인
+              </h2>
+            </header>
+
+            {/* 실제 파일 업로드 input — '한번에 올리기'·슬롯 올리기가 이 input을 연다 */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png,.hwp,.docx,.doc"
+              onChange={(e) => {
+                onFilesPicked(e.target.files);
+                e.target.value = "";
+              }}
+              style={{ display: "none" }}
+              aria-hidden
+              tabIndex={-1}
+            />
+
+            {/* 분류 진행 로그 — 진입과 동시에 시작된 분류가 도는 동안 상단 표시 */}
+            {classifying && files && (
+              <div className="mt-8">
+                <ClassifyProgress files={files} />
+              </div>
+            )}
+
+            {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9) */}
+            {requiredDocs && requiredDocs.items.length > 0 && (
+              <section className="mt-8 rounded-[var(--radius-l)] border border-line">
+                <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
+                  <span className="min-w-0 [font:var(--text-label-s)] text-ink">
+                    필수 서류 {requiredDocs.filled}/{requiredDocs.total}
+                  </span>
+                  <span className="flex flex-none items-center gap-2">
+                    {requiredDocs.filled < requiredDocs.total && (
+                      <Button variant="ghost" size="sm" onClick={() => setOnlyMissing((v) => !v)}>
+                        {onlyMissing ? "전체 보기" : "부족한 것만"}
+                      </Button>
+                    )}
+                    {/* 부족·오분류를 이 자리에서 고친다 — 8영역 칸반 팝업 (분류 중에는 잠금) */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={classifying || uploading}
+                      onClick={() => setEditOpen(true)}
+                    >
+                      자료 편집
+                    </Button>
+                    {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={uploading}
+                      onClick={() => handleUploadClick()}
+                    >
+                      {uploading ? "올리는 중" : "한번에 올리기"}
+                    </Button>
+                  </span>
+                </div>
+                <div className="ax-scrollbar-none max-h-[300px] overflow-y-auto">
+                  {Object.entries(
+                    requiredDocs.items
+                      .filter((it) => !onlyMissing || it.files.length === 0)
+                      .reduce<Record<string, RequiredDocs["items"]>>((acc, it) => {
+                        acc[it.groupName] = [...(acc[it.groupName] ?? []), it];
+                        return acc;
+                      }, {}),
+                  ).map(([group, docs]) => (
+                    <div key={group} className="border-b border-line last:border-b-0">
+                      <div className="flex items-baseline justify-between gap-2 bg-surface-2 px-3.5 py-2">
+                        <span className="[font:var(--text-label-s)] text-ink-2">{group}</span>
+                        <span className="[font:var(--text-caption)] text-ink-4">
+                          {docs.filter((d) => d.files.length > 0).length}/{docs.length}
+                        </span>
+                      </div>
+                      {docs.map((d) => {
+                        const done = d.files.length > 0;
+                        return (
+                          <div
+                            key={d.docTypeId}
+                            className="flex items-center gap-2.5 border-t border-line-subtle px-3.5 py-2"
+                          >
+                            <span
+                              aria-hidden
+                              className={`inline-flex size-4 flex-none items-center justify-center rounded-full ${
+                                done
+                                  ? "bg-[var(--bg-success-weak)] text-[var(--fg-success)]"
+                                  : "bg-surface-3 text-ink-4"
+                              }`}
+                            >
+                              {done ? <Icons.check size={10} /> : null}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate [font:var(--text-label-s)] text-ink">
+                              {d.docTypeName}
+                            </span>
+                            {done ? (
+                              <span className="flex-none truncate [font:var(--text-caption)] text-ink-4">
+                                {d.files[0].name}
+                              </span>
+                            ) : (
+                              <Button
+                                variant="utility"
+                                size="sm"
+                                disabled={uploading}
+                                onClick={() => handleUploadClick(d.docTypeId)}
+                              >
+                                올리기
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                   ))}
                 </div>
+              </section>
+            )}
+
+            {uploadError && (
+              <p role="alert" className="mt-3 [font:var(--text-caption)] text-[var(--fg-danger)]">
+                {uploadError}
+              </p>
+            )}
+
+            {/* 진행 — 분류가 끝나야 다음 스텝으로 (워커가 멈추면 3분 뒤 잠금 해제) */}
+            <div className="mt-10 flex flex-col gap-2">
+              <Button
+                variant="primary"
+                size="lg"
+                full
+                disabled={uploading || (classifying && !classifyStuck)}
+                onClick={() => setReviewStep(2)}
+              >
+                자료가 충분해요
+              </Button>
+              {total === 0 && (
+                <Button
+                  variant="ghost"
+                  size="md"
+                  full
+                  disabled={uploading}
+                  onClick={() => setReviewStep(2)}
+                >
+                  자료 없이 진행
+                </Button>
               )}
             </div>
-          )}
-        </section>
 
-        {/* 사전 설문(프로파일링) — kind=primary, 카드형 단일 선택 */}
-        {primaries.length > 0 && (
-          <section className="mt-8">
-            <div
-              style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)", marginBottom: 4 }}
-            >
-              사전 설문
-            </div>
-            {primaries.map((q) => (
-              <div
-                key={q.code}
-                style={{ borderTop: "1px solid var(--line-subtle)", padding: "14px 0" }}
-              >
-                <div style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                  {q.text}
-                </div>
-                <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                  {q.choices.map((ch) => {
-                    const on = picked[q.code] === ch.value;
-                    return (
-                      <button
-                        key={ch.value}
-                        type="button"
-                        onClick={() =>
-                          setPicked((prev) => {
-                            /* 같은 선지를 다시 누르면 응답 취소 */
-                            const next = { ...prev };
-                            if (next[q.code] === ch.value) delete next[q.code];
-                            else next[q.code] = ch.value;
-                            return next;
-                          })
-                        }
-                        style={{
-                          textAlign: "left",
-                          padding: "9px 12px",
-                          borderRadius: "var(--radius-m)",
-                          border: `1px solid ${on ? "var(--line-brand)" : "var(--line-default)"}`,
-                          background: on ? "var(--bg-brand-weak)" : "var(--bg-elevated)",
-                          color: on ? "var(--fg-brand)" : "var(--fg-secondary)",
-                          font: "var(--text-body3)",
-                          fontFamily: "var(--font-sans)",
-                          cursor: "pointer",
-                        }}
-                      >
-                        {ch.label}
-                      </button>
-                    );
-                  })}
-                </div>
+            {/* 자료 편집 칸반 보드 — 2단계와 같은 연결 (닫으면 목록 갱신, 저장 시 폴링 재개) */}
+            {files && (
+              <FileEditBoard
+                assessmentId={assessmentId}
+                open={editOpen}
+                onClose={() => {
+                  setEditOpen(false);
+                  void fetchFiles(); // 팝업에서 올린 파일이 현황에 바로 보이게
+                }}
+                files={files}
+                onSaved={() => {
+                  // 재분류로 pending이 다시 생긴다 — 멈춰 있던 폴링을 재개해 이어받는다
+                  if (!pollTimer.current) pollTimer.current = setInterval(fetchFiles, 3000);
+                }}
+              />
+            )}
+          </>
+        )}
+
+        {/* ── 스텝 ② 사용 중인 프로그램 — 랜딩 3단계에서 이동 ── */}
+        {reviewStep === 2 && (
+          <>
+            <header className="mt-6">
+              <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
+                사용 중인 프로그램
+              </h2>
+            </header>
+
+            <section className="mt-8">
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {SYSTEM_OPTIONS.map((name) => (
+                  <Tag
+                    key={name}
+                    selected={systems.includes(name)}
+                    onClick={() => toggleSystem(name)}
+                  >
+                    {name}
+                  </Tag>
+                ))}
+                {/* 목록에 없는 프로그램을 직접 담는다 (수정요청v9) */}
+                <Tag selected={otherSelected} onClick={toggleOther}>
+                  기타
+                </Tag>
               </div>
-            ))}
-          </section>
+
+              {/* 직접 입력한 프로그램 — 태그로 붙고 X로 뺀다 */}
+              {otherOpen && (
+                <div style={{ marginTop: 10 }}>
+                  <Input
+                    value={otherInput}
+                    onChange={(e) => setOtherInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      addOtherSystem();
+                    }}
+                    placeholder="프로그램 이름을 입력하고 Enter"
+                    aria-label="기타 프로그램 이름"
+                    autoFocus
+                  />
+                  {otherSystems.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+                      {otherSystems.map((name) => (
+                        <Tag key={name} selected onClick={() => toggleSystem(name)}>
+                          {name} ✕
+                        </Tag>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <div className="mt-10 flex flex-col gap-2">
+              <Button
+                variant="primary"
+                size="lg"
+                full
+                disabled={proceeding}
+                onClick={proceedSystems}
+              >
+                다음
+              </Button>
+            </div>
+          </>
         )}
 
-        {error && (
-          <p style={{ margin: "24px 0 0", font: "var(--text-caption)", color: "var(--fg-danger, #d4380d)" }}>
-            {error}
-          </p>
-        )}
+        {/* ── 스텝 ③ 사전 설문(프로파일링) — kind=primary, 카드형 단일 선택 ── */}
+        {reviewStep === 3 && (
+          <>
+            <header className="mt-6">
+              <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
+                사전 설문
+              </h2>
+            </header>
 
-        {/* 진행 — 분류 시작 게이트 */}
-        <div className="mt-10 flex flex-col gap-2">
-          <Button
-            variant="primary"
-            size="lg"
-            full
-            disabled={proceeding || uploading}
-            onClick={proceed}
-          >
-            자료가 충분해요
-          </Button>
-          {total === 0 && (
-            <Button
-              variant="ghost"
-              size="md"
-              full
-              disabled={proceeding || uploading}
-              onClick={proceed}
-            >
-              자료 없이 진행
-            </Button>
-          )}
-        </div>
+            {primaries.length > 0 && (
+              <section className="mt-8">
+                {primaries.map((q) => (
+                  <div
+                    key={q.code}
+                    style={{ borderTop: "1px solid var(--line-subtle)", padding: "14px 0" }}
+                  >
+                    <div style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                      {q.text}
+                    </div>
+                    <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
+                      {q.choices.map((ch) => {
+                        const on = picked[q.code] === ch.value;
+                        return (
+                          <button
+                            key={ch.value}
+                            type="button"
+                            onClick={() =>
+                              setPicked((prev) => {
+                                /* 같은 선지를 다시 누르면 응답 취소 */
+                                const next = { ...prev };
+                                if (next[q.code] === ch.value) delete next[q.code];
+                                else next[q.code] = ch.value;
+                                return next;
+                              })
+                            }
+                            style={{
+                              textAlign: "left",
+                              padding: "9px 12px",
+                              borderRadius: "var(--radius-m)",
+                              border: `1px solid ${on ? "var(--line-brand)" : "var(--line-default)"}`,
+                              background: on ? "var(--bg-brand-weak)" : "var(--bg-elevated)",
+                              color: on ? "var(--fg-brand)" : "var(--fg-secondary)",
+                              font: "var(--text-body3)",
+                              fontFamily: "var(--font-sans)",
+                              cursor: "pointer",
+                            }}
+                          >
+                            {ch.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </section>
+            )}
+
+            <div className="mt-10 flex flex-col gap-2">
+              <Button
+                variant="primary"
+                size="lg"
+                full
+                disabled={proceeding}
+                onClick={proceedSurveys}
+              >
+                다음
+              </Button>
+            </div>
+          </>
+        )}
       </main>
     );
   }
