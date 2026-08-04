@@ -546,8 +546,8 @@ body {
   width: min(640px, calc(100vw - 32px));
 }
 .ax-modal--full {
-  width: calc(100vw - 40px);
-  max-width: 1560px;
+  /* 데스크톱에서 칸반 컬럼이 가로 스크롤 없이 다 보이게 — 뷰포트에 맞춰 확장 */
+  width: min(96vw, 1880px);
   max-height: calc(100vh - 40px);
 }
 @keyframes ax-fade-in {

@@ -113,10 +113,8 @@ function FileCell({ f }: { f: FileRow }) {
 
 export default function CollectPage() {
   const router = useRouter();
-  const { companyInput, assessmentId, systems, completedSteps, completeStep, update } =
-    useDiagnosis();
+  const { companyInput, assessmentId, systems, completeStep, update } = useDiagnosis();
 
-  const [booting, setBooting] = useState(!completedSteps.includes("collect"));
   /** 1단계(자료 확인) / 2단계(자료 분류) — null은 판별 전 */
   const [stage, setStage] = useState<"review" | "classify" | null>(null);
   /** 1단계 내 순차 스텝 — ① 자료 확인 ② 사용 프로그램 ③ 사전 설문 */
@@ -152,13 +150,6 @@ export default function CollectPage() {
   const [proceeding, setProceeding] = useState(false);
   /** 2단계 보완 설문 팝업 */
   const [surveyOpen, setSurveyOpen] = useState(false);
-
-  /* 최초 진입 수집 연출 로딩 (재방문 시 생략 — 기존 정책 유지) */
-  useEffect(() => {
-    if (!booting) return;
-    const t = setTimeout(() => setBooting(false), 4200);
-    return () => clearTimeout(t);
-  }, [booting]);
 
   /* 분류 현황 폴링 — 전부 끝나면(대기·처리중 없음) 중단 */
   const fetchFiles = useCallback(async () => {
@@ -482,16 +473,17 @@ export default function CollectPage() {
     );
   }
 
-  if (booting || stage === null)
+  /* 진입 판별(assessment 조회)·초기 파일 조회가 끝날 때까지만 로딩 — 끝나면 즉시 전환 */
+  if (stage === null)
     return <RouteLoading title={companyInput} messages={COLLECT_MESSAGES} />;
   if (submitting) return <RouteLoading messages={CLASSIFY_MESSAGES} />;
 
   /* ═══════════ 1단계 — 순차 스텝 위저드 (① 자료 확인 ② 사용 프로그램 ③ 사전 설문) ═══════════ */
   if (stage === "review") {
     return (
-      <main className="ax-step-enter mx-auto max-w-[760px] px-6 pb-24 pt-8">
+      <main className="ax-step-enter mx-auto max-w-[760px] px-6 pb-12 pt-8">
         {/* 단계 표시 — 랜딩 DotProgress 패턴의 축소판 (도트 + 스텝 이름) */}
-        <div aria-label={`3단계 중 ${reviewStep}단계`} className="mt-10 flex items-center gap-4">
+        <div aria-label={`3단계 중 ${reviewStep}단계`} className="mt-8 flex items-center gap-4">
           {REVIEW_STEP_LABELS.map((label, i) => (
             <span
               key={label}
@@ -518,7 +510,7 @@ export default function CollectPage() {
         {/* ── 스텝 ① 자료 확인 — 분류 진행 로그 → 분류 결과가 반영된 필수 서류 검증 ── */}
         {reviewStep === 1 && (
           <>
-            <header className="mt-6">
+            <header className="mt-3">
               <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
                 자료 확인
               </h2>
@@ -539,11 +531,18 @@ export default function CollectPage() {
               tabIndex={-1}
             />
 
-            {/* 분류 진행 로그 — 진입과 동시에 시작된 분류가 도는 동안 상단 표시 */}
+            {/* 분류 진행 로그 — 진입과 동시에 시작된 분류가 도는 동안 카드로 표시 (라벨은 2단계 문구 재사용) */}
             {classifying && files && (
-              <div className="mt-8">
-                <ClassifyProgress files={files} />
-              </div>
+              <section className="mt-8 rounded-[var(--radius-l)] border border-line">
+                <div className="border-b border-line px-3.5 py-2.5">
+                  <span className="[font:var(--text-label-s)] text-ink">
+                    AI가 자료를 분류하고 있어요 ({doneCount}/{total})
+                  </span>
+                </div>
+                <div className="px-3.5 py-3">
+                  <ClassifyProgress files={files} />
+                </div>
+              </section>
             )}
 
             {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9) */}
@@ -559,15 +558,6 @@ export default function CollectPage() {
                         {onlyMissing ? "전체 보기" : "부족한 것만"}
                       </Button>
                     )}
-                    {/* 부족·오분류를 이 자리에서 고친다 — 8영역 칸반 팝업 (분류 중에는 잠금) */}
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={classifying || uploading}
-                      onClick={() => setEditOpen(true)}
-                    >
-                      자료 편집
-                    </Button>
                     {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
                     <Button
                       variant="secondary"
@@ -579,7 +569,8 @@ export default function CollectPage() {
                     </Button>
                   </span>
                 </div>
-                <div className="ax-scrollbar-none max-h-[300px] overflow-y-auto">
+                {/* 화면 높이에 맞춰 확장 — 뷰포트가 낮으면 패널 안에서 자연 스크롤 */}
+                <div className="ax-scrollbar-none max-h-[max(300px,60vh)] overflow-y-auto">
                   {Object.entries(
                     requiredDocs.items
                       .filter((it) => !onlyMissing || it.files.length === 0)
@@ -644,17 +635,27 @@ export default function CollectPage() {
               </p>
             )}
 
-            {/* 진행 — 분류가 끝나야 다음 스텝으로 (워커가 멈추면 3분 뒤 잠금 해제) */}
+            {/* 진행 — 자료 편집(칸반) + 다음. 분류가 끝나야 다음 스텝으로 (워커가 멈추면 3분 뒤 잠금 해제) */}
             <div className="mt-10 flex flex-col gap-2">
-              <Button
-                variant="primary"
-                size="lg"
-                full
-                disabled={uploading || (classifying && !classifyStuck)}
-                onClick={() => setReviewStep(2)}
-              >
-                자료가 충분해요
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  disabled={classifying || uploading || total === 0}
+                  onClick={() => setEditOpen(true)}
+                >
+                  자료 편집
+                </Button>
+                <Button
+                  variant="primary"
+                  size="lg"
+                  className="flex-1"
+                  disabled={uploading || (classifying && !classifyStuck)}
+                  onClick={() => setReviewStep(2)}
+                >
+                  다음 →
+                </Button>
+              </div>
               {total === 0 && (
                 <Button
                   variant="ghost"
@@ -690,7 +691,7 @@ export default function CollectPage() {
         {/* ── 스텝 ② 사용 중인 프로그램 — 랜딩 3단계에서 이동 ── */}
         {reviewStep === 2 && (
           <>
-            <header className="mt-6">
+            <header className="mt-3">
               <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
                 사용 중인 프로그램
               </h2>
@@ -758,7 +759,7 @@ export default function CollectPage() {
         {/* ── 스텝 ③ 사전 설문(프로파일링) — kind=primary, 카드형 단일 선택 ── */}
         {reviewStep === 3 && (
           <>
-            <header className="mt-6">
+            <header className="mt-3">
               <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
                 사전 설문
               </h2>
