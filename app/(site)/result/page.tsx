@@ -60,6 +60,8 @@ type AxisView = {
   industryAvg: number | null;
   /** 축별 소견 한 문장 — 서사 생성분이 없으면 null */
   finding: string | null;
+  /** 축별 상세 서술 2~4문장 — narrative.detail.axis_details 매칭 (구버전 서사에는 없음) */
+  detail: string | null;
 };
 
 type EvidenceItem = { kind: string; label: string; snippet?: string };
@@ -143,6 +145,14 @@ type ResultPayload = {
       strategy: string;
       strategyLabel?: string;
       axisFindings?: { axisCode: string; finding: string }[];
+      /** 상세 서술 — 요약의 근거를 수치·문서명 인용으로 풀어쓴 본문 (구버전 서사에는 없음) */
+      detail?: {
+        overview?: string;
+        strengths_detail?: string;
+        improvements_detail?: string;
+        strategy_detail?: string;
+        axis_details?: { axisCode: string; text: string }[];
+      } | null;
     } | null;
   } | null;
 };
@@ -171,6 +181,27 @@ function EvidenceTextList({ items }: { items: EvidenceItem[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** 종합 분석 상세 서술 — 추론 AI 작성 본문. 왼쪽 정렬·문단 유지, 없으면 아무것도 렌더하지 않는다 */
+function DetailText({ text, style }: { text?: string | null; style?: CSSProperties }) {
+  if (!text) return null;
+  return (
+    <p
+      style={{
+        margin: 0,
+        font: "var(--text-body3)",
+        lineHeight: 1.7,
+        color: "var(--fg-secondary)",
+        textAlign: "left",
+        whiteSpace: "pre-line",
+        maxWidth: 860,
+        ...style,
+      }}
+    >
+      {text}
+    </p>
   );
 }
 
@@ -793,6 +824,11 @@ export default function ResultPage() {
   const findingByAxis = new Map(
     (result?.narrative?.axisFindings ?? []).map((f) => [f.axisCode, f.finding]),
   );
+  /* 상세 서술 — 요약 아래에 붙는 본문. 구버전 서사에는 없어 관용적으로 접근 */
+  const narrativeDetail = result?.narrative?.detail ?? null;
+  const axisDetailByCode = new Map(
+    (narrativeDetail?.axis_details ?? []).map((d) => [d.axisCode, d.text]),
+  );
 
   const axes: AxisView[] = data.axes.map((a) => ({
     code: a.axisCode,
@@ -802,6 +838,7 @@ export default function ResultPage() {
     totalCount: a.totalCount ?? 0,
     industryAvg: benchByAxis.get(a.axisCode) ?? null,
     finding: findingByAxis.get(a.axisCode) ?? null,
+    detail: axisDetailByCode.get(a.axisCode) ?? null,
   }));
   const axisByCode = new Map(axes.map((a) => [a.code, a]));
   const axesByBottleneck = [...axes].sort((a, b) => a.score - b.score);
@@ -1294,6 +1331,11 @@ export default function ResultPage() {
                           {selectedScore.finding ??
                             `판정 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
                         </p>
+                        {/* 축별 상세 서술 — 소견 요약 아래 본문 (없으면 미렌더) */}
+                        <DetailText
+                          text={selectedScore.detail}
+                          style={{ marginTop: 10, color: "var(--fg-tertiary)" }}
+                        />
                         <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
                           <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
                             점수 근거
@@ -1492,6 +1534,8 @@ export default function ResultPage() {
                 >
                   {result.narrative.conclusion}
                 </p>
+                {/* 종합 상태 상세 서술 — 결론 요약 아래 본문 (구버전 서사에는 없어 미렌더) */}
+                <DetailText text={narrativeDetail?.overview} style={{ marginTop: 14 }} />
 
                 <div style={{ marginTop: 24, display: "grid", gap: 22 }}>
                   {(
@@ -1500,18 +1544,26 @@ export default function ResultPage() {
                         label: "강점",
                         color: "var(--fg-success)",
                         items: result.narrative.strengths,
+                        detail: narrativeDetail?.strengths_detail,
                       },
                       {
                         label: "보완",
                         color: "var(--fg-warning)",
                         items: result.narrative.improvements,
+                        detail: narrativeDetail?.improvements_detail,
                       },
                       {
                         label: "AX 전략 제안",
                         color: "var(--fg-brand)",
                         items: [{ title: null, body: result.narrative.strategy }],
+                        detail: narrativeDetail?.strategy_detail,
                       },
-                    ] as { label: string; color: string; items: { title: string | null; body: string }[] }[]
+                    ] as {
+                      label: string;
+                      color: string;
+                      items: { title: string | null; body: string }[];
+                      detail?: string;
+                    }[]
                   ).map((group) => (
                     <div key={group.label}>
                       <div
@@ -1569,6 +1621,11 @@ export default function ResultPage() {
                           </li>
                         ))}
                       </ul>
+                      {/* 블록별 상세 서술 — 불릿 본문과 같은 들여쓰기(불릿 5 + 간격 10) */}
+                      <DetailText
+                        text={group.detail}
+                        style={{ marginTop: 10, paddingLeft: 15, color: "var(--fg-tertiary)" }}
+                      />
                     </div>
                   ))}
                 </div>
