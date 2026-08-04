@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { ClassifyProgress } from "@/components/flow/ClassifyProgress";
 import { FileEditBoard } from "@/components/flow/FileEditBoard";
@@ -11,7 +11,7 @@ import { RouteLoading } from "@/components/flow/RouteLoading";
 import { SurveyModal } from "@/components/flow/SurveyModal";
 import { DIGITAL_LEVELS } from "@/data/rubric/meta";
 import { api } from "@/lib/api";
-import { Button, Card, Icons, Input, Loader, Modal, Tag } from "@/components/ui";
+import { BackIconButton, Button, Card, Icons, Input, Loader, Modal, Tag } from "@/components/ui";
 import { waitForJudge } from "@/lib/judgeWait";
 
 /**
@@ -41,6 +41,16 @@ const COLLECT_MESSAGES = [
 const CLASSIFY_MESSAGES = ["자료를 분석하고 있어요", "분석된 점수를 계산하고 있어요", "업무 영역을 상태를 정리하고 있어요"];
 
 const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
+
+/** 1단계 위저드 카드 — 랜딩 phase 카드와 같은 중앙 카드 골격 */
+const reviewCardStyle: CSSProperties = {
+  width: "100%",
+  maxWidth: 680,
+  position: "relative",
+  padding: 40,
+  /* margin auto — 카드가 뷰포트보다 길어져도 위가 잘리지 않는 중앙 정렬 (랜딩과 동일) */
+  margin: "auto",
+};
 
 type FileRow = {
   id: string;
@@ -480,9 +490,20 @@ export default function CollectPage() {
   /* ═══════════ 1단계 — 순차 스텝 위저드 (① 자료 확인 ② 사용 프로그램 ③ 사전 설문) ═══════════ */
   if (stage === "review") {
     return (
-      <main className="ax-step-enter mx-auto max-w-[760px] px-6 pb-12 pt-8">
+      <main className="flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
+        <Card key={reviewStep} className="ax-step-enter" radius="2xl" style={reviewCardStyle}>
+        {/* 뒤로 가기 — 카드 좌상단, ②→① ③→② (랜딩 카드와 같은 패턴) */}
+        {reviewStep > 1 && (
+          <BackIconButton
+            label={`${REVIEW_STEP_LABELS[reviewStep - 2]}으로 돌아가기`}
+            onClick={() => setReviewStep(reviewStep === 3 ? 2 : 1)}
+          />
+        )}
         {/* 단계 표시 — 랜딩 DotProgress 패턴의 축소판 (도트 + 스텝 이름) */}
-        <div aria-label={`3단계 중 ${reviewStep}단계`} className="mt-8 flex items-center gap-4">
+        <div
+          aria-label={`3단계 중 ${reviewStep}단계`}
+          className="flex items-center justify-center gap-4"
+        >
           {REVIEW_STEP_LABELS.map((label, i) => (
             <span
               key={label}
@@ -509,11 +530,9 @@ export default function CollectPage() {
         {/* ── 스텝 ① 자료 확인 — 분류 진행 로그 → 분류 결과가 반영된 필수 서류 검증 ── */}
         {reviewStep === 1 && (
           <>
-            <header className="mt-3">
-              <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
-                자료 확인
-              </h2>
-            </header>
+            <h2 className="ax-heading mb-0 mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
+              자료 확인
+            </h2>
 
             {/* 실제 파일 업로드 input — '한번에 올리기'·슬롯 올리기가 이 input을 연다 */}
             <input
@@ -691,11 +710,9 @@ export default function CollectPage() {
         {/* ── 스텝 ② 사용 중인 프로그램 — 랜딩 3단계에서 이동 ── */}
         {reviewStep === 2 && (
           <>
-            <header className="mt-3">
-              <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
-                사용 중인 프로그램
-              </h2>
-            </header>
+            <h2 className="ax-heading mb-0 mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
+              사용 중인 프로그램
+            </h2>
 
             <section className="mt-8">
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -759,11 +776,9 @@ export default function CollectPage() {
         {/* ── 스텝 ③ 사전 설문(프로파일링) — kind=primary, 카드형 단일 선택 ── */}
         {reviewStep === 3 && (
           <>
-            <header className="mt-3">
-              <h2 className="ax-heading m-0 [font:var(--text-h2)] tracking-[var(--track-heading)] text-ink">
-                사전 설문
-              </h2>
-            </header>
+            <h2 className="ax-heading mb-0 mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
+              사전 설문
+            </h2>
 
             {primaries.length > 0 && (
               <section className="mt-8">
@@ -826,6 +841,7 @@ export default function CollectPage() {
             </div>
           </>
         )}
+        </Card>
       </main>
     );
   }
