@@ -40,7 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# docs - exclude reference materials and work notes, but keep update logs and design system
-/docs
+# docs - 참고자료·작업 노트는 로컬 전용, 작업 기록(update)만 추적
+# (/docs 통짜 무시면 하위 예외가 안 먹으므로 /docs/* + 재포함 형태여야 한다)
+/docs/*
+!/docs/update/
 
 CLAUDE.md

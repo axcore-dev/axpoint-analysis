@@ -1,6 +1,6 @@
 # AXpoint Analysis
 
-중소기업 AX(AI 전환) 진단 플랫폼. 기업 자료를 수집·분석해 6축 채점 기반의 진단 결과와 개선 과제, 로드맵, 보고서를 제공한다.
+중소기업 AX(AI 전환) 진단 플랫폼. 기업 자료를 수집·분석해 5축 채점 기반의 진단 결과와 개선 과제, 로드맵, 보고서를 제공한다.
 
 > 현재 상태: **전 화면 실 API 연동.** 백엔드는 `axpoint-analysis-api`(Hono :3001, 쿠키 세션). `data/`의 시나리오 더미는 더 이상 어떤 화면도 참조하지 않는다(정리 대기 — `docs/로직.md` §5). 더미데이터 데모 버전은 `archive/dummy-data-demo` 브랜치에 보존되어 있다.
 
@@ -12,7 +12,7 @@
   `layout.tsx`에서 preload). 축 범위를 빼면 브라우저가 굵은 글씨를 합성해 뭉갠다
 - **UI**: 자체 프리미티브(`components/ui`) + Radix UI 일부(dialog/tabs/tooltip/collapsible)
 - **PDF**: html2canvas + jsPDF (`lib/pdf.ts`)
-- **백엔드(예정)**: 구버전은 Contabo 서버 Docker(FastAPI + Celery + Postgres + Redis + MinIO). 리뉴얼 설계는 `docs/작업 지시/`, `docs/DB(new)/` 참고 (docs는 로컬 전용)
+- **백엔드**: `axpoint-analysis-api` — Hono(:3001) + Drizzle/Postgres + BullMQ/Redis + MinIO, better-auth 쿠키 세션. 설계 문서는 루트 `docs/`(DB 설계.md · 로직.md · 외부 API 명세.md)
 
 ## 시작하기
 
@@ -23,7 +23,7 @@ npm run build   # 프로덕션 빌드
 npm run lint    # ESLint
 ```
 
-별도 환경 변수 없이 실행된다(데모 단계). 로그인은 가짜 인증으로, 어떤 값이든 통과한다.
+백엔드(`axpoint-analysis-api`, :3001)가 떠 있어야 로그인·진단이 동작한다(`NEXT_PUBLIC_API_URL` 미설정 시 `http://localhost:3001`). 인증은 better-auth 쿠키 세션 — 이메일 인증·Google OAuth·게스트.
 
 ## 폴더 구조
 
@@ -59,43 +59,43 @@ components/
 │                   PublicDataSection(공개데이터 수집·SSE), SurveyModal(보완 설문)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
 
-data/               ★ 더미데이터 계층 = 백엔드 대체물 (API 연동 시 이 계층을 교체)
-├── rubric/         채점 체계 SSOT — 27문항(questions), 앵커 환산·레벨 기준(meta), 설문(survey)
-├── scenario/       (주)데모기업 단일 시나리오 — 기업/문서/판정/서사/ROI 등 12개 파일
-├── catalog/        개선 과제 22건(tasks), AX 7단계 방법론(method)
-└── glossary.ts     용어사전 (툴팁)
+data/               구 더미데이터 계층 — 시나리오·카탈로그는 전 화면 미참조(정리 보류 — 루트 docs/로직.md §5)
+├── rubric/         구 채점 체계 — 화면은 meta의 DIGITAL_LEVELS(L1~L4 라벨)만 참조
+├── scenario/       (주)데모기업 더미 시나리오 — 화면 미참조
+├── catalog/        구 과제 카탈로그 — 화면 미참조 (실데이터는 백엔드 시드)
+└── glossary.ts     용어사전 (툴팁) — result 화면이 참조
 
 lib/                API 클라이언트 + 순수 계산 로직
 ├── api.ts          백엔드 호출 공통 (쿠키 세션 credentials 포함)
 ├── companySearch.ts 기업 검색 자동완성 공용 — 첫 화면·내 정보가 공유
 ├── types.ts        도메인 타입 SSOT — 백엔드 API 계약의 출발점
-├── scoring/        6축 채점 엔진 (앵커 판정 → 축 점수 → 레벨/균형)
-├── roadmap.ts      선택 과제 → 의존성 해소 → 단계별 로드맵
-├── roi.ts          선택 과제 → 연 효과·회수 기간
+├── scoring/        (미참조) 구 프론트 채점 엔진 — 채점은 백엔드가 한다
+├── roadmap.ts      (미참조) 구 로드맵 계산 — 화면은 서버 응답 표시
+├── roi.ts          (미참조) 구 ROI 계산 — 보고서 ROI는 백엔드 산출
 └── pdf.ts          ReportDocument DOM → A4 PDF Blob (브라우저 다운로드 + 메일 첨부 업로드 공용)
 
 public/             로고, fonts/PretendardVariable.woff2 (본문 서체 — 유일한 웹폰트)
-docs/               기획·수정요청·참고자료·작업 로그 (.gitignore — git 미추적, 로컬 전용)
+docs/               기획·수정요청·참고자료 (로컬 전용) — update/(작업 기록)만 git 추적
 ```
 
 ## 데이터 흐름
 
 ```
-data/rubric (채점 기준) + data/scenario/judgments (문항별 앵커 판정)
+업로드 → 분류(방법론 C) → 문항 판정(A0~A4) → 채점·서사·추천   (전부 백엔드)
+                              │
+                              ▼
+result / report 화면 ◄── lib/api.ts (쿠키 세션, 진행률 SSE·폴링)
         │
-        ▼
-lib/scoring/engine ──► 종합 점수·레벨·6축·강점/병목 ──► result / report 화면
-        │
-사용자 과제 선택 (DiagnosisContext)
-        ├──► lib/roadmap ──► 로드맵
-        └──► lib/roi ──► ROI
-                │
-                ▼
-        ReportDocument ──► lib/pdf ──► PDF
+사용자 과제 담기 (서버 저장)
+        ├──► roadmap 화면 — 서버 로드맵 응답 표시
+        └──► report 화면 — 요약·ROI 드릴다운
+                              │
+                              ▼
+              ReportDocument ──► lib/pdf ──► PDF 다운로드·이메일 발송
 ```
 
-- 점수는 하드코딩하지 않는다. 항상 `rubric`(기준) × `judgments`(판정) → `engine`(계산) 3층 구조를 거친다.
-- 백엔드 연동 시 교체 지점은 세 곳: `data/scenario/index.ts`(배럴 → API 클라이언트), `components/auth/AuthContext.tsx`(가짜 인증 → 실제 세션), `app/mypage/page.tsx`(하드코딩 분석 기록).
+- 채점·판정·추천은 전부 백엔드(`axpoint-analysis-api`)가 계산한다. 프론트는 표시 전용이며 점수를 재계산하지 않는다.
+- 로직 사양은 루트 `docs/로직.md`, 구 프론트 계산기(`lib/scoring` 등)는 미참조 — 정리 보류(같은 문서 §5).
 
 ## 협업 규칙
 
@@ -103,4 +103,4 @@ lib/scoring/engine ──► 종합 점수·레벨·6축·강점/병목 ──�
 - **브랜치**: `main` 보호를 원칙으로, 기능 단위 브랜치 → PR → 머지. (현재 1인 개발이라 main 직접 커밋 허용, 팀원 합류 시 PR 필수로 전환)
 - `archive/dummy-data-demo`: 더미데이터 데모 버전 보존 브랜치. 삭제 금지.
 - **커밋**: 기능 단위로 쪼개고, 한국어로 무엇을 했는지 명확히 쓴다.
-- **문서**: `docs/`는 git 미추적(로컬 전용)이므로, 팀원과 공유할 문서는 별도 채널로 전달하거나 추적 전환을 논의한다.
+- **문서**: `docs/`는 로컬 전용(미추적)이되 `docs/update/`(작업 기록)만 git으로 추적한다. 그 외 공유할 문서는 별도 채널로 전달하거나 추적 전환을 논의한다.
