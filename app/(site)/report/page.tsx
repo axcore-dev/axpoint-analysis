@@ -1,18 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { RouteLoading } from "@/components/flow/RouteLoading";
+import {
+  ReportDocument,
+  type ReportRoi,
+  type ReportSummary,
+} from "@/components/report/ReportDocument";
 import { api } from "@/lib/api";
-import { Button, Card, Eyebrow, Icons, Input, Modal } from "@/components/ui";
+import { generateReportPdf, reportFileName } from "@/lib/pdf";
+import { Button, Card, Eyebrow, Icons, Input, Loader, Modal } from "@/components/ui";
 
 /**
  * S5 보고서(전환) — 백엔드 실연동 + 원본 요약·티저 레이아웃 복원.
  * 요약 4카드(현재 단계·포지션·예상 연 효과·투자 회수) + 산출 내역 드릴다운
- * → CTA(보고서 받기 리드 수집 / 문의하기) → 체험 티저(axcore.it.kr 새 탭).
+ * → CTA(보고서 받기 / 문의하기) → 체험 티저(axcore.it.kr 새 탭).
  * 포지션은 벤치마크, 연 효과·회수는 과제 연 절감액(roi_assumption)이 있을 때만 값 표시.
- * PDF 다운로드는 보고서 구성 확정 후 재도입한다.
+ *
+ * 보고서 받기: 숨김 렌더한 ReportDocument를 lib/pdf로 캡처해 PDF Blob 생성 →
+ * ① 즉시 브라우저 다운로드 ② POST /api/leads/report(multipart)로 업로드해
+ * 입력한 이메일로 첨부 발송. 발송 실패해도 다운로드는 이미 된 상태로 안내한다.
  */
 
 const CONTACT_URL = "https://axcore.ai.kr/#5.contact";
@@ -21,25 +30,8 @@ const WORKSPACE_URL = "https://axcore.it.kr";
 const fmt = (n: number) => n.toLocaleString("ko-KR");
 const mono = { fontFamily: "var(--font-mono)", letterSpacing: "0" } as const;
 
-type Roi = {
-  items: { taskNo: number; label: string; annualSaving: number; assumption: string }[];
-  totalAnnualSaving: number;
-  totalSelfPay: number;
-  paybackMonths: number | null;
-};
-
-type Summary = {
-  level: number;
-  levelName: string;
-  totalScore: string;
-  diagnosedAt: string | null;
-  industryAvg: number | null;
-  taskCount: number;
-  totalMonths: number;
-  costMin: number;
-  costMax: number;
-  roi: Roi | null;
-};
+type Roi = ReportRoi;
+type Summary = ReportSummary;
 
 type Drill = "roi" | "payback" | null;
 
@@ -152,8 +144,10 @@ export default function ReportPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [emailError, setEmailError] = useState<string | null>(null);
-  const [sentTo, setSentTo] = useState<string | null>(null);
+  // 제출 결과 — ok: 메일 발송까지 성공 / !ok: 다운로드는 됐지만 발송 실패
+  const [sent, setSent] = useState<{ email: string; ok: boolean } | null>(null);
   const [sending, setSending] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!assessmentId) return;
@@ -234,20 +228,40 @@ export default function ReportPage() {
   const monthlySaving =
     roi && roi.totalAnnualSaving > 0 ? Math.round(roi.totalAnnualSaving / 12) : 0;
 
-  const submitLead = async () => {
-    if (!canSend || sending) return;
+  /* 보고서 제출 — PDF 생성 → 즉시 다운로드 → 서버 업로드(이메일 첨부 발송) */
+  const submitReport = async () => {
+    if (!canSend || sending || !reportRef.current) return;
     setSending(true);
     setEmailError(null);
+
+    let blob: Blob;
+    const fileName = reportFileName(companyName || "보고서");
     try {
-      await api("/api/leads", {
-        method: "POST",
-        body: JSON.stringify({ email: email.trim(), context: "pdf", assessmentId }),
-      });
-      setSentTo(email.trim());
-      completeStep("report");
-    } catch (e) {
-      setEmailError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요.");
+      blob = await generateReportPdf(reportRef.current);
+      // 생성 즉시 브라우저 다운로드 — 발송이 실패해도 파일은 남는다
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setEmailError("보고서 생성에 실패했어요. 잠시 후 다시 시도해 주세요.");
+      setSending(false);
+      return;
+    }
+
+    try {
+      const form = new FormData();
+      form.append("email", email.trim());
+      if (assessmentId) form.append("assessmentId", assessmentId);
+      form.append("pdf", blob, fileName);
+      await api("/api/leads/report", { method: "POST", body: form });
+      setSent({ email: email.trim(), ok: true });
+    } catch {
+      setSent({ email: email.trim(), ok: false });
     } finally {
+      completeStep("report");
       setSending(false);
     }
   };
@@ -638,22 +652,24 @@ export default function ReportPage() {
         </Card>
       </section>
 
-      {/* ══ 보고서 받기 모달 — 이메일 수집(리드) ══ */}
+      {/* ══ 보고서 받기 모달 — PDF 생성 → 다운로드 + 이메일 발송 ══ */}
       <Modal
         open={modalOpen}
         onClose={() => {
           setModalOpen(false);
-          setSentTo(null);
+          setSent(null);
         }}
         title="보고서 받기"
       >
-        {sentTo ? (
+        {sent ? (
           <div style={{ textAlign: "center", padding: "8px 0" }}>
             <p style={{ margin: 0, font: "var(--text-body-m, var(--text-body2))", color: "var(--fg-primary)" }}>
-              신청이 접수됐어요.
+              {sent.ok ? "이메일로 발송했어요." : "발송에 실패했어요. 파일은 다운로드됐어요."}
             </p>
             <p style={{ margin: "8px 0 18px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-              보고서가 준비되면 {sentTo}로 보내드려요.
+              {sent.ok
+                ? `${sent.email}의 받은편지함을 확인해 주세요. 파일도 함께 다운로드됐어요.`
+                : "잠시 후 다시 시도하시거나, 다운로드된 파일을 이용해 주세요."}
             </p>
             <Button variant="secondary" full onClick={() => window.open(CONTACT_URL, "_blank")}>
               전문가와 결과 리뷰하기
@@ -682,13 +698,22 @@ export default function ReportPage() {
               </p>
             )}
             <div style={{ marginTop: 16 }}>
-              <Button variant="primary" full disabled={!canSend || sending} onClick={submitLead}>
-                {sending ? "접수하고 있어요" : "받기"}
+              <Button variant="primary" full disabled={!canSend || sending} onClick={submitReport}>
+                {sending ? <Loader /> : "받기"}
               </Button>
             </div>
           </div>
         )}
       </Modal>
+
+      {/* PDF 캡처용 숨김 렌더 — 화면 밖 고정 배치 (display:none은 html2canvas 캡처 불가) */}
+      <div
+        ref={reportRef}
+        aria-hidden
+        style={{ position: "fixed", left: -10000, top: 0, width: 794, pointerEvents: "none" }}
+      >
+        <ReportDocument companyName={companyName || "귀사"} summary={summary} />
+      </div>
     </div>
   );
 }

@@ -57,7 +57,7 @@ components/
 │                   WorkflowStandard(표준 워크플로우 3행 카드 — collect·result 공용 데이터),
 │                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
 │                   PublicDataSection(공개데이터 수집·SSE), SurveyModal(보완 설문)
-└── report/         ReportDocument — PDF용 A4 페이지 DOM
+└── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
 
 data/               ★ 더미데이터 계층 = 백엔드 대체물 (API 연동 시 이 계층을 교체)
 ├── rubric/         채점 체계 SSOT — 27문항(questions), 앵커 환산·레벨 기준(meta), 설문(survey)
@@ -72,7 +72,7 @@ lib/                API 클라이언트 + 순수 계산 로직
 ├── scoring/        6축 채점 엔진 (앵커 판정 → 축 점수 → 레벨/균형)
 ├── roadmap.ts      선택 과제 → 의존성 해소 → 단계별 로드맵
 ├── roi.ts          선택 과제 → 연 효과·회수 기간
-└── pdf.ts          ReportDocument DOM → A4 PDF
+└── pdf.ts          ReportDocument DOM → A4 PDF Blob (브라우저 다운로드 + 메일 첨부 업로드 공용)
 
 public/             로고, fonts/PretendardVariable.woff2 (본문 서체 — 유일한 웹폰트)
 docs/               기획·수정요청·참고자료·작업 로그 (.gitignore — git 미추적, 로컬 전용)

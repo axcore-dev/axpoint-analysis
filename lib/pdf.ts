@@ -26,14 +26,17 @@ function sanitizeFileName(name: string): string {
   return cleaned.length > 0 ? cleaned : "보고서";
 }
 
+/** 다운로드·메일 첨부 공용 파일명 */
+export function reportFileName(companyName: string): string {
+  return `AXpoint_진단보고서_${sanitizeFileName(companyName)}.pdf`;
+}
+
 /**
  * element 내부의 페이지 컨테이너들(각 794×1123px)을 페이지 단위로 캡처해
- * A4 세로 PDF로 저장한다. 저장 파일명: AXpoint_진단보고서_{회사명}.pdf
+ * A4 세로 PDF Blob으로 반환한다 — 브라우저 다운로드와 서버 업로드(메일 첨부)에
+ * 같은 Blob을 쓴다. 저장은 호출부 책임.
  */
-export async function generateReportPdf(
-  element: HTMLElement,
-  companyName: string,
-): Promise<void> {
+export async function generateReportPdf(element: HTMLElement): Promise<Blob> {
   /* 웹폰트(Pretendard) 로드 완료 후 캡처 — 폰트 미적용 캡처 방지 */
   if (typeof document !== "undefined" && document.fonts?.ready) {
     await document.fonts.ready;
@@ -69,5 +72,5 @@ export async function generateReportPdf(
     );
   }
 
-  pdf.save(`AXpoint_진단보고서_${sanitizeFileName(companyName)}.pdf`);
+  return pdf.output("blob");
 }
