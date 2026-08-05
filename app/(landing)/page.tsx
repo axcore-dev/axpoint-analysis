@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthContext";
 import { LoginModal } from "@/components/auth/LoginModal";
 import { useDiagnosis, type AttachedFileInfo } from "@/components/flow/DiagnosisContext";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api, API_URL } from "@/lib/api";
 import {
   Autocomplete,
@@ -31,8 +32,8 @@ type Phase = "search" | "confirm" | "upload";
 const TYPING_PHRASES = ["(주)에이엑스코어", "123-45-67890"];
 const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 
-/** 올리면 좋은 서류 — 드롭존에 칩으로 강조 */
-const DOC_HINTS = ["생산일지", "발주서", "재고표", "검사성적서"];
+/** 올리면 좋은 서류 — 드롭존에 칩으로 강조 (v5-1: 개별 서류명 나열 → 사내 문서 통칭) */
+const DOC_HINTS = ["사내 문서(사무, 공정 등)"];
 
 type SearchHit = {
   name: string;
@@ -565,8 +566,9 @@ export default function LandingPage() {
         <Card key="upload" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
           <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
           <DotProgress step={2} total={2} />
+          {/* v5-1 — 업로드 단계 명칭 '파일 업로드' */}
           <h2 className="ax-heading mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
-            <b>사내 문서</b>를 올려주세요
+            <b>파일 업로드</b>
           </h2>
           <p className="mt-2 text-center [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
             자료를 올릴수록 진단이 더 정확해져요
@@ -608,7 +610,7 @@ export default function LandingPage() {
               {uploading ? (
                 <span className="flex min-h-[124px] flex-col items-center justify-center gap-3 text-ink-2">
                   <Loader style={{ color: "var(--fg-brand)" }} />
-                  <span className="[font:var(--text-body2)]">자료를 읽고 있어요</span>
+                  <TextShimmer style={{ font: "var(--text-body2)" }}>자료를 읽고 있어요</TextShimmer>
                 </span>
               ) : (
                 <span className="flex flex-col items-center gap-3.5">

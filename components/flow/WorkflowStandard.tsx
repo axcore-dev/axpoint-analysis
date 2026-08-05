@@ -18,6 +18,7 @@ export type WorkflowStage = {
   seq: number;
   isSupport: boolean;
   activities: {
+    id: number; // workflow_activity.id — task 드래그·에이전트 연결선 기준 (v5)
     name: string;
     seq: number;
     description: string | null;
@@ -67,7 +68,8 @@ export function stageDocs(stage: WorkflowStage): OutputDoc[] {
 export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
   return (
     <section style={{ padding: "56px 0" }}>
-      <div style={{ maxWidth: 1440, margin: "0 auto", padding: "0 24px" }}>
+      {/* v5 — 워크플로우 섹션만 화면 전체 너비 사용 (차트가 작아 안 보이는 문제) */}
+      <div style={{ margin: "0 auto", padding: "0 24px" }}>
         <header style={{ marginBottom: 24 }}>
           <h3
             style={{

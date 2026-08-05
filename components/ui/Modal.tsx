@@ -75,7 +75,8 @@ export function Modal({ open, onClose, title, wide, full, dismissible = true, ch
               </button>
             </Dialog.Close>
           </div>
-          {children}
+          {/* 본문 스크롤은 이 안에서만 — 제목·닫기 버튼이 밀려 올라가지 않는다 (작업 요청 v5-2-1) */}
+          <div className="ax-modal-body">{children}</div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

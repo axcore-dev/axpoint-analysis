@@ -1,30 +1,42 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Background, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Background, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api } from "@/lib/api";
 import { type WorkflowStage } from "@/components/flow/WorkflowStandard";
 
 /**
- * 워크플로우 플로우차트 (작업 요청 v4-2) — (대)8대 기능 영역 → (중)업무 순서 → (소)산출 문서.
- * 전체가 잘리지 않게 fitView로 최대 너비에 맞춰 그린다.
- * - 표준 대비 다른 위치의 영역(deviates)은 붉은 테두리 + 붉은 연결선
- * - 미보유 문서는 붉은 톤 칩, 보유 문서는 파란 칩
- * - editable이면 영역(대) 노드를 드래그해 순서를 바꾼다 — 놓는 순간 서버에 저장(자료 정리 화면 전용)
+ * 워크플로우 플로우차트 (작업 요청 v4-2 → v5 개편) — (대)8대 기능 영역 → (중)업무 순서 → (소)산출 문서.
+ * - 문서 칩은 이 기업이 업로드한 문서만 표시한다 (미보유 문서 제거 — v5)
+ * - 모든 연결선에 화살표로 흐름 방향을 표시한다 (v5)
+ * - 업무(task) 노드를 위아래로 드래그해 영역 안 순서를 바꾼다 — 놓는 순간 저장·부드럽게 정렬 (v5)
+ * - 영역(대) 노드는 좌우 드래그로 순서 편집 (v4-2 유지, editable 전용)
+ * - 업무 간 연결선은 에이전트가 연결성(산출→입력 문서 흐름)을 판단해 그린다 (v5)
  */
 type ChartStage = WorkflowStage & { deviates?: boolean };
+type Connection = { from: number; to: number; reason: string };
 
 const COL_W = 250;
 const COL_GAP = 26;
 const HEAD_H = 56;
+const ACT_GAP = 14;
 
 /** 활동 노드 높이 추정 — 이름 2줄 + 문서 칩 줄 수 (콘텐츠 기반 자동 배치용) */
 function actHeight(docCount: number): number {
   return 58 + Math.ceil(docCount / 2) * 26;
 }
 
-function buildFlow(stages: ChartStage[]): { nodes: Node[]; edges: Edge[] } {
+/** 이 기업이 보유한 산출 문서만 — 미보유 칩은 그리지 않는다 (v5) */
+const coveredDocs = (act: ChartStage["activities"][number]) =>
+  act.outputDocs.filter((d) => d.covered);
+
+const ARROW = { type: MarkerType.ArrowClosed, width: 16, height: 16 } as const;
+
+function buildFlow(
+  stages: ChartStage[],
+  connections: Connection[],
+): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
   stages.forEach((stage, col) => {
@@ -64,35 +76,38 @@ function buildFlow(stages: ChartStage[]): { nodes: Node[]; edges: Edge[] } {
         source: `stage:${prev.code}`,
         target: `stage:${stage.code}`,
         animated: true,
-        style: red ? { stroke: "var(--fg-danger)", strokeWidth: 1.8 } : undefined,
+        markerEnd: { ...ARROW, color: red ? "var(--fg-danger)" : "var(--blue-500)" },
+        style: red
+          ? { stroke: "var(--fg-danger)", strokeWidth: 1.8 }
+          : { stroke: "var(--blue-500)", strokeWidth: 1.5 },
       });
     }
 
     let y = HEAD_H + 24;
     stage.activities.forEach((act, i) => {
-      const actId = `act:${stage.code}:${act.seq}`;
+      const actId = `act:${act.id}`;
+      const docs = coveredDocs(act);
       nodes.push({
         id: actId,
         position: { x: x + 10, y },
-        draggable: false,
         data: {
           label: (
             <div style={{ textAlign: "left" }}>
               <span style={{ display: "block", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
                 {act.name}
               </span>
-              {act.outputDocs.length > 0 && (
+              {docs.length > 0 && (
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                  {act.outputDocs.map((d) => (
+                  {docs.map((d) => (
                     <span
                       key={String(d.docTypeId)}
                       style={{
                         font: "11px/1.3 var(--font-sans)",
                         padding: "2px 7px",
                         borderRadius: 999,
-                        border: `1px solid ${d.covered ? "var(--blue-500)" : "var(--fg-danger)"}`,
-                        color: d.covered ? "var(--fg-brand)" : "var(--fg-danger)",
-                        background: d.covered ? "rgba(10,80,255,0.06)" : "rgba(220,38,38,0.05)",
+                        border: "1px solid var(--blue-500)",
+                        color: "var(--fg-brand)",
+                        background: "rgba(10,80,255,0.06)",
                       }}
                     >
                       {d.name}
@@ -113,13 +128,30 @@ function buildFlow(stages: ChartStage[]): { nodes: Node[]; edges: Edge[] } {
       });
       edges.push({
         id: `chain:${stage.code}:${i}`,
-        source: i === 0 ? `stage:${stage.code}` : `act:${stage.code}:${stage.activities[i - 1].seq}`,
+        source: i === 0 ? `stage:${stage.code}` : `act:${stage.activities[i - 1].id}`,
         target: actId,
+        markerEnd: { ...ARROW, color: "var(--grey-400)" },
         style: { stroke: "var(--grey-300)" },
       });
-      y += actHeight(act.outputDocs.length) + 14;
+      y += actHeight(docs.length) + ACT_GAP;
     });
   });
+
+  // 에이전트가 판단한 업무 간 연결 — 영역을 가로지르는 흐름 (v5)
+  const actIds = new Set(nodes.map((n) => n.id));
+  for (const cn of connections) {
+    const source = `act:${cn.from}`;
+    const target = `act:${cn.to}`;
+    if (!actIds.has(source) || !actIds.has(target)) continue;
+    edges.push({
+      id: `link:${cn.from}-${cn.to}`,
+      source,
+      target,
+      animated: true,
+      markerEnd: { ...ARROW, color: "var(--blue-500)" },
+      style: { stroke: "var(--blue-500)", strokeWidth: 1.5, opacity: 0.65 },
+    });
+  }
   return { nodes, edges };
 }
 
@@ -131,43 +163,110 @@ export function WorkflowChart({
   editable?: boolean;
 }) {
   const [stages, setStages] = useState<ChartStage[] | null>(null);
+  const [connections, setConnections] = useState<Connection[] | null>(null);
   const [saving, setSaving] = useState(false);
+  const [linking, setLinking] = useState(false);
+  /* 드래그 중에는 정렬 애니메이션을 끈다 — 드래그 이동까지 transition이 걸리면 손에 안 붙는다 */
+  const [dragging, setDragging] = useState(false);
+  const linkRequested = useRef(false);
 
   const load = useCallback(() => {
-    api<{ stages: ChartStage[] }>(`/api/assessments/${assessmentId}/workflow`)
-      .then(({ stages }) => setStages(stages ?? []))
+    api<{ stages: ChartStage[]; connections: Connection[] | null }>(
+      `/api/assessments/${assessmentId}/workflow`,
+    )
+      .then(({ stages, connections }) => {
+        setStages(stages ?? []);
+        setConnections(connections);
+      })
       .catch(() => setStages([]));
   }, [assessmentId]);
   useEffect(load, [load]);
 
-  const { nodes, edges } = useMemo(() => buildFlow(stages ?? []), [stages]);
+  /* 에이전트 연결이 아직 없으면 생성 요청 — 한 번만 (있으면 저장분을 그대로 반환한다) */
+  useEffect(() => {
+    if (stages === null || stages.length === 0) return;
+    if (connections !== null || linkRequested.current) return;
+    linkRequested.current = true;
+    setLinking(true);
+    api<{ connections: Connection[] }>(
+      `/api/assessments/${assessmentId}/workflow/connections`,
+      { method: "POST" },
+    )
+      .then(({ connections }) => setConnections(connections))
+      .catch(() => setConnections([]))
+      .finally(() => setLinking(false));
+  }, [stages, connections, assessmentId]);
 
-  /* 드래그 종료 — 놓인 x좌표로 새 컬럼 위치를 계산해 그 자리에 끼워 넣고 서버에 저장.
-     순서가 그대로면 흐트러진 좌표만 원위치로 되돌린다 */
+  const { nodes, edges } = useMemo(
+    () => buildFlow(stages ?? [], connections ?? []),
+    [stages, connections],
+  );
+
+  /* 드래그 종료 — 영역(stage) 노드는 x좌표로 컬럼 순서, 업무(act) 노드는 y좌표로 영역 안 순서.
+     순서가 그대로면 흐트러진 좌표만 원위치로 되돌린다(transition이 부드럽게 복귀시킨다) */
   const onDragStop = useCallback(
     (_e: unknown, node: Node) => {
-      if (!editable || !stages || !node.id.startsWith("stage:")) return;
-      const code = node.id.slice("stage:".length);
-      const from = stages.findIndex((s) => s.code === code);
-      const to = Math.max(
-        0,
-        Math.min(stages.length - 1, Math.round(node.position.x / (COL_W + COL_GAP))),
-      );
-      if (from < 0 || to === from) {
-        load();
+      setDragging(false);
+      if (!editable || !stages) return;
+
+      if (node.id.startsWith("stage:")) {
+        const code = node.id.slice("stage:".length);
+        const from = stages.findIndex((s) => s.code === code);
+        const to = Math.max(
+          0,
+          Math.min(stages.length - 1, Math.round(node.position.x / (COL_W + COL_GAP))),
+        );
+        if (from < 0 || to === from) {
+          load();
+          return;
+        }
+        const order = stages.map((s) => s.code);
+        order.splice(from, 1);
+        order.splice(to, 0, code);
+        setSaving(true);
+        api(`/api/assessments/${assessmentId}/workflow`, {
+          method: "PUT",
+          body: JSON.stringify({ order }),
+        })
+          .then(load)
+          .catch(load)
+          .finally(() => setSaving(false));
         return;
       }
-      const order = stages.map((s) => s.code);
-      order.splice(from, 1);
-      order.splice(to, 0, code);
-      setSaving(true);
-      api(`/api/assessments/${assessmentId}/workflow`, {
-        method: "PUT",
-        body: JSON.stringify({ order }),
-      })
-        .then(load)
-        .catch(load)
-        .finally(() => setSaving(false));
+
+      if (node.id.startsWith("act:")) {
+        const actId = Number(node.id.slice("act:".length));
+        const stage = stages.find((s) => s.activities.some((a) => a.id === actId));
+        if (!stage || stage.activities.length < 2) {
+          load();
+          return;
+        }
+        /* 드롭한 y좌표가 몇 번째 자리인지 — 나머지 업무들의 세로 중심을 기준으로 센다 */
+        const others = stage.activities.filter((a) => a.id !== actId);
+        let y = HEAD_H + 24;
+        const centers = others.map((a) => {
+          const h = actHeight(coveredDocs(a).length);
+          const center = y + h / 2;
+          y += h + ACT_GAP;
+          return center;
+        });
+        const to = centers.filter((c) => c < node.position.y).length;
+        const from = stage.activities.findIndex((a) => a.id === actId);
+        if (to === from) {
+          load();
+          return;
+        }
+        const activityIds = others.map((a) => a.id);
+        activityIds.splice(to, 0, actId);
+        setSaving(true);
+        api(`/api/assessments/${assessmentId}/workflow`, {
+          method: "PUT",
+          body: JSON.stringify({ taskOrder: { stageCode: stage.code, activityIds } }),
+        })
+          .then(load)
+          .catch(load)
+          .finally(() => setSaving(false));
+      }
     },
     [editable, stages, assessmentId, load],
   );
@@ -175,23 +274,25 @@ export function WorkflowChart({
   if (!stages || stages.length === 0) return null;
 
   const height = Math.max(
-    420,
+    480,
     Math.max(
       ...stages.map(
         (s) =>
-          HEAD_H + 24 + s.activities.reduce((a, act) => a + actHeight(act.outputDocs.length) + 14, 0),
+          HEAD_H +
+          24 +
+          s.activities.reduce((a, act) => a + actHeight(coveredDocs(act).length) + ACT_GAP, 0),
       ),
-    ) * 0.62, // fitView가 축소해 그리므로 실제 높이보다 낮게 잡아도 전체가 보인다
+    ) * 0.8, // fitView가 축소해 그리므로 실제 높이보다 낮게 잡아도 전체가 보인다
   );
 
   return (
     <div>
-      {editable && (
-        <p style={{ margin: "0 0 8px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-          영역 상자를 좌우로 드래그하면 우리 회사의 실제 업무 순서로 바꿀 수 있어요 — 표준과 다른
-          위치는 붉게 표시돼요{saving ? " · 저장 중…" : ""}
-        </p>
-      )}
+      <p style={{ margin: "0 0 8px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+        {editable
+          ? "영역 상자는 좌우로, 업무 상자는 위아래로 드래그해 우리 회사의 실제 순서로 바꿀 수 있어요 — 표준과 다른 영역 위치는 붉게 표시돼요"
+          : "화살표가 업무 흐름의 방향이에요 — 영역을 가로지르는 파란 선은 AI가 문서 흐름으로 판단한 연결이에요"}
+        {saving ? " · 저장 중…" : linking ? " · AI가 업무 연결을 분석하고 있어요…" : ""}
+      </p>
       <div
         style={{
           width: "100%",
@@ -205,9 +306,16 @@ export function WorkflowChart({
         <ReactFlow
           nodes={nodes.map((n) => ({
             ...n,
-            draggable: editable && n.id.startsWith("stage:"),
+            draggable: editable && (n.id.startsWith("stage:") || n.id.startsWith("act:")),
+            style: {
+              ...n.style,
+              cursor: editable ? "grab" : "default",
+              /* 놓는 순간 제자리로 미끄러지는 정렬 애니메이션 (v5) — 드래그 중에는 끈다 */
+              transition: dragging ? undefined : "transform 240ms var(--ease, ease)",
+            },
           }))}
           edges={edges}
+          onNodeDragStart={() => setDragging(true)}
           onNodeDragStop={(e, node) => onDragStop(e, node)}
           fitView
           minZoom={0.2}

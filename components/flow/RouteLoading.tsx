@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Loader } from "@/components/ui";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 
 /**
  * 라우팅 전환 로딩 — 토스 라우팅 규칙 (수정요청v2 공통)
@@ -50,13 +51,18 @@ export function RouteLoading({
         </div>
       )}
       <Loader style={{ color: "var(--fg-brand)" }} />
-      <p
+      {/* 문구 자체에 시머 애니메이션 (작업 요청 v5-1) */}
+      <TextShimmer
         key={idx}
+        as="p"
+        duration={2.2}
+        spread={140}
+        delay={0.6}
         className="ax-step-enter"
-        style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}
+        style={{ margin: 0, font: "var(--text-body2)" }}
       >
         {messages[idx]}
-      </p>
+      </TextShimmer>
     </div>
   );
 }

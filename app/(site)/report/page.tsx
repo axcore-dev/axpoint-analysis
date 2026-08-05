@@ -273,9 +273,10 @@ export default function ReportPage() {
         .axp-drill:hover .axp-drill-link { color: var(--fg-brand); }
         .axp-drill-link { transition: color var(--dur-fast) var(--ease); }
       `}</style>
-      {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준) ══ */}
+      {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준)
+          v5-8: 컨테이너·카드 확대 — '현재 단계' 카드의 레벨명이 줄바꿈으로 잘려 보이던 문제 */}
       <section style={{ padding: "var(--space-16) var(--gutter) 0" }}>
-        <div style={{ maxWidth: "var(--container-content)", margin: "0 auto" }}>
+        <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <Eyebrow>STEP 6 · 보고서</Eyebrow>
           <h1
             style={{
@@ -299,7 +300,7 @@ export default function ReportPage() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
+              gridTemplateColumns: "repeat(auto-fit, minmax(270px, 1fr))",
               gap: "var(--space-4)",
               marginTop: "var(--space-8)",
             }}

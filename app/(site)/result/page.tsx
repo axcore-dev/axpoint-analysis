@@ -15,7 +15,7 @@ import {
   TermTooltip,
 } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
-import { SurveyModal } from "@/components/flow/SurveyModal";
+import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
 import { WorkflowStandard } from "@/components/flow/WorkflowStandard";
 import { api } from "@/lib/api";
 import { waitForJudge, type JudgeProgress } from "@/lib/judgeWait";
@@ -190,6 +190,21 @@ function EvidenceTextList({ items }: { items: EvidenceItem[] }) {
   );
 }
 
+/** AI 서술의 마크다운 중 굵기(**…**)만 적용해 렌더 — 나머지 마크다운 문법은 그대로 텍스트 (v5-6) */
+function renderBold(text: string): ReactNode {
+  const parts = text.split(/\*\*(.+?)\*\*/g);
+  if (parts.length === 1) return text;
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} style={{ fontWeight: 700, color: "var(--fg-primary)" }}>
+        {part}
+      </strong>
+    ) : (
+      part
+    ),
+  );
+}
+
 /** 종합 분석 상세 서술 — 추론 AI 작성 본문. 왼쪽 정렬·문단 유지, 없으면 아무것도 렌더하지 않는다 */
 function DetailText({ text, style }: { text?: string | null; style?: CSSProperties }) {
   if (!text) return null;
@@ -206,7 +221,7 @@ function DetailText({ text, style }: { text?: string | null; style?: CSSProperti
         ...style,
       }}
     >
-      {text}
+      {renderBold(text)}
     </p>
   );
 }
@@ -702,6 +717,32 @@ export default function ResultPage() {
   const [judging, setJudging] = useState(false);
   const [judgeProgress, setJudgeProgress] = useState<JudgeProgress | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
+  /* 통계 칩 캐러셀 — 양쪽 화살표 노출 여부 (v5-4) */
+  const [statScroll, setStatScroll] = useState({ left: false, right: false });
+  const updateStatScroll = () => {
+    const el = statRowRef.current;
+    if (!el) return;
+    setStatScroll({
+      left: el.scrollLeft > 4,
+      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4,
+    });
+  };
+  useEffect(() => {
+    /* 데이터가 채워진 뒤 실제 폭으로 계산 */
+    const t = setTimeout(updateStatScroll, 50);
+    return () => clearTimeout(t);
+  }, [data]);
+
+  /* 보완 설문 자동 노출 (v5-3) — 분석 보류 문항이 있으면 결과 진입 시 한 번 자동으로 연다 */
+  useEffect(() => {
+    if (!data || !assessmentId) return;
+    const missing = (data.judgments ?? []).some((j) => j.anchorLevel === null);
+    if (!missing) return;
+    const key = `ax-coverage-survey-${assessmentId}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, "1");
+    setSurveyOpen(true);
+  }, [data, assessmentId]);
 
   useEffect(() => {
     if (!assessmentId) return;
@@ -1100,12 +1141,14 @@ export default function ResultPage() {
               >
                 <div
                   ref={statRowRef}
+                  onScroll={updateStatScroll}
                   style={{
                     display: "flex",
                     gap: 10,
                     overflowX: "auto",
-                    paddingRight: 48,
+                    padding: "0 4px",
                     scrollbarWidth: "none",
+                    scrollBehavior: "smooth",
                   }}
                 >
                   {companyStats.map((stat) => (
@@ -1137,30 +1180,52 @@ export default function ResultPage() {
                     </div>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => statRowRef.current?.scrollBy({ left: 280, behavior: "smooth" })}
-                  aria-label="통계 칩 더 보기"
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    width: 34,
-                    height: 34,
-                    borderRadius: "50%",
-                    border: "1px solid var(--line-default)",
-                    background: "var(--bg-elevated)",
-                    boxShadow: "var(--shadow-1)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "var(--grey-600)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <Icons.chevronRight size={16} />
-                </button>
+                {/* 양쪽 화살표 — 스크롤 가능한 방향에만 노출 (v5-4 UX) */}
+                {(["left", "right"] as const).map((dir) => {
+                  const visible = dir === "left" ? statScroll.left : statScroll.right;
+                  if (!visible) return null;
+                  return (
+                    <button
+                      key={dir}
+                      type="button"
+                      onClick={() =>
+                        statRowRef.current?.scrollBy({
+                          left: dir === "left" ? -280 : 280,
+                          behavior: "smooth",
+                        })
+                      }
+                      aria-label={dir === "left" ? "이전 통계 보기" : "다음 통계 보기"}
+                      style={{
+                        position: "absolute",
+                        [dir]: -8,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        width: 34,
+                        height: 34,
+                        borderRadius: "50%",
+                        border: "1px solid var(--line-default)",
+                        background: "var(--bg-elevated)",
+                        boxShadow: "var(--shadow-1)",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: "var(--grey-600)",
+                        cursor: "pointer",
+                        zIndex: 1,
+                      }}
+                    >
+                      <span
+                        aria-hidden
+                        style={{
+                          display: "inline-flex",
+                          transform: dir === "left" ? "rotate(180deg)" : undefined,
+                        }}
+                      >
+                        <Icons.chevronRight size={16} />
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </Card>
@@ -1362,13 +1427,13 @@ export default function ResultPage() {
                         </div>
                       </div>
                     ) : (
-                      /* 기본 상태 — 요약 */
+                      /* 기본 상태 — 컨설턴트 분석 요약 (v5-5: '유형' 표기 제거 — 플랫폼에 유형 개념 없음) */
                       <div style={{ display: "grid", gap: 14 }}>
-                        {result && totalScore !== null && result.balanceLabel && (
+                        {result && totalScore !== null && (
                           <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
                             {axes.length}개 카테고리 평균이 종합{" "}
                             <span style={{ ...mono, fontWeight: 600 }}>{fmtScore(totalScore)}</span>
-                            점이에요. 분포는 &ldquo;{result.balanceLabel}&rdquo; 유형이에요.
+                            점이에요.
                           </p>
                         )}
                         {result && totalScore !== null && (
@@ -1407,6 +1472,8 @@ export default function ResultPage() {
                             />
                           </div>
                         )}
+                        {/* 컨설턴트 분석 — 기업 AX 상태를 분석한 상세 서술 (v5-5, 서사 detail.overview) */}
+                        <DetailText text={narrativeDetail?.overview} />
                         {result?.narrative?.strategyLabel && (
                           <div>
                             <p
@@ -1458,13 +1525,8 @@ export default function ResultPage() {
               title="업무영역별 현재 상태"
               sub="점수 대신 등급으로 표기해요."
             />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-                gap: 12,
-              }}
-            >
+            {/* v5-6 — 8×1 구조: 한 줄에 영역 하나씩 세로로 쌓는다 */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
               {/* v4 개편 — 등급 뱃지·문서 나열 대신 업무 처리 방식 근거의 수준 서술(detail)을 본문으로.
                   과거 저장분(detail 없음)은 기존 요약(asIs·holdReason)으로 폴백한다 */}
               {sortedAreas.map((area) => {
@@ -1491,10 +1553,10 @@ export default function ResultPage() {
                         font: "var(--text-body3)",
                         lineHeight: 1.65,
                         color: "var(--fg-secondary)",
-                        minHeight: 39,
                       }}
                     >
-                      {body}
+                      {/* 마크다운 중 굵기만 적용 (v5-6) */}
+                      {body ? renderBold(body) : null}
                     </p>
                     {area.grade === "critical" && (area.causeChain?.length ?? 0) > 0 && (
                       <div style={{ marginTop: "auto" }}>
@@ -1550,7 +1612,7 @@ export default function ResultPage() {
                           whiteSpace: "pre-wrap",
                         }}
                       >
-                        {para}
+                        {renderBold(para)}
                       </p>
                     ))}
                   </div>
@@ -1684,9 +1746,10 @@ export default function ResultPage() {
         </Inner>
       </section>
 
-      {/* 결측 보완 설문 — 응답을 저장하고 재판정까지 끝나면 결과를 다시 불러온다 (수정요청v9) */}
+      {/* 결측 보완 설문 — 에이전트가 생성한 컨설턴트 질문을 카드로 하나씩 (v5-3).
+          응답을 저장하고 재분석까지 끝나면 결과를 다시 불러온다 */}
       {assessmentId && (
-        <SurveyModal
+        <CoverageSurveyModal
           assessmentId={assessmentId}
           open={surveyOpen}
           onClose={() => setSurveyOpen(false)}

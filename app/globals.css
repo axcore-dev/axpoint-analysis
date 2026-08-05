@@ -535,7 +535,10 @@ body {
   transform: translate(-50%, -50%);
   width: min(440px, calc(100vw - 32px));
   max-height: min(84vh, 720px);
-  overflow-y: auto;
+  /* 스크롤은 모달 외곽이 아니라 본문(.ax-modal-body) 안에서만 — 제목·닫기는 고정 (작업 요청 v5-2-1) */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-elevated);
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-3);
@@ -549,6 +552,14 @@ body {
   /* 데스크톱에서 칸반 컬럼이 가로 스크롤 없이 다 보이게 — 뷰포트에 맞춰 확장 */
   width: min(96vw, 1880px);
   max-height: calc(100vh - 40px);
+}
+/* 모달 본문 — 넘치면 여기서 스크롤되고 스크롤 UI도 여기에 나타난다 */
+.ax-modal-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--grey-300) transparent;
 }
 @keyframes ax-fade-in {
   from {
@@ -566,6 +577,33 @@ body {
   to {
     opacity: 1;
     transform: translate(-50%, -50%);
+  }
+}
+
+/* ---- 텍스트 시머 — 분석·로딩 문구의 글자 자체 애니메이션 (작업 요청 v5-1) ---- */
+.ax-text-shimmer {
+  display: inline-block;
+  background-image: linear-gradient(
+    90deg,
+    var(--fg-tertiary) 40%,
+    var(--fg-primary) 50%,
+    var(--fg-tertiary) 60%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation-name: ax-text-shimmer;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-duration: 2.2s;
+}
+@keyframes ax-text-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 

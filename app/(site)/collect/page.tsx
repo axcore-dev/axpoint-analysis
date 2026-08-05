@@ -8,26 +8,26 @@ import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { PublicDataSection } from "@/components/flow/PublicDataSection";
 import { WorkflowSection } from "@/components/flow/WorkflowSection";
 import { RouteLoading } from "@/components/flow/RouteLoading";
-import { SurveyModal } from "@/components/flow/SurveyModal";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { DIGITAL_LEVELS } from "@/data/rubric/meta";
 import { api } from "@/lib/api";
 import { BackIconButton, Button, Card, Icons, Input, Loader, Modal, Tag } from "@/components/ui";
 import { waitForJudge } from "@/lib/judgeWait";
 
 /**
- * S1 자료 정리 — 2단계 구성 (진단 플로우 개편 2차)
+ * S1 자료 정리 — 2단계 구성 (진단 플로우 개편 2차 · 작업 요청 v5)
  * 1단계: 진입과 동시에 분류를 시작하고(pending 전체, 파일 0건이면 생략) 순차 스텝 위저드로 진행.
  *   ① 자료 확인 — 분류 진행 로그 → 분류 결과가 반영된 필수 서류 충족/부족 검증.
- *     추가 업로드는 그 건만 바로 분류(fileIds 지정).
- *   ② 사용 중인 프로그램 — '다음'에 PATCH {systems} 저장.
- *   ③ 사전 설문(kind=primary) — '다음'에 PUT surveys 저장 후 2단계로 전환.
- * 2단계 '자료 분류': 기존 분류 결과 그리드·공개데이터·워크플로우. 보완 설문(kind=supplement)이
- *   내려오면 배너 + SurveyModal로 응답.
+ *     부족한 자료 목록은 카드 밖 우측 패널에 모아 표시(v5-2). 추가 업로드는 그 건만 바로 분류.
+ *   ② 사용 중인 프로그램 — '다음'에 PATCH {systems} 저장 후 2단계로 전환.
+ *   (사전 설문 스텝은 v5에서 삭제 — 설문은 판정 후 결측 문항에 대해 에이전트가 생성해
+ *    진단 결과 화면의 보완 설문 카드로 대체된다)
+ * 2단계 '자료 분류': 분류 결과 그리드·공개데이터·워크플로우.
  * 프로그램 선택을 마친 적 있는 진단(assessment.systems 비어 있지 않음)은 재방문으로 보고 2단계 직행.
  */
 
 /** 1단계 위저드 스텝 이름 — 상단 단계 표시용 */
-const REVIEW_STEP_LABELS = ["자료 확인", "사용 프로그램", "사전 설문"];
+const REVIEW_STEP_LABELS = ["자료 확인", "사용 프로그램"];
 
 /** 최초 진입 수집 로딩 문구 (기존 문구 유지) */
 const COLLECT_MESSAGES = [
@@ -42,14 +42,13 @@ const CLASSIFY_MESSAGES = ["자료를 분석하고 있어요", "분석된 점수
 
 const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
 
-/** 1단계 위저드 카드 — 랜딩 phase 카드와 같은 중앙 카드 골격 */
+/** 1단계 위저드 카드 — 랜딩 phase 카드와 같은 골격.
+    v5-2: 상단 고정 — 내용 길이에 따라 카드가 상하로 튀지 않게 세로 중앙 정렬을 버린다 */
 const reviewCardStyle: CSSProperties = {
   width: "100%",
   maxWidth: 680,
   position: "relative",
   padding: 40,
-  /* margin auto — 카드가 뷰포트보다 길어져도 위가 잘리지 않는 중앙 정렬 (랜딩과 동일) */
-  margin: "auto",
 };
 
 type FileRow = {
@@ -68,14 +67,6 @@ type RequiredDocs = {
   total: number;
   analysis: { analyzing: number; uploaded: number; done: number };
   unclassified: { fileId: string; name: string }[];
-};
-
-type SurveyItem = {
-  code: string;
-  kind: string; // primary(사전 설문) / supplement(보완 설문)
-  text: string;
-  choices: { value: string; label: string }[];
-  answer: { choiceValues: string[] } | null;
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -127,8 +118,8 @@ export default function CollectPage() {
 
   /** 1단계(자료 확인) / 2단계(자료 분류) — null은 판별 전 */
   const [stage, setStage] = useState<"review" | "classify" | null>(null);
-  /** 1단계 내 순차 스텝 — ① 자료 확인 ② 사용 프로그램 ③ 사전 설문 */
-  const [reviewStep, setReviewStep] = useState<1 | 2 | 3>(1);
+  /** 1단계 내 순차 스텝 — ① 자료 확인 ② 사용 프로그램 (사전 설문 스텝은 v5 삭제) */
+  const [reviewStep, setReviewStep] = useState<1 | 2>(1);
   const [files, setFiles] = useState<FileRow[] | null>(null);
   /** 파일 전체 보기 팝업 — 그리드에는 최대 9개만 보인다 */
   const [allFilesOpen, setAllFilesOpen] = useState(false);
@@ -151,16 +142,11 @@ export default function CollectPage() {
   /** 슬롯에서 올릴 때의 대상 문서 유형 (파일 선택창은 하나를 공유한다) */
   const uploadTargetRef = useRef<number | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [surveyItems, setSurveyItems] = useState<SurveyItem[] | null>(null);
-  /** 사전 설문 선택값 — surveyCode → choiceValue */
-  const [picked, setPicked] = useState<Record<string, string>>({});
   /** 기타 프로그램 직접 입력 (수정요청v9) */
   const [otherOpen, setOtherOpen] = useState(false);
   const [otherInput, setOtherInput] = useState("");
-  /** 분류 시작 진행 중 — 프로그램·설문 저장 후 classify 호출 */
+  /** 프로그램 저장 진행 중 */
   const [proceeding, setProceeding] = useState(false);
-  /** 2단계 보완 설문 팝업 */
-  const [surveyOpen, setSurveyOpen] = useState(false);
 
   /* 분류 현황 폴링 — 전부 끝나면(대기·처리중 없음) 중단 */
   const fetchFiles = useCallback(async () => {
@@ -250,37 +236,6 @@ export default function CollectPage() {
   useEffect(() => {
     if (stage === "review" && reviewStep === 1 && !classifying) void loadRequiredDocs();
   }, [stage, reviewStep, classifying, loadRequiredDocs]);
-
-  /* ── 설문 조회 — 1단계는 사전 설문 표시용, 2단계는 분류가 끝난 뒤 보완 설문 배너용 ── */
-  const loadSurveys = useCallback(async () => {
-    if (!assessmentId) return;
-    try {
-      const { items } = await api<{ items: SurveyItem[] }>(
-        `/api/assessments/${assessmentId}/surveys`,
-      );
-      setSurveyItems(items);
-      /* 서버에 저장된 응답을 미리 채우되, 화면에서 고른 값은 유지한다 */
-      setPicked((prev) => ({
-        ...Object.fromEntries(
-          items
-            .filter((i) => i.answer?.choiceValues?.[0] !== undefined)
-            .map((i) => [i.code, i.answer!.choiceValues[0]]),
-        ),
-        ...prev,
-      }));
-    } catch {
-      /* 설문을 못 불러와도 진행은 막지 않는다 */
-    }
-  }, [assessmentId]);
-
-  useEffect(() => {
-    if (stage === null) return;
-    if (stage === "classify" && classifying) return; // 분류 끝난 뒤 보완 설문 발동 여부를 다시 본다
-    void loadSurveys();
-  }, [stage, classifying, loadSurveys]);
-
-  const primaries = surveyItems?.filter((i) => i.kind === "primary") ?? [];
-  const supplements = surveyItems?.filter((i) => i.kind === "supplement") ?? [];
 
   /* ── 슬롯 업로드 — docTypeId를 지정하면 그 유형으로 확정 업로드 ── */
   const slotUpload = async (list: File[], docTypeId?: number) => {
@@ -385,9 +340,9 @@ export default function CollectPage() {
     }
   };
 
-  /* ── 스텝 전환 — 프로그램·설문 저장 실패는 진행을 막지 않는다 (기존 정책 유지) ── */
+  /* ── 스텝 전환 — 프로그램 저장 실패는 진행을 막지 않는다 (기존 정책 유지) ── */
 
-  /** 스텝 ② → ③: 사용 중인 프로그램 저장 */
+  /** 스텝 ② → 2단계: 사용 중인 프로그램 저장 후 자료 분류 화면으로 (사전 설문 스텝은 v5 삭제) */
   const proceedSystems = async () => {
     if (!assessmentId || proceeding) return;
     setProceeding(true);
@@ -395,24 +350,6 @@ export default function CollectPage() {
       method: "PATCH",
       body: JSON.stringify({ systems }),
     }).catch(() => {});
-    setProceeding(false);
-    setReviewStep(3);
-  };
-
-  /** 스텝 ③ → 2단계: 사전 설문 응답 저장 후 자료 분류 화면으로 */
-  const proceedSurveys = async () => {
-    if (!assessmentId || proceeding) return;
-    setProceeding(true);
-    const answers = Object.entries(picked).map(([surveyCode, value]) => ({
-      surveyCode,
-      choiceValues: [value],
-    }));
-    if (answers.length > 0) {
-      await api(`/api/assessments/${assessmentId}/surveys`, {
-        method: "PUT",
-        body: JSON.stringify({ answers }),
-      }).catch(() => {});
-    }
     setProceeding(false);
     setStage("classify");
   };
@@ -489,21 +426,29 @@ export default function CollectPage() {
     return <RouteLoading title={companyInput} messages={COLLECT_MESSAGES} />;
   if (submitting) return <RouteLoading messages={CLASSIFY_MESSAGES} />;
 
-  /* ═══════════ 1단계 — 순차 스텝 위저드 (① 자료 확인 ② 사용 프로그램 ③ 사전 설문) ═══════════ */
+  /* ═══════════ 1단계 — 순차 스텝 위저드 (① 자료 확인 ② 사용 프로그램) ═══════════ */
   if (stage === "review") {
+    /* 부족한 자료 — 카드 밖 우측 패널로 분리 (v5-2). 목록 복사로 사내 자료 요청에 바로 쓴다 */
+    const missingDocs = requiredDocs?.items.filter((d) => d.files.length === 0) ?? [];
+    const missingCopyText = [
+      "부족한 필수 문서",
+      ...missingDocs.map((d) => `- ${d.docTypeName}`),
+    ].join("\n");
     return (
-      <main className="flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
+      /* v5-2: 카드 상단 고정 — 내용 길이가 바뀌어도 상하로 튀지 않게 위 정렬 유지 */
+      <main className="min-h-[calc(100vh-56px)] bg-surface px-[var(--gutter)] py-12">
+        <div className="mx-auto flex w-full max-w-[1000px] flex-col items-start justify-center gap-4 md:flex-row">
         <Card key={reviewStep} className="ax-step-enter" radius="2xl" style={reviewCardStyle}>
-        {/* 뒤로 가기 — 카드 좌상단, ②→① ③→② (랜딩 카드와 같은 패턴) */}
+        {/* 뒤로 가기 — 카드 좌상단 (랜딩 카드와 같은 패턴) */}
         {reviewStep > 1 && (
           <BackIconButton
             label={`${REVIEW_STEP_LABELS[reviewStep - 2]}으로 돌아가기`}
-            onClick={() => setReviewStep(reviewStep === 3 ? 2 : 1)}
+            onClick={() => setReviewStep(1)}
           />
         )}
         {/* 단계 표시 — 랜딩 DotProgress 패턴의 축소판 (도트 + 스텝 이름) */}
         <div
-          aria-label={`3단계 중 ${reviewStep}단계`}
+          aria-label={`${REVIEW_STEP_LABELS.length}단계 중 ${reviewStep}단계`}
           className="flex items-center justify-center gap-4"
         >
           {REVIEW_STEP_LABELS.map((label, i) => (
@@ -558,9 +503,10 @@ export default function CollectPage() {
               (classifying ? (
                 <section className="mt-8 rounded-[var(--radius-l)] border border-line">
                   <div className="border-b border-line px-3.5 py-2.5">
-                    <span className="[font:var(--text-label-s)] text-ink">
-                      AI가 자료를 분류하고 있어요 ({doneCount}/{total})
-                    </span>
+                    {/* 분석 진행 문구 — 텍스트 자체 시머 (v5-1) */}
+                    <TextShimmer style={{ font: "var(--text-label-s)" }}>
+                      {`AI가 자료를 분류하고 있어요 (${doneCount}/${total})`}
+                    </TextShimmer>
                   </div>
                   <div className="px-3.5 py-3">
                     <ClassifyProgress files={files} />
@@ -572,8 +518,8 @@ export default function CollectPage() {
                 </div>
               ))}
 
-            {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9)
-                v4-2: 부족한 자료는 우측 패널에 모아 표시하고, 목록 복사 버튼을 제공한다 */}
+            {/* 필수 서류 현황 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9)
+                v5-2: 부족한 자료 목록·올리기 버튼은 카드 밖 우측 패널로 분리 (여기서는 현황만) */}
             {requiredDocs && requiredDocs.items.length > 0 && (
               <section className="mt-8 rounded-[var(--radius-l)] border border-line">
                 <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
@@ -592,7 +538,6 @@ export default function CollectPage() {
                     </Button>
                   </span>
                 </div>
-                <div className="grid md:grid-cols-[minmax(0,1fr)_260px]">
                 {/* 화면 높이에 맞춰 확장 — 뷰포트가 낮으면 패널 안에서 자연 스크롤 */}
                 <div className="ax-scrollbar-none max-h-[max(300px,60vh)] overflow-y-auto">
                   {Object.entries(
@@ -629,91 +574,16 @@ export default function CollectPage() {
                             <span className="min-w-0 flex-1 truncate [font:var(--text-label-s)] text-ink">
                               {d.docTypeName}
                             </span>
-                            {done ? (
+                            {done && (
                               <span className="flex-none truncate [font:var(--text-caption)] text-ink-4">
                                 {d.files[0].name}
                               </span>
-                            ) : (
-                              <Button
-                                variant="utility"
-                                size="sm"
-                                disabled={uploading}
-                                onClick={() => handleUploadClick(d.docTypeId)}
-                              >
-                                올리기
-                              </Button>
                             )}
                           </div>
                         );
                       })}
                     </div>
                   ))}
-                </div>
-
-                {/* 우측 — 부족한 자료 모음 (v4-2). 목록 복사로 사내 자료 요청에 바로 쓴다 */}
-                <aside className="border-t border-line md:border-l md:border-t-0">
-                  {(() => {
-                    const missing = requiredDocs.items.filter((d) => d.files.length === 0);
-                    const copyText = [
-                      "부족한 필수 문서",
-                      ...missing.map((d) => `- [${d.groupName}] ${d.docTypeName}`),
-                    ].join("\n");
-                    return (
-                      <div className="flex h-full flex-col">
-                        <div className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
-                          <span className="[font:var(--text-label-s)] text-ink">
-                            부족한 자료 {missing.length}종
-                          </span>
-                          {missing.length > 0 && (
-                            <Button
-                              variant="utility"
-                              size="sm"
-                              onClick={() => {
-                                void navigator.clipboard.writeText(copyText).then(() => {
-                                  setCopiedMissing(true);
-                                  setTimeout(() => setCopiedMissing(false), 1500);
-                                });
-                              }}
-                            >
-                              {copiedMissing ? "복사됨" : "목록 복사"}
-                            </Button>
-                          )}
-                        </div>
-                        <div className="ax-scrollbar-none max-h-[max(300px,60vh)] overflow-y-auto px-3.5 py-2">
-                          {missing.length === 0 ? (
-                            <p className="m-0 py-2 [font:var(--text-caption)] text-ink-4">
-                              필수 문서가 모두 올라왔어요.
-                            </p>
-                          ) : (
-                            missing.map((d) => (
-                              <div
-                                key={d.docTypeId}
-                                className="flex items-center gap-2 border-b border-line-subtle py-2 last:border-b-0"
-                              >
-                                <span className="min-w-0 flex-1">
-                                  <span className="block truncate [font:var(--text-label-s)] text-ink">
-                                    {d.docTypeName}
-                                  </span>
-                                  <span className="block [font:var(--text-caption)] text-ink-4">
-                                    {d.groupName}
-                                  </span>
-                                </span>
-                                <Button
-                                  variant="utility"
-                                  size="sm"
-                                  disabled={uploading}
-                                  onClick={() => handleUploadClick(d.docTypeId)}
-                                >
-                                  올리기
-                                </Button>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </aside>
                 </div>
               </section>
             )}
@@ -843,75 +713,59 @@ export default function CollectPage() {
           </>
         )}
 
-        {/* ── 스텝 ③ 사전 설문(프로파일링) — kind=primary, 카드형 단일 선택 ── */}
-        {reviewStep === 3 && (
-          <>
-            <h2 className="ax-heading mb-0 mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
-              사전 설문
-            </h2>
-
-            {primaries.length > 0 && (
-              <section className="mt-8">
-                {primaries.map((q) => (
-                  <div
-                    key={q.code}
-                    style={{ borderTop: "1px solid var(--line-subtle)", padding: "14px 0" }}
-                  >
-                    <div style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                      {q.text}
-                    </div>
-                    <div style={{ display: "grid", gap: 6, marginTop: 10 }}>
-                      {q.choices.map((ch) => {
-                        const on = picked[q.code] === ch.value;
-                        return (
-                          <button
-                            key={ch.value}
-                            type="button"
-                            onClick={() =>
-                              setPicked((prev) => {
-                                /* 같은 선지를 다시 누르면 응답 취소 */
-                                const next = { ...prev };
-                                if (next[q.code] === ch.value) delete next[q.code];
-                                else next[q.code] = ch.value;
-                                return next;
-                              })
-                            }
-                            style={{
-                              textAlign: "left",
-                              padding: "9px 12px",
-                              borderRadius: "var(--radius-m)",
-                              border: `1px solid ${on ? "var(--line-brand)" : "var(--line-default)"}`,
-                              background: on ? "var(--bg-brand-weak)" : "var(--bg-elevated)",
-                              color: on ? "var(--fg-brand)" : "var(--fg-secondary)",
-                              font: "var(--text-body3)",
-                              fontFamily: "var(--font-sans)",
-                              cursor: "pointer",
-                            }}
-                          >
-                            {ch.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </section>
-            )}
-
-            <div className="mt-10 flex flex-col gap-2">
-              <Button
-                variant="primary"
-                size="lg"
-                full
-                disabled={proceeding}
-                onClick={proceedSurveys}
-              >
-                다음
-              </Button>
-            </div>
-          </>
-        )}
         </Card>
+
+        {/* ── 부족한 자료 — 카드 밖 우측 패널 (v5-2). 올리기는 여기서만 (중복 제거) ── */}
+        {reviewStep === 1 && requiredDocs && requiredDocs.items.length > 0 && (
+          <aside className="ax-step-enter w-full flex-none rounded-[var(--radius-2xl)] border border-line bg-[var(--bg-elevated)] md:sticky md:top-20 md:w-[280px]">
+            <div className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+              <span className="[font:var(--text-label-s)] text-ink">
+                부족한 자료 {missingDocs.length}종
+              </span>
+              {missingDocs.length > 0 && (
+                <Button
+                  variant="utility"
+                  size="sm"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(missingCopyText).then(() => {
+                      setCopiedMissing(true);
+                      setTimeout(() => setCopiedMissing(false), 1500);
+                    });
+                  }}
+                >
+                  {copiedMissing ? "복사됨" : "목록 복사"}
+                </Button>
+              )}
+            </div>
+            <div className="ax-scrollbar-none max-h-[60vh] overflow-y-auto px-3.5 py-2">
+              {missingDocs.length === 0 ? (
+                <p className="m-0 py-2 [font:var(--text-caption)] text-ink-4">
+                  필수 문서가 모두 올라왔어요.
+                </p>
+              ) : (
+                missingDocs.map((d) => (
+                  <div
+                    key={d.docTypeId}
+                    className="flex items-center gap-2 border-b border-line-subtle py-2 last:border-b-0"
+                  >
+                    <span className="min-w-0 flex-1 truncate [font:var(--text-label-s)] text-ink">
+                      {d.docTypeName}
+                    </span>
+                    <Button
+                      variant="utility"
+                      size="sm"
+                      disabled={uploading}
+                      onClick={() => handleUploadClick(d.docTypeId)}
+                    >
+                      올리기
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        )}
+        </div>
       </main>
     );
   }
@@ -929,25 +783,16 @@ export default function CollectPage() {
           을 수집했어요
         </h2>
         <p className="mt-2 mb-0 [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-2">
-          {total === 0
-            ? "올려주신 자료 없이 진행해요. 공개 데이터로 추정 진단해요."
-            : classifying
-              ? `AI가 자료를 분류하고 있어요 (${doneCount}/${total})`
-              : `자료 ${total}건의 분류를 마쳤어요`}
+          {total === 0 ? (
+            "올려주신 자료 없이 진행해요. 공개 데이터로 추정 진단해요."
+          ) : classifying ? (
+            /* 분석 진행 문구 — 텍스트 자체 시머 (v5-1) */
+            <TextShimmer>{`AI가 자료를 분류하고 있어요 (${doneCount}/${total})`}</TextShimmer>
+          ) : (
+            `자료 ${total}건의 분류를 마쳤어요`
+          )}
         </p>
       </header>
-
-      {/* ── 보완 설문 배너 — 결측 보완 문항이 발행되면 노출 ── */}
-      {supplements.length > 0 && (
-        <div className="mt-6 flex items-center justify-between gap-3 rounded-[var(--radius-l)] border border-line bg-surface-2 px-4 py-3">
-          <span className="[font:var(--text-body3)] text-ink-2">
-            보완 설문 {supplements.length}문항
-          </span>
-          <Button variant="secondary" size="sm" onClick={() => setSurveyOpen(true)}>
-            설문으로 보완하기
-          </Button>
-        </div>
-      )}
 
       {/* ── 파일별 분류 결과 그리드 — 최대 9개, 나머지는 팝업으로 (문서유형·디지털화 수준·진행 상태) ── */}
       {files && files.length > 0 && (
@@ -1051,17 +896,6 @@ export default function CollectPage() {
           </Button>
         </div>
       </Modal>
-
-      {/* 보완 설문 팝업 — 저장만 하고 재판정은 걸지 않는다(첫 판정 전) */}
-      {assessmentId && (
-        <SurveyModal
-          assessmentId={assessmentId}
-          open={surveyOpen}
-          onClose={() => setSurveyOpen(false)}
-          supplementOnly
-          onApplied={() => void loadSurveys()}
-        />
-      )}
 
       {/* ── 다음 단계: 우측 하단 배치 (원본 레이아웃) ── */}
       <div className="mt-14 flex flex-col items-end gap-2">

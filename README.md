@@ -30,15 +30,16 @@ npm run lint    # ESLint
 ```
 app/                라우트 (App Router, 전 페이지 클라이언트 컴포넌트)
 ├── layout.tsx      문서 골격 + 전역 컨텍스트만 (공용 헤더·푸터는 (site) 몫)
-├── (landing)/      S0 자료 올리기 — 기업 검색 → 확인 → 모두 업로드(중앙 드롭존, 업로드 시 AI 분류 없음)
+├── (landing)/      S0 파일 업로드 — 기업 검색 → 확인 → 모두 업로드(중앙 드롭존, 업로드 시 AI 분류 없음)
 │                   전용 레이아웃: 진단 스텝 숨김(StepBar showSteps={false}) + 푸터
 ├── (site)/         진단 플로우 공용 레이아웃(StepBar + main + SiteFooter)
-│   ├── collect/    S1 자료 정리 — 2단계. ① 자료 확인(필수 서류 패널·사용 프로그램 선택·사전 설문 4)
-│   │               → '자료가 충분해요/자료 없이 진행' 게이트에서 분류 시작(POST classify)
-│   │               ② 자료 분류(분류 진행 로그·자료 편집 칸반 팝업·공개데이터 수집·표준 워크플로우·보완 설문)
-│   ├── result/     S2 진단 결과 — 5축 점수, 8업무영역 등급, 표준 워크플로우, 종합 분석
-│   │               판정 중 진행률 프로그레스바(%), 데이터 로딩 스켈레톤, 통계 칩(공개데이터 연동),
-│   │               강등 사유(달성 조건 미충족)·검토 필요(근거 상충) 표시
+│   ├── collect/    S1 자료 정리 — 2단계. ① 자료 확인(필수 서류 현황 + 부족 자료 우측 패널·사용 프로그램)
+│   │               → 진입과 동시에 분류 시작. 사전 설문 스텝은 v5에서 삭제(설문은 판정 후 결과 화면에서)
+│   │               ② 자료 분류(분류 진행 로그·자료 편집 칸반 팝업·공개데이터 수집·워크플로우 플로우차트)
+│   ├── result/     S2 진단 결과 — 5축 점수, 8업무영역(8×1) 서술, 워크플로우, 종합 분석(report)
+│   │               판정 중 진행률 프로그레스바(%), 데이터 로딩 스켈레톤, 통계 칩 캐러셀(양방향 화살표),
+│   │               강등 사유(달성 조건 미충족)·검토 필요(근거 상충) 표시,
+│   │               결측 문항 보완 설문 — 에이전트 생성 질문을 카드 모달로 1문항씩 자동 진행(v5)
 │   ├── tasks/      S3 개선 과제 — 과제 카탈로그 탐색·담기
 │   ├── roadmap/    S4 로드맵 — 담은 과제 기반 단계별 타임라인
 │   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
@@ -56,9 +57,10 @@ components/
 ├── admin/          어드민 공용 — SortableTable, 개별 관리 안내 팝업
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
-│                   WorkflowStandard(표준 워크플로우 3행 카드 — collect·result 공용 데이터),
+│                   WorkflowChart(React Flow 플로우차트 — 화살표·업로드 문서 칩·영역/업무 드래그 편집·
+│                   에이전트 업무 연결선. WorkflowSection=자료 정리 편집용, WorkflowStandard=결과 보기 전용),
 │                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
-│                   PublicDataSection(공개데이터 수집·SSE), SurveyModal(보완 설문)
+│                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달 — v5)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
 
 data/               구 더미데이터 계층 — 시나리오·카탈로그는 전 화면 미참조(정리 보류 — 루트 docs/로직.md §5)
