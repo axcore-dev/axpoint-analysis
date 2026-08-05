@@ -174,8 +174,10 @@ export default function AdminAgentsPage() {
   const graph = graphRes?.active.graph;
   const selected = graph?.nodes.find((n) => n.id === selectedId) ?? null;
   const selectedPrompt = prompts.find((p) => p.key === selected?.promptKey) ?? null;
+  /* 판정 노드는 축별로 나뉘어 실행돼 트레이스가 'judge:ST'처럼 남는다 —
+     노드 위에는 그중 가장 최근 것(마지막 도착분)을 얹는다 */
   const runByNode = useMemo(
-    () => new Map((runs ?? []).map((r) => [r.nodeId, r])),
+    () => new Map((runs ?? []).map((r) => [r.nodeId.split(":")[0], r])),
     [runs],
   );
   const selectedRun = selected ? (runByNode.get(selected.id) ?? null) : null;
