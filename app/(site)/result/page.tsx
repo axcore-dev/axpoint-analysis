@@ -62,6 +62,8 @@ type AxisView = {
   finding: string | null;
   /** 축별 상세 서술 2~4문장 — narrative.detail.axis_details 매칭 (구버전 서사에는 없음) */
   detail: string | null;
+  /** 축×8대 기능 연계 설명 — 업무 처리 방식 근거 (v4, 구버전 서사에는 없음) */
+  functionLinks: string | null;
 };
 
 type EvidenceItem = { kind: string; label: string; snippet?: string };
@@ -70,6 +72,8 @@ type AreaView = {
   functionArea: string;
   grade: string;
   asIs: string | null;
+  /** 업무 처리 방식 근거의 DX/AX 수준 서술 (v4 — 과거 저장분에는 없음) */
+  detail: string | null;
   holdReason: string | null;
   causeChain: string[] | null;
   evidence: EvidenceItem[];
@@ -151,8 +155,10 @@ type ResultPayload = {
         strengths_detail?: string;
         improvements_detail?: string;
         strategy_detail?: string;
-        axis_details?: { axisCode: string; text: string }[];
+        axis_details?: { axisCode: string; text: string; function_links?: string }[];
       } | null;
+      /** 보고서형 종합 분석 — 제목·본문 문단·마지막 요약 (v4, 구버전 서사에는 없음) */
+      report?: { title: string; body: string[]; summary: string } | null;
     } | null;
   } | null;
 };
@@ -833,7 +839,10 @@ export default function ResultPage() {
   /* 상세 서술 — 요약 아래에 붙는 본문. 구버전 서사에는 없어 관용적으로 접근 */
   const narrativeDetail = result?.narrative?.detail ?? null;
   const axisDetailByCode = new Map(
-    (narrativeDetail?.axis_details ?? []).map((d) => [d.axisCode, d.text]),
+    (narrativeDetail?.axis_details ?? []).map((d) => [
+      d.axisCode,
+      { text: d.text, functionLinks: d.function_links ?? null },
+    ]),
   );
 
   const axes: AxisView[] = data.axes.map((a) => ({
@@ -844,7 +853,8 @@ export default function ResultPage() {
     totalCount: a.totalCount ?? 0,
     industryAvg: benchByAxis.get(a.axisCode) ?? null,
     finding: findingByAxis.get(a.axisCode) ?? null,
-    detail: axisDetailByCode.get(a.axisCode) ?? null,
+    detail: axisDetailByCode.get(a.axisCode)?.text ?? null,
+    functionLinks: axisDetailByCode.get(a.axisCode)?.functionLinks ?? null,
   }));
   const axisByCode = new Map(axes.map((a) => [a.code, a]));
   const axesByBottleneck = [...axes].sort((a, b) => a.score - b.score);
@@ -893,7 +903,8 @@ export default function ResultPage() {
   const procurement = statBySource.get("procurement");
   const procurementAmountWon = procurement?.amountWon ?? 0;
   const companyStats = [
-    co?.revenueMillion != null ? { label: "연 매출", value: fmtRevenue(co.revenueMillion) } : null,
+    // 연 매출·고용은 값이 없어도 '-'로 항상 표시한다 (v4 — DART 재무·직원 현황 수집이 채운다)
+    { label: "연 매출", value: co?.revenueMillion != null ? fmtRevenue(co.revenueMillion) : "-" },
     smartFactory
       ? {
           label: "스마트공장",
@@ -902,7 +913,7 @@ export default function ResultPage() {
       : null,
     patent ? { label: "특허", value: `등록 ${patent.registeredCount ?? 0}건` } : null,
     news ? { label: "최근 보도", value: `${news.itemCount ?? 0}건` } : null,
-    co?.employees != null ? { label: "고용", value: `${co.employees}명` } : null,
+    { label: "고용", value: co?.employees != null ? `${co.employees.toLocaleString("ko-KR")}명` : "-" },
     procurement
       ? {
           label: "조달 실적",
@@ -1332,6 +1343,18 @@ export default function ResultPage() {
                           text={selectedScore.detail}
                           style={{ marginTop: 10, color: "var(--fg-tertiary)" }}
                         />
+                        {/* 8대 기능 연계 — 이 축과 맞닿은 업무영역의 일하는 방식 설명 (v4) */}
+                        {selectedScore.functionLinks && (
+                          <div style={{ marginTop: 10 }}>
+                            <div style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)", marginBottom: 4 }}>
+                              업무영역 연계
+                            </div>
+                            <DetailText
+                              text={selectedScore.functionLinks}
+                              style={{ color: "var(--fg-tertiary)" }}
+                            />
+                          </div>
+                        )}
                         <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
                           <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
                             근거
@@ -1442,15 +1465,12 @@ export default function ResultPage() {
                 gap: 12,
               }}
             >
+              {/* v4 개편 — 등급 뱃지·문서 나열 대신 업무 처리 방식 근거의 수준 서술(detail)을 본문으로.
+                  과거 저장분(detail 없음)은 기존 요약(asIs·holdReason)으로 폴백한다 */}
               {sortedAreas.map((area) => {
-                const gradeMeta =
-                  area.grade === "critical"
-                    ? { label: "관리 대상", tone: "danger" as const }
-                    : area.grade === "normal"
-                      ? { label: "보통", tone: "neutral" as const }
-                      : area.grade === "strength"
-                        ? { label: "강점", tone: "success" as const }
-                        : { label: "판단 보류", tone: "outline" as const };
+                const body =
+                  area.detail ??
+                  (area.grade === "hold" ? (area.holdReason ?? "자료가 부족해요") : area.asIs);
                 return (
                   <Card
                     key={area.functionArea}
@@ -1462,38 +1482,27 @@ export default function ResultPage() {
                       gap: 10,
                     }}
                   >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 8,
-                      }}
-                    >
-                      <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                        {area.functionArea}
-                      </strong>
-                      <Badge tone={gradeMeta.tone}>{gradeMeta.label}</Badge>
-                    </div>
+                    <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                      {area.functionArea}
+                    </strong>
                     <p
                       style={{
                         margin: 0,
                         font: "var(--text-body3)",
+                        lineHeight: 1.65,
                         color: "var(--fg-secondary)",
                         minHeight: 39,
-                        ...clamp2,
                       }}
                     >
-                      {area.grade === "hold" ? (area.holdReason ?? "자료가 부족해요") : area.asIs}
+                      {body}
                     </p>
-                    {area.grade === "critical" &&
-                      ((area.causeChain?.length ?? 0) > 0 || area.evidence.length > 0) && (
-                        <div style={{ marginTop: "auto" }}>
-                          <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
-                            사유 보기
-                          </Button>
-                        </div>
-                      )}
+                    {area.grade === "critical" && (area.causeChain?.length ?? 0) > 0 && (
+                      <div style={{ marginTop: "auto" }}>
+                        <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
+                          사유 보기
+                        </Button>
+                      </div>
+                    )}
                   </Card>
                 );
               })}
@@ -1524,10 +1533,30 @@ export default function ResultPage() {
                     maxWidth: 820,
                   }}
                 >
-                  {result.narrative.conclusion}
+                  {result.narrative.report?.title ?? result.narrative.conclusion}
                 </p>
-                {/* 종합 상태 상세 서술 — 결론 요약 아래 본문 (구버전 서사에는 없어 미렌더) */}
-                <DetailText text={narrativeDetail?.overview} style={{ marginTop: 14 }} />
+                {/* v4 종합 분석 — 제목 → 본문(문단, 길이 제한 없음) → 아래 불릿 → 마지막 요약.
+                    report가 없는 과거 저장분은 기존 형식(결론 + overview)으로 폴백 */}
+                {result.narrative.report ? (
+                  <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 860 }}>
+                    {result.narrative.report.body.map((para, i) => (
+                      <p
+                        key={i}
+                        style={{
+                          margin: 0,
+                          font: "var(--text-body2)",
+                          lineHeight: 1.75,
+                          color: "var(--fg-secondary)",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {para}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <DetailText text={narrativeDetail?.overview} style={{ marginTop: 14 }} />
+                )}
 
                 <div style={{ marginTop: 24, display: "grid", gap: 22 }}>
                   {(
@@ -1621,6 +1650,26 @@ export default function ResultPage() {
                     </div>
                   ))}
                 </div>
+
+                {/* 마지막 요약 — v4 형식의 맺음 (report 있는 서사만) */}
+                {result.narrative.report?.summary && (
+                  <div
+                    style={{
+                      marginTop: 24,
+                      padding: "14px 18px",
+                      borderRadius: "var(--radius-l)",
+                      background: "var(--bg-secondary)",
+                      maxWidth: 860,
+                    }}
+                  >
+                    <div style={{ font: "var(--text-label-s)", color: "var(--fg-primary)", marginBottom: 6 }}>
+                      요약
+                    </div>
+                    <p style={{ margin: 0, font: "var(--text-body3)", lineHeight: 1.7, color: "var(--fg-secondary)" }}>
+                      {result.narrative.report.summary}
+                    </p>
+                  </div>
+                )}
               </Card>
             </>
           )}
