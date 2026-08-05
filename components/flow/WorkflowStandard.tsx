@@ -65,7 +65,14 @@ export function stageDocs(stage: WorkflowStage): OutputDoc[] {
  * 진단 결과의 워크플로우 섹션 — 자료 정리에서 편집한 순서를 그대로 보여준다(v4: 편집은 자료 정리에서만).
  * 카드 나열은 v4-2에서 플로우차트(WorkflowChart)로 교체됐다.
  */
-export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
+export function WorkflowStandard({
+  assessmentId,
+  note,
+}: {
+  assessmentId: string;
+  /** 업무 흐름 관점 컨설팅 설명 — 차트 아래에 붙는다 (서사 산출물, 없으면 미렌더) */
+  note?: string | null;
+}) {
   return (
     <section style={{ padding: "56px 0" }}>
       {/* v5 — 워크플로우 섹션만 화면 전체 너비 사용 (차트가 작아 안 보이는 문제) */}
@@ -83,6 +90,38 @@ export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
           </h3>
         </header>
         <WorkflowChart assessmentId={assessmentId} />
+        {note && (
+          <div
+            style={{
+              maxWidth: 1080,
+              margin: "20px auto 0",
+              padding: "16px 20px",
+              borderRadius: "var(--radius-l)",
+              background: "var(--bg-secondary)",
+            }}
+          >
+            <div
+              style={{
+                font: "var(--text-label-s)",
+                color: "var(--fg-primary)",
+                marginBottom: 6,
+              }}
+            >
+              업무 흐름 진단
+            </div>
+            <p
+              style={{
+                margin: 0,
+                font: "var(--text-body3)",
+                lineHeight: 1.75,
+                color: "var(--fg-secondary)",
+                whiteSpace: "pre-line",
+              }}
+            >
+              {note}
+            </p>
+          </div>
+        )}
       </div>
     </section>
   );

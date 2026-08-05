@@ -160,6 +160,8 @@ type ResultPayload = {
       } | null;
       /** 보고서형 종합 분석 — 제목·본문 문단·마지막 요약 (v4, 구버전 서사에는 없음) */
       report?: { title: string; body: string[]; summary: string } | null;
+      /** 워크플로우 하단 컨설팅 설명 — 문서가 끊기는 구간과 영향 (구버전 서사에는 없음) */
+      workflow_note?: string | null;
     } | null;
   } | null;
 };
@@ -1577,8 +1579,12 @@ export default function ResultPage() {
         </section>
       )}
 
-      {/* ================= 섹션 3.5 — 표준 워크플로우 (8대 기능 + 문서 보유 여부) ================= */}
-      <WorkflowStandard assessmentId={assessmentId} />
+      {/* ================= 섹션 3.5 — 워크플로우 (8대 기능 + 업무 흐름) ================= */}
+      <WorkflowStandard
+        assessmentId={assessmentId}
+        // 업무 흐름 관점 컨설팅 설명 — 서사 산출물(v4 요청). 구버전 서사에는 없어 관용 처리
+        note={result?.narrative?.workflow_note ?? null}
+      />
 
       {/* ============ 섹션 4 — 종합 분석 결과 ============ */}
       <section style={{ padding: "56px 0 80px" }}>

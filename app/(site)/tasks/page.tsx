@@ -27,6 +27,8 @@ type TaskRow = {
   durationMinMonths: number | null;
   durationMaxMonths: number | null;
   recommended: boolean;
+  /** 추천 사유 — 추천 에이전트가 판정 근거를 인용해 쓴다 (에이전트 산출이 없으면 null) */
+  recommendReason: string | null;
   coveredBySystem: string | null;
   selected: boolean;
   dependsOn: number[];
@@ -189,6 +191,32 @@ function TaskCard({
           }}
         >
           {task.expectedEffect}
+        </div>
+      )}
+
+      {/* 추천 사유 — 추천 에이전트가 이 기업의 판정 근거를 인용해 쓴다 (없으면 미표시) */}
+      {task.recommendReason && (
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: "10px 12px",
+            borderRadius: "var(--radius-m)",
+            background: "var(--bg-brand-weak)",
+          }}
+        >
+          <span aria-hidden style={{ flex: "none", color: "var(--fg-brand)", marginTop: 1 }}>
+            <Icons.check size={13} />
+          </span>
+          <span
+            style={{
+              font: "var(--text-body3)",
+              lineHeight: 1.6,
+              color: "var(--fg-secondary)",
+            }}
+          >
+            {task.recommendReason}
+          </span>
         </div>
       )}
 
