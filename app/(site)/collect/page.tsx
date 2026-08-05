@@ -40,7 +40,21 @@ const COLLECT_MESSAGES = [
 /** 제출 후 판정 로딩 문구 (기존 문구 유지) */
 const CLASSIFY_MESSAGES = ["자료를 분석하고 있어요", "분석된 점수를 계산하고 있어요", "업무 영역을 상태를 정리하고 있어요"];
 
-const SYSTEM_OPTIONS = ["ERP", "MES", "WMS", "회계SW", "없음"];
+/* v5 — 제조기업 대표 사내 프로그램 예시 확장 (2026-08-05 사용자 승인). '없음'은 항상 마지막(배타 토글) */
+const SYSTEM_OPTIONS = [
+  "ERP",
+  "MES",
+  "WMS",
+  "회계SW",
+  "PLS",
+  "PLM",
+  "POP",
+  "CAD",
+  "SCADA·PLC",
+  "QMS",
+  "그룹웨어",
+  "없음",
+];
 
 /** 1단계 위저드 카드 — 랜딩 phase 카드와 같은 골격.
     v5-2: 상단 고정 — 내용 길이에 따라 카드가 상하로 튀지 않게 세로 중앙 정렬을 버린다 */
