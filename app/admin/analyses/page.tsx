@@ -38,7 +38,7 @@ const STATUS_TONE: Record<string, "success" | "accent" | "danger" | "neutral"> =
 };
 const STATUS_LABEL: Record<string, string> = {
   completed: "완료",
-  judging: "판정 중",
+  judging: "분석 중",
   failed: "실패",
   draft: "진행 중",
 };

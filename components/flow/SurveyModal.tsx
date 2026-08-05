@@ -77,9 +77,9 @@ export function SurveyModal({
       if (!supplementOnly) {
         await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
         const outcome = await waitForJudge(assessmentId);
-        if (outcome === "failed") throw new Error("재판정에 실패했어요.");
+        if (outcome === "failed") throw new Error("재분석에 실패했어요.");
         if (outcome === "timeout")
-          throw new Error("재판정이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
+          throw new Error("재분석이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
       }
       onApplied();
       onClose();
@@ -105,10 +105,10 @@ export function SurveyModal({
       ) : (
         <div>
           <p style={{ margin: "0 0 4px", font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-            자료로 판정하지 못한 {items.length}문항이에요. 답한 문항만 점수에 반영돼요.
+            자료로 분석하지 못한 {items.length}문항이에요. 답한 문항만 점수에 반영돼요.
           </p>
           <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
-            모르는 문항은 건너뛰어도 돼요 — 건너뛰면 판정 보류로 남고 감점되지 않아요.
+            모르는 문항은 건너뛰어도 돼요 — 건너뛰면 분석 보류로 남고 감점되지 않아요.
           </p>
 
           <div

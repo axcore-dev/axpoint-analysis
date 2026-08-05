@@ -444,10 +444,10 @@ function RadarChart({
         {hover !== null &&
           (() => {
             const ownLine = `자사 ${fmtScore(axes[hover].score)}`;
-            const avgLine = hasAvg ? `평균 ${axes[hover].industryAvg}` : null;
+            const avgLine = `평균 ${axes[hover].industryAvg ?? "-"}`;
             const [x, y] = pt(hover, ownVals[hover]);
-            const w = Math.max(ownLine.length, avgLine?.length ?? 0) * 7 + 22;
-            const h = avgLine ? 40 : 25;
+            const w = Math.max(ownLine.length, avgLine.length) * 7 + 22;
+            const h = 40;
             const tx = Math.min(Math.max(x, vbX + w / 2 + 4), vbX + vbW - w / 2 - 4);
             const ty = Math.max(y - h - 10, 4);
             return (
@@ -477,19 +477,17 @@ function RadarChart({
                 >
                   {ownLine}
                 </text>
-                {avgLine && (
-                  <text
-                    x={tx - w / 2 + 11}
-                    y={ty + 31}
-                    textAnchor="start"
-                    fontSize={11}
-                    fontWeight={500}
-                    fill="var(--grey-500)"
-                    fontFamily="var(--font-mono)"
-                  >
-                    {avgLine}
-                  </text>
-                )}
+                <text
+                  x={tx - w / 2 + 11}
+                  y={ty + 31}
+                  textAnchor="start"
+                  fontSize={11}
+                  fontWeight={500}
+                  fill="var(--grey-500)"
+                  fontFamily="var(--font-mono)"
+                >
+                  {avgLine}
+                </text>
               </g>
             );
           })()}
@@ -519,23 +517,31 @@ function RadarChart({
           </svg>
           자사
         </span>
-        {hasAvg && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
-            <svg width="22" height="10" aria-hidden="true">
-              <line
-                x1="1"
-                y1="5"
-                x2="21"
-                y2="5"
-                stroke="var(--grey-400)"
-                strokeWidth="1.5"
-                strokeDasharray="4 3"
-              />
-            </svg>
-            평균 (업종 표본)
-          </span>
-        )}
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+          <svg width="22" height="10" aria-hidden="true">
+            <line
+              x1="1"
+              y1="5"
+              x2="21"
+              y2="5"
+              stroke="var(--grey-400)"
+              strokeWidth="1.5"
+              strokeDasharray="4 3"
+            />
+          </svg>
+          평균 (업종 표본)
+        </span>
       </figcaption>
+      <p
+        style={{
+          margin: "8px 0 0",
+          textAlign: "center",
+          font: "var(--text-caption)",
+          color: "var(--fg-quaternary)",
+        }}
+      >
+        이름이나 점을 눌러 보세요.
+      </p>
     </figure>
   );
 }
@@ -708,9 +714,9 @@ export default function ResultPage() {
               if (cancelled || outcome === "cancelled") return;
               setJudging(false);
               if (outcome === "failed") {
-                setError("판정에 실패했어요. 다시 시도해 주세요.");
+                setError("분석에 실패했어요. 다시 시도해 주세요.");
               } else if (outcome === "timeout") {
-                setError("판정이 예상보다 오래 걸려요. 잠시 후 마이페이지에서 결과를 확인해 주세요.");
+                setError("분석이 예상보다 오래 걸려요. 잠시 후 마이페이지에서 결과를 확인해 주세요.");
               } else {
                 void load();
               }
@@ -1002,22 +1008,12 @@ export default function ResultPage() {
                   >
                     <b style={{ color: "var(--fg-brand)" }}>Lv.{result.level}</b> {result.levelName}
                   </h3>
-                  <p
-                    style={{
-                      margin: "10px 0 0",
-                      font: "var(--text-body2)",
-                      color: "var(--fg-secondary)",
-                    }}
-                  >
-                    종합 {fmtScore(totalScore)}점 · 판정 {answered}/{totalQ}문항
-                    {result.balanceLabel ? ` · ${result.balanceLabel}` : ""}
-                  </p>
                   {/* 강등 사유 — 점수 구간 Lv과 판정 Lv이 다른 이유 */}
                   {result.capReasons && (
                     <div style={{ marginTop: 10 }}>
                       <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-warning)" }}>
                         점수 구간은 Lv.{result.scoreLevel ?? result.level}이지만 달성 조건 미충족으로
-                        Lv.{result.capReasons.level}로 판정됐어요
+                        Lv.{result.capReasons.level}로 분석됐어요
                       </p>
                       {result.capReasons.reasons.length > 0 && (
                         <ul style={{ margin: "6px 0 0", paddingLeft: 18, display: "grid", gap: 2 }}>
@@ -1041,7 +1037,7 @@ export default function ResultPage() {
                         color: "var(--fg-quaternary)",
                       }}
                     >
-                      자료가 부족해 일부 문항은 판정을 보류했어요. 설문에 답하면 그 문항도 점수에
+                      자료가 부족해 일부 문항은 분석을 보류했어요. 설문에 답하면 그 문항도 점수에
                       반영돼요.
                     </p>
                   )}
@@ -1066,7 +1062,7 @@ export default function ResultPage() {
                 /* 점수를 못 낸 상태를 그대로 알리지 않고 보완 경로를 준다 (수정요청v9) */
                 <div style={{ marginTop: 10 }}>
                   <p style={{ margin: 0, font: "var(--text-body1)", color: "var(--fg-secondary)" }}>
-                    아직 판정할 자료가 모자라 점수를 내지 못했어요. 설문에 답하거나 자료를 더
+                    아직 분석할 자료가 모자라 점수를 내지 못했어요. 설문에 답하거나 자료를 더
                     올리면 바로 점수가 나와요.
                   </p>
                   <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
@@ -1240,11 +1236,11 @@ export default function ResultPage() {
                             ...(a.finding ? clamp2 : {}),
                           }}
                         >
-                          {a.finding ?? `판정 ${a.answeredCount}/${a.totalCount}`}
+                          {a.finding ?? `분석 ${a.answeredCount}/${a.totalCount}`}
                         </p>
                         <div style={{ marginTop: 10 }}>
                           <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.code)}>
-                            점수 근거
+                            근거
                           </Button>
                         </div>
                       </Card>
@@ -1329,7 +1325,7 @@ export default function ResultPage() {
                           }}
                         >
                           {selectedScore.finding ??
-                            `판정 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
+                            `분석 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
                         </p>
                         {/* 축별 상세 서술 — 소견 요약 아래 본문 (없으면 미렌더) */}
                         <DetailText
@@ -1338,7 +1334,7 @@ export default function ResultPage() {
                         />
                         <div style={{ display: "flex", gap: 8, marginTop: 18 }}>
                           <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
-                            점수 근거
+                            근거
                           </Button>
                         </div>
                       </div>
@@ -1390,7 +1386,6 @@ export default function ResultPage() {
                         )}
                         {result?.narrative?.strategyLabel && (
                           <div>
-                            <Badge tone="accent">전략 유형 · {result.narrative.strategyLabel}</Badge>
                             <p
                               style={{
                                 margin: "8px 0 0",
@@ -1412,7 +1407,7 @@ export default function ResultPage() {
                             }}
                           >
                             <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                              <strong style={{ color: "var(--fg-danger)", fontWeight: 600 }}>병목</strong> ·{" "}
+                              <strong style={{ color: "var(--fg-danger)", fontWeight: 600 }}>약점</strong> ·{" "}
                               {axisScoreLine(result.bottlenecks)}
                             </p>
                             <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
@@ -1661,7 +1656,7 @@ export default function ResultPage() {
       <Modal
         open={basisAxis !== null}
         onClose={() => setBasisAxis(null)}
-        title={basisScore ? `${basisScore.name} — 점수 근거` : undefined}
+        title={basisScore ? `${basisScore.name} — 근거` : undefined}
         wide
       >
         {basisAxis && basisScore && (
@@ -1674,7 +1669,7 @@ export default function ResultPage() {
               }}
             >
               <span style={{ ...mono, fontWeight: 600, color: "var(--fg-primary)" }}>
-                판정 {basisScore.answeredCount}/{basisScore.totalCount} · 자료 충분도{" "}
+                분석 {basisScore.answeredCount}/{basisScore.totalCount} · 자료 충분도{" "}
                 {basisScore.totalCount > 0
                   ? Math.round((basisScore.answeredCount / basisScore.totalCount) * 100)
                   : 0}
@@ -1683,13 +1678,15 @@ export default function ResultPage() {
             </p>
             <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
               자료가 부족한 문항은{" "}
-              <TermTooltip term="판정 보류">{getGlossary("판정 보류")?.easy}</TermTooltip>로 두고
-              감점하지 않아요. 판정은 문항별 기준 서술에 분류하는 방식이에요.
+              <TermTooltip term="분석 보류">{getGlossary("분석 보류")?.easy}</TermTooltip>로 두고
+              감점하지 않아요. 분석은 문항별 기준 서술에 분류하는 방식이에요.
             </p>
             {/* 스크롤은 팝업 안쪽 리스트에서만 */}
             <div
               className="ax-scrollbar-none"
-              style={{ marginTop: 12, maxHeight: "48vh", overflowY: "auto" }}
+              /* 스크롤은 이 리스트 안에서만 — 모달 외곽(.ax-modal max-height 84vh·720px)보다
+                 항상 작게 잡아 제목·안내가 밀려 올라가지 않게 한다 */
+              style={{ marginTop: 12, maxHeight: "min(calc(84vh - 220px), 500px)", overflowY: "auto" }}
             >
               {basisQuestions.map((j) => {
                 const deferred = j.anchorLevel === null;
@@ -1713,7 +1710,7 @@ export default function ResultPage() {
                       <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
                         {j.questionText}
                       </strong>
-                      {deferred && <Badge tone="outline">판정 보류</Badge>}
+                      {deferred && <Badge tone="outline">분석 보류</Badge>}
                       {j.reviewNeeded && <Badge tone="warning">검토 필요</Badge>}
                     </div>
                     {!deferred && j.anchorCriteria && (
@@ -1724,7 +1721,7 @@ export default function ResultPage() {
                           color: "var(--fg-primary)",
                         }}
                       >
-                        판정 기준: &ldquo;{j.anchorCriteria}&rdquo;
+                        분석 기준: &ldquo;{j.anchorCriteria}&rdquo;
                       </p>
                     )}
                     <p

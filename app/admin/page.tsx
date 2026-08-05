@@ -13,7 +13,7 @@ type Stats = {
 
 const STATUS_LABEL: Record<string, string> = {
   completed: "완료",
-  judging: "판정 중",
+  judging: "분석 중",
   draft: "진행 중",
   failed: "실패",
 };

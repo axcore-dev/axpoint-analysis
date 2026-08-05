@@ -83,7 +83,7 @@ function WorkspaceMockup() {
         width="100%"
         viewBox="0 0 360 210"
         role="img"
-        aria-label="AXpoint 워크스페이스 현황판 미리보기"
+        aria-label="AXpoint™ 워크스페이스 현황판 미리보기"
         style={{ display: "block", maxWidth: 400, margin: "0 auto" }}
       >
         {/* 상단 스탯 타일 3개 — 흰 카드 + 헤어라인 */}

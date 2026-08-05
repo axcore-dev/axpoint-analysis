@@ -363,7 +363,7 @@ export default function LandingPage() {
         <div key="search" className="ax-step-enter relative m-auto w-full max-w-[640px]">
           <div className="absolute bottom-full left-1/2 mb-10 flex w-max max-w-[calc(100vw-48px)] -translate-x-1/2 flex-col items-center text-center">
             <h1 className="flex-col ax-heading mt-4 [font:var(--text-display2)] tracking-[var(--track-display)] text-ink">
-              제조 AX 첫걸음, AX<b className="text-brand">point</b>
+              제조 <b className="text-brand">AX</b>를 위한 <b className="text-brand">AI</b> 컨설턴트
             </h1>
             <p className="mt-3 [font:var(--text-body1)] tracking-[var(--track-body)] text-ink-3">
               조사·분석·진단·설계까지, One-stop 맞춤형 솔루션
@@ -566,7 +566,7 @@ export default function LandingPage() {
           <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
           <DotProgress step={2} total={2} />
           <h2 className="ax-heading mt-4 text-center [font:var(--text-h3)] tracking-[var(--track-heading)] text-ink">
-            <b>현장 서류</b>를 올려주세요
+            <b>사내 문서</b>를 올려주세요
           </h2>
           <p className="mt-2 text-center [font:var(--text-body2)] tracking-[var(--track-body)] text-ink-3">
             자료를 올릴수록 진단이 더 정확해져요

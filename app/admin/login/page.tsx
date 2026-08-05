@@ -61,7 +61,7 @@ export default function AdminLoginPage() {
             textTransform: "uppercase",
           }}
         >
-          AXpoint Admin
+          AXpoint™ Admin
         </p>
         <h1
           style={{

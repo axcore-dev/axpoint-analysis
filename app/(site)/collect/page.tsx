@@ -440,9 +440,9 @@ export default function CollectPage() {
     try {
       await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
       const outcome = await waitForJudge(assessmentId);
-      if (outcome === "failed") throw new Error("판정에 실패했어요. 다시 시도해 주세요.");
+      if (outcome === "failed") throw new Error("분석에 실패했어요. 다시 시도해 주세요.");
       if (outcome === "timeout")
-        throw new Error("판정이 예상보다 오래 걸려요. 잠시 후 마이페이지에서 결과를 확인해 주세요.");
+        throw new Error("분석이 예상보다 오래 걸려요. 잠시 후 마이페이지에서 결과를 확인해 주세요.");
       completeStep("collect");
       router.push("/result");
     } catch (e) {
@@ -575,7 +575,7 @@ export default function CollectPage() {
               <section className="mt-8 rounded-[var(--radius-l)] border border-line">
                 <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
                   <span className="min-w-0 [font:var(--text-label-s)] text-ink">
-                    필수 서류 {requiredDocs.filled}/{requiredDocs.total}
+                    필수 문서 {requiredDocs.filled}/{requiredDocs.total}
                   </span>
                   <span className="flex flex-none items-center gap-2">
                     {/* 업로드 진입점 — 여러 건을 한 번에 올리면 유형은 분류가 정한다 (수정요청v9) */}
@@ -959,11 +959,11 @@ export default function CollectPage() {
         title="자료가 부족합니다"
       >
         <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-          필수 서류 {shortage?.total ?? 0}종 중 올라온 자료가 없어요. 이대로 진단하면 점수를
+          필수 문서 {shortage?.total ?? 0}종 중 올라온 자료가 없어요. 이대로 진단하면 점수를
           산출하지 못해요.
         </p>
         <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-          자료를 올리면 판정이 되고, 부족한 문항은 진단 결과에서 설문으로 보완할 수 있어요.
+          자료를 올리면 분석이 되고, 부족한 문항은 진단 결과에서 설문으로 보완할 수 있어요.
         </p>
         <div style={{ marginTop: 20, display: "flex", gap: 8 }}>
           <Button variant="secondary" full onClick={() => router.push("/")}>
