@@ -17,6 +17,7 @@ import {
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
 import { WorkflowStandard } from "@/components/flow/WorkflowStandard";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api } from "@/lib/api";
 import { waitForJudge, type JudgeProgress } from "@/lib/judgeWait";
 import { getGlossary } from "@/data/glossary";
@@ -828,9 +829,12 @@ export default function ResultPage() {
         }}
       >
         <ProgressBar percent={percent} style={{ width: "min(360px, 100%)" }} />
-        <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
-          진단 결과를 불러오고 있어요
-        </p>
+        {/* 에이전트가 근거 문서를 읽는 구간은 문항 수가 늘지 않는다 — 문구로 무슨 일이 일어나는지 알린다 */}
+        <TextShimmer style={{ font: "var(--text-body2)" }}>
+          {judgeProgress?.stage === "reading"
+            ? "AI가 근거 문서를 읽고 분석하고 있어요"
+            : "진단 결과를 불러오고 있어요"}
+        </TextShimmer>
       </div>
     );
   }
