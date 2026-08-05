@@ -137,6 +137,8 @@ export default function CollectPage() {
   const [submitting, setSubmitting] = useState(false);
   /** 자료 부족 경고 — 필수 서류가 하나도 없을 때 */
   const [shortage, setShortage] = useState<{ filled: number; total: number } | null>(null);
+  /* 부족 문서 목록 복사 버튼 피드백 (v4-2) */
+  const [copiedMissing, setCopiedMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -570,7 +572,8 @@ export default function CollectPage() {
                 </div>
               ))}
 
-            {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9) */}
+            {/* 필수 서류 슬롯 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9)
+                v4-2: 부족한 자료는 우측 패널에 모아 표시하고, 목록 복사 버튼을 제공한다 */}
             {requiredDocs && requiredDocs.items.length > 0 && (
               <section className="mt-8 rounded-[var(--radius-l)] border border-line">
                 <div className="flex items-center justify-between gap-3 border-b border-line px-3.5 py-2.5">
@@ -589,6 +592,7 @@ export default function CollectPage() {
                     </Button>
                   </span>
                 </div>
+                <div className="grid md:grid-cols-[minmax(0,1fr)_260px]">
                 {/* 화면 높이에 맞춰 확장 — 뷰포트가 낮으면 패널 안에서 자연 스크롤 */}
                 <div className="ax-scrollbar-none max-h-[max(300px,60vh)] overflow-y-auto">
                   {Object.entries(
@@ -644,6 +648,72 @@ export default function CollectPage() {
                       })}
                     </div>
                   ))}
+                </div>
+
+                {/* 우측 — 부족한 자료 모음 (v4-2). 목록 복사로 사내 자료 요청에 바로 쓴다 */}
+                <aside className="border-t border-line md:border-l md:border-t-0">
+                  {(() => {
+                    const missing = requiredDocs.items.filter((d) => d.files.length === 0);
+                    const copyText = [
+                      "부족한 필수 문서",
+                      ...missing.map((d) => `- [${d.groupName}] ${d.docTypeName}`),
+                    ].join("\n");
+                    return (
+                      <div className="flex h-full flex-col">
+                        <div className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+                          <span className="[font:var(--text-label-s)] text-ink">
+                            부족한 자료 {missing.length}종
+                          </span>
+                          {missing.length > 0 && (
+                            <Button
+                              variant="utility"
+                              size="sm"
+                              onClick={() => {
+                                void navigator.clipboard.writeText(copyText).then(() => {
+                                  setCopiedMissing(true);
+                                  setTimeout(() => setCopiedMissing(false), 1500);
+                                });
+                              }}
+                            >
+                              {copiedMissing ? "복사됨" : "목록 복사"}
+                            </Button>
+                          )}
+                        </div>
+                        <div className="ax-scrollbar-none max-h-[max(300px,60vh)] overflow-y-auto px-3.5 py-2">
+                          {missing.length === 0 ? (
+                            <p className="m-0 py-2 [font:var(--text-caption)] text-ink-4">
+                              필수 문서가 모두 올라왔어요.
+                            </p>
+                          ) : (
+                            missing.map((d) => (
+                              <div
+                                key={d.docTypeId}
+                                className="flex items-center gap-2 border-b border-line-subtle py-2 last:border-b-0"
+                              >
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate [font:var(--text-label-s)] text-ink">
+                                    {d.docTypeName}
+                                  </span>
+                                  <span className="block [font:var(--text-caption)] text-ink-4">
+                                    {d.groupName}
+                                  </span>
+                                </span>
+                                <Button
+                                  variant="utility"
+                                  size="sm"
+                                  disabled={uploading}
+                                  onClick={() => handleUploadClick(d.docTypeId)}
+                                >
+                                  올리기
+                                </Button>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </aside>
                 </div>
               </section>
             )}

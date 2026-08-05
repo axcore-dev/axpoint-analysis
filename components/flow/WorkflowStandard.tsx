@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type CSSProperties } from "react";
-import { Badge, Card } from "@/components/ui";
-import { api } from "@/lib/api";
+import { type CSSProperties } from "react";
+import { Badge } from "@/components/ui";
+import { WorkflowChart } from "@/components/flow/WorkflowChart";
 
 /**
  * 표준 워크플로우 (진단 결과 화면) — 8대 기능 영역 카드.
@@ -60,20 +60,14 @@ export function stageDocs(stage: WorkflowStage): OutputDoc[] {
   return [...byId.values()];
 }
 
+/**
+ * 진단 결과의 워크플로우 섹션 — 자료 정리에서 편집한 순서를 그대로 보여준다(v4: 편집은 자료 정리에서만).
+ * 카드 나열은 v4-2에서 플로우차트(WorkflowChart)로 교체됐다.
+ */
 export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
-  const [stages, setStages] = useState<WorkflowStage[] | null>(null);
-
-  useEffect(() => {
-    api<{ stages: WorkflowStage[] }>(`/api/assessments/${assessmentId}/workflow`)
-      .then(({ stages }) => setStages(stages ?? []))
-      .catch(() => setStages([])); /* 표준 정의를 못 받으면 섹션을 숨긴다 */
-  }, [assessmentId]);
-
-  if (!stages || stages.length === 0) return null;
-
   return (
     <section style={{ padding: "56px 0" }}>
-      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "0 24px" }}>
+      <div style={{ maxWidth: 1440, margin: "0 auto", padding: "0 24px" }}>
         <header style={{ marginBottom: 24 }}>
           <h3
             style={{
@@ -83,68 +77,10 @@ export function WorkflowStandard({ assessmentId }: { assessmentId: string }) {
               color: "var(--fg-primary)",
             }}
           >
-            표준 워크플로우
+            워크플로우
           </h3>
         </header>
-
-        <div
-          className="ax-scrollbar-none"
-          style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 4 }}
-        >
-          {stages.map((stage) => {
-            const docs = stageDocs(stage);
-            return (
-              <Card
-                key={stage.code}
-                radius="l"
-                style={{
-                  minWidth: 300,
-                  maxWidth: 340,
-                  flex: "0 0 auto",
-                  padding: "18px 20px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                }}
-              >
-                {/* 1행 — 영역명 */}
-                <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                  {stage.name}
-                </strong>
-
-                {/* 2행 — 업무 Task 목록 */}
-                <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>
-                  {stage.activities.map((a) => (
-                    <li
-                      key={a.name}
-                      style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", ...clamp2 }}
-                    >
-                      · {a.name}
-                    </li>
-                  ))}
-                </ul>
-
-                {/* 3행 — 산출 문서 유형(ISO): 보유는 채워진 뱃지, 미보유는 옅은 뱃지 */}
-                {docs.length > 0 && (
-                  <div
-                    style={{
-                      marginTop: "auto",
-                      paddingTop: 10,
-                      borderTop: "1px solid var(--line-subtle)",
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 6,
-                    }}
-                  >
-                    {docs.map((d) => (
-                      <DocBadge key={String(d.docTypeId)} doc={d} />
-                    ))}
-                  </div>
-                )}
-              </Card>
-            );
-          })}
-        </div>
+        <WorkflowChart assessmentId={assessmentId} />
       </div>
     </section>
   );

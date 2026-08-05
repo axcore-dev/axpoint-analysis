@@ -1,16 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Card, Icons } from "@/components/ui";
-import { api } from "@/lib/api";
-import { clamp2, DocBadge, stageDocs, type WorkflowStage } from "@/components/flow/WorkflowStandard";
+import { useState } from "react";
+import { Icons } from "@/components/ui";
+import { WorkflowChart } from "@/components/flow/WorkflowChart";
 
 /**
- * 워크플로우 — 8대 영역 표준 워크플로우와 이 기업의 문서 보유 현황 (자료 정리 화면)
- *
- * GET /api/assessments/:id/workflow 실데이터를 스스로 조회한다 (WorkflowStandard와 같은 응답).
- * 영역 카드 3행: 영역명(+'{n}/{m} 보유' — 표준 대비 이 기업 보유 현황) / 업무 Task / 산출 문서 유형.
- * covered(보유) 문서는 채운 뱃지, 미보유는 옅은 뱃지. 표준 정의를 못 받으면 섹션을 숨긴다.
+ * 워크플로우 — 자료 정리 화면 (작업 요청 v4-2 전면 개편)
+ * (대)8대 기능 영역 → (중)업무 순서 → (소)산출 문서의 플로우차트.
+ * 여기서만 드래그앤드롭으로 우리 회사 실제 순서를 편집한다(진단 결과 화면은 보기 전용).
+ * 표준과 다른 위치는 붉게, 미보유 문서도 붉은 칩으로 표시된다.
  */
 export function WorkflowSection({
   companyName,
@@ -20,15 +18,6 @@ export function WorkflowSection({
   assessmentId: string;
 }) {
   const [open, setOpen] = useState(true);
-  const [stages, setStages] = useState<WorkflowStage[] | null>(null);
-
-  useEffect(() => {
-    api<{ stages: WorkflowStage[] }>(`/api/assessments/${assessmentId}/workflow`)
-      .then(({ stages }) => setStages(stages ?? []))
-      .catch(() => setStages([])); /* 표준 정의를 못 받으면 섹션을 숨긴다 */
-  }, [assessmentId]);
-
-  if (!stages || stages.length === 0) return null;
 
   return (
     <section className="mt-10">
@@ -58,77 +47,13 @@ export function WorkflowSection({
 
       {open && (
         <div className="mt-4">
-          {/* 표준 대비 이 기업 보유 문서 비교 — 카드의 '{n}/{m} 보유'가 기준 */}
           <div className="mb-3 flex flex-wrap items-center gap-1.5 [font:var(--text-caption)] text-ink-3">
             <span className="rounded-[var(--radius-s)] bg-[var(--bg-brand-weak)] px-2 py-1 text-[var(--fg-brand)]">
               {companyName || "이 기업"}
             </span>
-            표준 대비 보유 문서
+            표준 대비 업무 순서·보유 문서
           </div>
-
-          <div className="ax-scrollbar-none flex gap-3 overflow-x-auto pb-1">
-            {stages.map((stage) => {
-              const docs = stageDocs(stage);
-              const covered = docs.filter((d) => d.covered).length;
-              return (
-                <Card
-                  key={stage.code}
-                  radius="l"
-                  style={{
-                    minWidth: 300,
-                    maxWidth: 340,
-                    flex: "0 0 auto",
-                    padding: "18px 20px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 10,
-                  }}
-                >
-                  {/* 1행 — 영역명 + 보유 현황 */}
-                  <div className="flex items-center justify-between gap-2">
-                    <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                      {stage.name}
-                    </strong>
-                    {docs.length > 0 && (
-                      <span className="flex-none [font:var(--text-caption)] text-ink-3">
-                        {covered}/{docs.length} 보유
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 2행 — 업무 Task 목록 */}
-                  <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>
-                    {stage.activities.map((a) => (
-                      <li
-                        key={a.name}
-                        style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", ...clamp2 }}
-                      >
-                        · {a.name}
-                      </li>
-                    ))}
-                  </ul>
-
-                  {/* 3행 — 산출 문서 유형: 보유는 채워진 뱃지, 미보유는 옅은 뱃지 */}
-                  {docs.length > 0 && (
-                    <div
-                      style={{
-                        marginTop: "auto",
-                        paddingTop: 10,
-                        borderTop: "1px solid var(--line-subtle)",
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: 6,
-                      }}
-                    >
-                      {docs.map((d) => (
-                        <DocBadge key={String(d.docTypeId)} doc={d} />
-                      ))}
-                    </div>
-                  )}
-                </Card>
-              );
-            })}
-          </div>
+          <WorkflowChart assessmentId={assessmentId} editable />
         </div>
       )}
     </section>
