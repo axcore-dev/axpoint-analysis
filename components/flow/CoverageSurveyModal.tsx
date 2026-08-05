@@ -6,9 +6,11 @@ import { api } from "@/lib/api";
 import { waitForJudge } from "@/lib/judgeWait";
 
 /**
- * 보완 설문 — 카드 모달 형식 (작업 요청 v5-3)
- * 판정에서 자료로 분석하지 못한 문항을 AI 에이전트가 컨설턴트 어체(조직 단위 질문)로
- * 재작성해 내려준다(kind=supplement). 한 문항씩 보여주고, 선지를 고르면 자동으로 다음으로 넘어간다.
+ * 진단 보완 질문 — 카드 모달 형식 (작업 요청 v5-3 · 사전/보완 설문 통합)
+ * 서버가 사전 설문(kind=primary, 항상)과 보완 설문(kind=supplement, 결측·문서 부족 시)을 한 목록으로
+ * 내려준다 — 보완할 게 없으면 사전 설문만 도는 셈이다. 보완 설문 문구는 AI 에이전트가 컨설턴트
+ * 어체(조직 단위 질문)로 쓴다.
+ * 한 문항씩 보여주고 선지를 고르면 자동으로 다음으로 넘어간다. 아직 답하지 않은 문항부터 시작한다.
  * 모든 문항은 건너뛸 수 있고, 건너뛴 문항은 종전처럼 분석 보류로 남는다(감점 아님).
  * 마지막에 '반영하기'를 누르면 응답 저장 → 재분석까지 돌고 onApplied로 알린다.
  */
@@ -45,7 +47,9 @@ export function CoverageSurveyModal({
     setItems(null);
     api<{ items: SurveyItem[] }>(`/api/assessments/${assessmentId}/surveys`)
       .then(({ items }) => {
-        const list = items.filter((i) => i.kind === "supplement");
+        /* 사전·보완 설문을 한 목록으로 받는다 — 아직 답하지 않은 문항을 앞으로 (sort는 stable) */
+        const answeredOf = (i: SurveyItem) => (i.answer?.choiceValues?.[0] !== undefined ? 1 : 0);
+        const list = [...items].sort((a, b) => answeredOf(a) - answeredOf(b));
         setItems(list);
         setPicked(
           Object.fromEntries(
@@ -105,7 +109,7 @@ export function CoverageSurveyModal({
   const current = items && idx < total ? items[idx] : null;
 
   return (
-    <Modal open={open} onClose={onClose} title="컨설턴트 보완 질문" wide>
+    <Modal open={open} onClose={onClose} title="컨설턴트 진단 질문" wide>
       {items === null ? (
         <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
           <Loader />

@@ -736,7 +736,8 @@ export default function ResultPage() {
     return () => clearTimeout(t);
   }, [data]);
 
-  /* 보완 설문 자동 노출 (v5-3) — 분석 보류 문항이 있으면 결과 진입 시 한 번 자동으로 연다 */
+  /* 진단 질문 자동 노출 (v5-3) — 분석 보류 문항이 있으면 결과 진입 시 한 번 자동으로 연다.
+     사전 설문은 서버가 항상 함께 내려주므로, 보완할 게 없어도 미응답 사전 설문을 이어서 묻는다 */
   useEffect(() => {
     if (!data || !assessmentId) return;
     const missing = (data.judgments ?? []).some((j) => j.anchorLevel === null);
