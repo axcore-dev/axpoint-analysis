@@ -1416,9 +1416,6 @@ export default function ResultPage() {
                             </p>
                           </div>
                         )}
-                        <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                          왼쪽 차트의 카테고리 이름이나 점을 눌러 보세요.
-                        </p>
                       </div>
                     )}
                   </Card>
