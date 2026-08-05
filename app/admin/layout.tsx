@@ -6,13 +6,14 @@ import { useEffect, type ReactNode } from "react";
 import { useAuth } from "@/components/auth/AuthContext";
 import { Button, Icons, type IconName } from "@/components/ui";
 
-/** 어드민 내비게이션 — 대시보드 · 회원 관리 · 진단 이력 · 외부 연동 · 프롬프트 · 환경 관리 */
+/** 어드민 내비게이션 — 대시보드 · 회원 관리 · 진단 이력 · 외부 연동 · 멀티 에이전트 · 환경 관리
+    (지시문 전체 편집(/admin/prompts)은 멀티 에이전트 화면에서 링크로 진입한다) */
 const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "/admin", label: "대시보드", icon: "gauge" },
   { path: "/admin/users", label: "회원 관리", icon: "user" },
   { path: "/admin/analyses", label: "진단 이력", icon: "clipboard" },
   { path: "/admin/integrations", label: "외부 연동", icon: "globe" },
-  { path: "/admin/prompts", label: "프롬프트", icon: "spark" },
+  { path: "/admin/agents", label: "멀티 에이전트", icon: "spark" },
   { path: "/admin/env", label: "환경 관리", icon: "plug" },
 ];
 

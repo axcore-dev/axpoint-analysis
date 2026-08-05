@@ -44,8 +44,10 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
 │   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
 │   ├── auth/       로그인(이메일 인증 착지 화면 겸용) / 회원가입
 │   └── mypage/     내 정보 / 내 정보 수정
-└── admin/          관리자 콘솔 — 대시보드·사용자·진단 이력·외부 연동(API 키 등록·테스트)·환경 관리
-                    role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
+└── admin/          관리자 콘솔 — 대시보드·사용자·진단 이력·외부 연동(API 키 등록·테스트)·환경 관리·
+                    멀티 에이전트(agents/ — React Flow 그래프에서 노드별 도구·출력 스키마·지시문 편집,
+                    진단 건 파일럿 실행·노드 트레이스. 지시문 전체 목록은 prompts/ — 내비에서는 빠지고
+                    agents 화면에서 링크로 진입). role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
 
 proxy.ts            admin.* 호스트 → /admin 리라이트 (/auth는 제외 — 로그인 공용)
 
