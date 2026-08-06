@@ -649,7 +649,7 @@ export default function LandingPage() {
                     <Icons.upload size={20} />
                   </span>
                   <span className="[font:var(--text-label-m)] text-ink">
-                    파일 업로드, 또는 드래그
+                    파일 업로드, 또는 가져다 놓기
                   </span>
                   {/* 올리면 좋은 서류 — 칩으로 강조 (v3 개선) */}
                   <span className="flex flex-wrap items-center justify-center gap-1.5">
