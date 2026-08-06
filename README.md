@@ -23,7 +23,12 @@ npm run build   # 프로덕션 빌드
 npm run lint    # ESLint
 ```
 
-백엔드(`axpoint-analysis-api`, :3001)가 떠 있어야 로그인·진단이 동작한다(`NEXT_PUBLIC_API_URL` 미설정 시 `http://localhost:3001`). 인증은 better-auth 쿠키 세션 — 이메일 인증·Google OAuth·게스트.
+백엔드(`axpoint-analysis-api`, :3001)가 떠 있어야 로그인·진단이 동작한다(`NEXT_PUBLIC_API_URL` 미설정 시 `http://localhost:3001`). 인증은 better-auth 쿠키 세션 — 이메일 인증·Google OAuth.
+
+**로그인을 요구하는 지점은 '진단 결과 보기' 한 곳이다** (작업요청 v6-4). 기업을 고르는 순간
+`ensureSession()`이 익명 세션을 조용히 발급해 자료 업로드·분류까지 로그인 없이 진행하고,
+결과 분석 버튼에서 `LoginModal`을 띄운다. 로그인·가입에 성공하면 서버가 그때까지의 진단을 그 계정으로
+옮기므로(`auth.ts` `onLinkAccount`) 흐름이 끊기지 않는다. '체험하기' 버튼은 없앴다.
 
 ## 폴더 구조
 
@@ -45,16 +50,21 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
 │   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
 │   ├── auth/       로그인(이메일 인증 착지 화면 겸용) / 회원가입
 │   └── mypage/     내 정보 / 내 정보 수정
-└── admin/          관리자 콘솔 — 대시보드·사용자·진단 이력·외부 연동(API 키 등록·테스트)·환경 관리·
-                    멀티 에이전트(agents/ — React Flow 그래프에서 노드별 도구·출력 스키마·지시문 편집,
-                    진단 건 파일럿 실행·노드 트레이스. 지시문 전체 목록은 prompts/ — 내비에서는 빠지고
-                    agents 화면에서 링크로 진입). role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
+└── admin/          관리자 콘솔 — 대시보드·사용자(체험 계정 수동 정리 포함)·진단 이력·
+                    외부 연동(API 키 등록·테스트)·환경 관리·
+                    멀티 에이전트(agents/ — 그래프 탭은 캔버스에서 위=외부 API·가운데=에이전트·아래=도구를
+                    보여주고, 에이전트를 누르면 팝업에서 도구·도구 호출 상한·출력 스키마·지시문·모델을 편집한다.
+                    실행 로그 탭은 노드 실행·실패를 진단과 무관하게 조회. 지시문 전체 목록은 prompts/ —
+                    내비에서는 빠지고 agents 화면에서 링크로 진입). role=admin 가드.
+                    admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
 
 proxy.ts            admin.* 호스트 → /admin 리라이트 (/auth는 제외 — 로그인 공용)
 
 components/
-├── ui/             디자인 시스템 프리미티브 (Button, Card, Modal, Stepper …)
-├── admin/          어드민 공용 — SortableTable, 개별 관리 안내 팝업
+├── ui/             디자인 시스템 프리미티브 (Button, Card, Modal, Stepper, PasswordInput …)
+├── admin/          어드민 공용 — SortableTable, 개별 관리 안내 팝업,
+│                   AgentCanvas(멀티 에이전트 캔버스 — API·에이전트·도구 3단),
+│                   FieldHelp(라벨 옆 물음표 → 설명·예시 팝업)
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
 │                   WorkflowChart(React Flow 플로우차트 — 화살표·업로드 문서 칩·영역/업무 드래그 편집·

@@ -24,7 +24,7 @@ export interface AuthUser {
   title?: string;
   /** 연락처 (선택) */
   phone?: string;
-  /** '체험하기' 게스트 계정 여부 */
+  /** 익명 세션 여부 — 로그인 전 자료 분류까지만 진행한 상태 (v6-4) */
   isAnonymous?: boolean;
   /** 권한 — 'admin'이면 어드민 사이트 접근 가능 */
   role?: string;
@@ -36,8 +36,8 @@ interface AuthContextValue {
   login: (email: string, password: string) => Promise<void>;
   /** 가입 — 성공해도 세션은 없음(이메일 인증 완료 후 로그인) */
   signup: (email: string, password: string, name: string) => Promise<void>;
-  /** '체험하기' — 게스트 계정 즉석 발급 + 자동 로그인 */
-  loginGuest: () => Promise<void>;
+  /** 세션 보장 — 없으면 익명 세션을 발급한다. 로그인 전 진단 진행용 (v6-4) */
+  ensureSession: () => Promise<void>;
   /** 구글 소셜 로그인 — 동의 화면으로 이동 */
   loginGoogle: () => Promise<void>;
   logout: () => Promise<void>;
@@ -108,10 +108,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // 이메일 인증 완료 전에는 세션이 없다 — 화면은 인증 안내를 보여준다
   }, []);
 
-  const loginGuest = useCallback(async () => {
+  /* 진단을 시작하려면 서버에 저장할 주체가 필요하다. 로그인 전이면 익명 세션을 조용히 발급한다 —
+     화면에 버튼은 없고(v6-3), 로그인·가입에 성공하면 그때까지의 진단이 그 계정으로 넘어온다(v6-4).
+     이미 세션이 있으면(익명이든 아니든) 아무것도 하지 않는다 — 익명 계정은 두 번 만들 수 없다. */
+  const ensureSession = useCallback(async () => {
+    if (user) return;
     await api("/api/auth/sign-in/anonymous", { method: "POST", body: JSON.stringify({}) });
     await refresh();
-  }, [refresh]);
+  }, [user, refresh]);
 
   const loginGoogle = useCallback(async () => {
     // 구글 동의 화면으로 이동 → 완료 후 콜백이 세션 쿠키를 심고 원래 주소로 복귀
@@ -147,8 +151,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, hydrated, login, signup, loginGuest, loginGoogle, logout, updateProfile }),
-    [user, hydrated, login, signup, loginGuest, loginGoogle, logout, updateProfile],
+    () => ({ user, hydrated, login, signup, ensureSession, loginGoogle, logout, updateProfile }),
+    [user, hydrated, login, signup, ensureSession, loginGoogle, logout, updateProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -4,8 +4,9 @@ import { Modal } from "@/components/ui";
 import { AuthForm } from "./AuthForm";
 
 /**
- * 로그인 팝업 — 랜딩 검색창 입력 직후 노출 (수정요청v1).
- * 성공 시 검색 내역은 부모 컴포넌트 state로 유지되어 사라지지 않는다.
+ * 로그인 팝업 — '진단 결과 보기'를 누른 시점에 노출한다 (작업요청 v6-4).
+ * 그때까지의 진단은 익명 세션에 담겨 있고, 로그인·가입에 성공하면 서버가 그 계정으로 옮긴다.
+ * 화면 state도 부모에 남아 있어 그대로 이어진다.
  */
 export function LoginModal({
   open,

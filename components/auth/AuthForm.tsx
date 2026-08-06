@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Input } from "@/components/ui";
+import { Button, Input, PasswordInput } from "@/components/ui";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "./AuthContext";
 
@@ -25,7 +25,11 @@ const toKorean = (e: unknown) => {
 
 /**
  * 로그인/회원가입 폼 — 모달과 /auth 페이지가 공유. 백엔드(better-auth) 연동.
- * 가입은 이메일 인증 완료 후 로그인 가능. '체험하기'는 게스트 계정 자동 발급.
+ * 가입은 이메일 인증 완료 후 로그인 가능.
+ *
+ * '체험하기' 버튼은 없앴다 (작업요청 v6-3) — 자료 분류까지는 로그인 없이 진행하고
+ * 결과 분석 시점에 이 폼을 띄운다. 그때까지의 진단은 익명 세션에 담겨 있다가
+ * 로그인·가입에 성공하면 그 계정으로 넘어온다 (v6-4, AuthContext.claimGuestWork).
  */
 export function AuthForm({
   mode: initialMode = "login",
@@ -34,7 +38,7 @@ export function AuthForm({
   mode?: "login" | "signup";
   onSuccess?: () => void;
 }) {
-  const { login, signup, loginGuest, loginGoogle } = useAuth();
+  const { login, signup, loginGoogle } = useAuth();
   const [mode, setMode] = useState<"login" | "signup">(initialMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -187,8 +191,7 @@ export function AuthForm({
       )}
       {field(
         "비밀번호",
-        <Input
-          type="password"
+        <PasswordInput
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="비밀번호 (8자 이상)"
@@ -199,8 +202,7 @@ export function AuthForm({
         field(
           "비밀번호 확인",
           <>
-            <Input
-              type="password"
+            <PasswordInput
               value={password2}
               onChange={(e) => setPassword2(e.target.value)}
               placeholder="비밀번호를 한 번 더 입력"
@@ -278,17 +280,6 @@ export function AuthForm({
         style={{ marginTop: 8 }}
       >
         Google로 계속하기
-      </Button>
-
-      <Button
-        size="lg"
-        full
-        variant="secondary"
-        disabled={busy}
-        onClick={() => social(loginGuest)}
-        style={{ marginTop: 8 }}
-      >
-        체험하기 — 가입 없이 둘러보기
       </Button>
 
       <p

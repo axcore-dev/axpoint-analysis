@@ -35,6 +35,76 @@ const ROLE_TABS: { key: string; label: string; match: (u: AdminUser) => boolean 
   { key: "guest", label: "체험", match: (u) => u.isAnonymous },
 ];
 
+/**
+ * 체험(익명) 계정 정리 — '체험' 탭에서만 보인다.
+ *
+ * 자료 분류까지는 로그인 없이 진행하므로(v6-4) 로그인하지 않고 이탈한 계정이 쌓인다.
+ * 로그인·가입에 성공한 익명 계정은 그 자리에서 사라지므로, 여기 남는 것은 끝까지 로그인하지 않은 것뿐이다.
+ * 자동으로 지우지 않는다 — 개수를 확인하고 관리자가 직접 누를 때만 지운다.
+ */
+function GuestCleanup({ onDone }: { onDone: () => void }) {
+  const [info, setInfo] = useState<{ days: number; stale: number; total: number } | null>(null);
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api<{ days: number; stale: number; total: number }>("/api/admin/guests/stale")
+      .then(setInfo)
+      .catch(() => setInfo(null));
+  }, []);
+  useEffect(load, [load]);
+
+  const purge = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const { deleted } = await api<{ deleted: number }>("/api/admin/guests/stale", {
+        method: "DELETE",
+      });
+      setMsg(`체험 계정 ${deleted.toLocaleString("ko-KR")}건과 딸린 진단을 지웠어요.`);
+      load();
+      onDone();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "지우지 못했어요.");
+    } finally {
+      setBusy(false);
+      setArmed(false);
+    }
+  };
+
+  if (!info) return null;
+  return (
+    <Card radius="xl" style={{ padding: 16, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+            체험 계정 정리
+          </div>
+          <p style={{ margin: "4px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+            전체 {info.total.toLocaleString("ko-KR")}건 중 {info.days}일이 지난{" "}
+            {info.stale.toLocaleString("ko-KR")}건이 정리 대상이에요. 지우면 딸린 진단·판정 결과도
+            함께 사라져요.
+          </p>
+          {msg && (
+            <p style={{ margin: "6px 0 0", font: "var(--text-caption)", color: "var(--fg-secondary)" }}>
+              {msg}
+            </p>
+          )}
+        </div>
+        <Button
+          variant={armed ? "secondary" : "ghost"}
+          size="sm"
+          disabled={busy || info.stale === 0}
+          onClick={() => (armed ? purge() : setArmed(true))}
+        >
+          {busy ? "지우는 중" : armed ? "한 번 더 눌러 확정" : `${info.stale}건 정리`}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
 /** 회원 관리 — 가입 사용자 실목록·권한 변경 (GET /api/admin/users) */
 export default function AdminUsersPage() {
   const [items, setItems] = useState<AdminUser[] | null>(null);
@@ -197,6 +267,8 @@ export default function AdminUsersPage() {
           />
         </div>
       </div>
+
+      {roleTab === "guest" && <GuestCleanup onDone={load} />}
 
       <Card radius="xl" padded={false}>
         <SortableTable

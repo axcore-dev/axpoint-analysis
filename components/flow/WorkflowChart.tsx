@@ -1,7 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Background, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
+import {
+  Background,
+  BackgroundVariant,
+  Controls,
+  MarkerType,
+  ReactFlow,
+  type Edge,
+  type Node,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { api } from "@/lib/api";
 import { type WorkflowStage } from "@/components/flow/WorkflowStandard";
@@ -315,7 +323,9 @@ export function WorkflowChart({
           nodesConnectable={false}
           deleteKeyCode={null}
         >
-          <Background gap={22} />
+          {/* 8대 영역이 가로로 길어 한 화면에 다 안 들어온다 — 확대·축소와 미니맵으로 짚어 본다 (v6-1) */}
+          <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+          <Controls showInteractive={false} />
         </ReactFlow>
       </div>
     </div>

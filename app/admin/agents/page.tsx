@@ -1,34 +1,23 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Background, Controls, MarkerType, ReactFlow, type Edge, type Node } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import { Badge, Button, Card, Loader } from "@/components/ui";
+import { useCallback, useEffect, useState } from "react";
+import { AgentCanvas, type GraphDef, type ToolMeta } from "@/components/admin/AgentCanvas";
+import { FieldHelp, HelpExample } from "@/components/admin/FieldHelp";
+import { Badge, Button, Card, Loader, Modal } from "@/components/ui";
 import { api } from "@/lib/api";
 
 /**
  * 멀티 에이전트 — 진단 파이프라인을 설정하는 화면 (어드민)
  *
  * 두 탭으로 나눈다.
- *  · 그래프 — 노드(에이전트)와 데이터가 흐르는 방향을 보고, 노드를 눌러 도구·출력 규격·지시문·모델을 편집한다.
- *    노드 카드에는 그 노드가 무엇에 연결돼 있는지(내부 DB / 외부 API)를 함께 표시한다. 키 설정은
- *    '외부 연동' 화면이 원본이라 여기서 하지 않는다 — 어디에 붙어 있는지만 보여준다.
+ *  · 그래프 — 캔버스에서 에이전트와 데이터 흐름을 보고, 에이전트를 누르면 팝업에서
+ *    도구·출력 규격·지시문·모델을 편집한다. 에이전트 위에는 그 에이전트가 부르는 외부 API를,
+ *    아래에는 쓸 수 있는 도구를 하위 노드로 매단다(작업요청 v6-1). 키 등록은 '외부 연동' 화면이
+ *    원본이라 여기서 하지 않는다 — 어디에 붙어 있는지만 보여준다.
  *  · 실행 로그 — 노드 실행 이력·실패를 진단과 무관하게 최근 순으로 본다. 오류 확인은 여기서 한다.
  *
  * 그래프 구조(노드·엣지)는 서버(agent_graph)가 원본이다. 엣지 편집은 아직 열지 않는다 — 설계.md §7.
  */
-type GraphNode = {
-  id: string;
-  type: "agent" | "code" | "hitl";
-  label?: string;
-  promptKey?: string;
-  tools?: string[];
-  maxSteps?: number;
-  outputSchema?: Record<string, unknown>;
-  impl?: string;
-};
-type GraphDef = { nodes: GraphNode[]; edges: { from: string; to: string }[] };
-type ToolMeta = Record<string, { label: string; source: string; external: boolean }>;
 type GraphRes = {
   active: { version: number; graph: GraphDef };
   usingDefault: boolean;
@@ -70,7 +59,7 @@ type PromptItem = {
 };
 type Providers = Record<string, { label: string; models: string[] }>;
 
-const TYPE_LABEL: Record<GraphNode["type"], string> = {
+const TYPE_LABEL: Record<"agent" | "code" | "hitl", string> = {
   agent: "에이전트",
   code: "코드",
   hitl: "사람 확인",
@@ -83,115 +72,6 @@ const RUN_TONE: Record<string, string> = {
   queued: "var(--grey-400)",
   skipped: "var(--grey-400)",
 };
-/** 노드 성격을 한눈에 — 아이콘 대신 글자 배지(외부 아이콘 의존 없이 일관된 톤) */
-const NODE_MARK: Record<string, { text: string; tone: string }> = {
-  collect: { text: "수집", tone: "#0A50FF" },
-  classify: { text: "분류", tone: "#7A5AF8" },
-  judge: { text: "판정", tone: "#0F9D58" },
-  narrative: { text: "서사", tone: "#F59E0B" },
-  tasks: { text: "추천", tone: "#EC4899" },
-  review: { text: "검증", tone: "#EF4444" },
-};
-
-const NODE_W = 236;
-
-/** 그래프 JSON에는 좌표가 없다 — 위상 깊이(가장 긴 선행 경로)로 좌→우 자동 배치한다 */
-function layoutNodes(graph: GraphDef, runByNode: Map<string, NodeRun>, toolMeta: ToolMeta): Node[] {
-  const depth = new Map<string, number>(graph.nodes.map((n) => [n.id, 0]));
-  for (let i = 0; i < graph.nodes.length; i += 1) {
-    for (const e of graph.edges) {
-      const d = (depth.get(e.from) ?? 0) + 1;
-      if (d > (depth.get(e.to) ?? 0)) depth.set(e.to, d);
-    }
-  }
-  const laneIndex = new Map<number, number>();
-  return graph.nodes.map((n) => {
-    const d = depth.get(n.id) ?? 0;
-    const lane = laneIndex.get(d) ?? 0;
-    laneIndex.set(d, lane + 1);
-    const run = runByNode.get(n.id);
-    const mark = NODE_MARK[n.id] ?? { text: TYPE_LABEL[n.type].slice(0, 2), tone: "#6B7684" };
-    const externals = [
-      ...new Set((n.tools ?? []).filter((t) => toolMeta[t]?.external).map((t) => toolMeta[t].source)),
-    ];
-    return {
-      id: n.id,
-      position: { x: 40 + d * (NODE_W + 90), y: 40 + lane * 150 },
-      data: {
-        label: (
-          <div style={{ textAlign: "left", display: "flex", gap: 10 }}>
-            <span
-              aria-hidden
-              style={{
-                flex: "none",
-                width: 34,
-                height: 34,
-                borderRadius: 9,
-                background: `${mark.tone}14`,
-                color: mark.tone,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                font: "600 12px/1 var(--font-sans)",
-              }}
-            >
-              {mark.text}
-            </span>
-            <span style={{ minWidth: 0, flex: 1 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                {run && (
-                  <span
-                    aria-hidden
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: 999,
-                      background: RUN_TONE[run.status] ?? "var(--grey-400)",
-                      flex: "none",
-                    }}
-                  />
-                )}
-                <strong style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
-                  {n.label ?? n.id}
-                </strong>
-              </span>
-              <span style={{ display: "block", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                {n.type === "agent" ? `도구 ${n.tools?.length ?? 0}개` : TYPE_LABEL[n.type]}
-                {run ? ` · ${run.status}` : ""}
-              </span>
-              {externals.length > 0 && (
-                <span style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 5 }}>
-                  {externals.map((s) => (
-                    <span
-                      key={s}
-                      style={{
-                        font: "10px/1.4 var(--font-sans)",
-                        padding: "1px 6px",
-                        borderRadius: 999,
-                        border: "1px solid var(--line-default)",
-                        color: "var(--fg-tertiary)",
-                      }}
-                    >
-                      {s}
-                    </span>
-                  ))}
-                </span>
-              )}
-            </span>
-          </div>
-        ),
-      },
-      style: {
-        width: NODE_W,
-        borderRadius: 12,
-        padding: "10px 12px",
-        border: `1px solid ${run?.status === "failed" ? "var(--fg-danger)" : "var(--line-default)"}`,
-        background: "var(--bg-elevated)",
-        boxShadow: "var(--shadow-1)",
-      },
-    };
-  });
-}
 
 export default function AdminAgentsPage() {
   const [tab, setTab] = useState<"graph" | "logs">("graph");
@@ -240,24 +120,7 @@ export default function AdminAgentsPage() {
   const selected = graph?.nodes.find((n) => n.id === selectedId) ?? null;
   const selectedPrompt = prompts.find((p) => p.key === selected?.promptKey) ?? null;
 
-  const flowNodes = useMemo(
-    () => (graph ? layoutNodes(graph, new Map(), toolMeta) : []),
-    [graph, toolMeta],
-  );
-  const flowEdges: Edge[] = useMemo(
-    () =>
-      (graph?.edges ?? []).map((e) => ({
-        id: `${e.from}-${e.to}`,
-        source: e.from,
-        target: e.to,
-        animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "var(--grey-400)" },
-        style: { stroke: "var(--grey-400)", strokeWidth: 1.4 },
-      })),
-    [graph],
-  );
-
-  /** 노드 선택 — 편집 초안을 현재 값으로 채운다 */
+  /** 노드 선택 — 편집 팝업을 열고 초안을 현재 값으로 채운다 */
   const selectNode = (id: string) => {
     setSelectedId(id);
     setMsg(null);
@@ -503,35 +366,37 @@ export default function AdminAgentsPage() {
               <Badge tone="success">v{graphRes.active.version} 사용 중</Badge>
             )}
             <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-              노드 {graph.nodes.length} · 연결 {graph.edges.length} — 화살표가 데이터가 흐르는 방향이에요
+              노드 {graph.nodes.length} · 연결 {graph.edges.length} — 실선 화살표가 데이터가 흐르는
+              방향이고, 점선으로 매달린 것은 위가 외부 API·아래가 그 에이전트의 도구예요. 에이전트를
+              누르면 설정 팝업이 열려요.
             </span>
           </div>
 
-          {/* 그래프 캔버스 */}
-          <Card radius="xl" padded={false} style={{ height: 460, overflow: "hidden" }}>
-            <ReactFlow
-              nodes={flowNodes}
-              edges={flowEdges}
-              onNodeClick={(_e, node) => selectNode(node.id)}
-              fitView
-              proOptions={{ hideAttribution: true }}
-              nodesConnectable={false}
-              deleteKeyCode={null}
-            >
-              <Background gap={20} />
-              <Controls showInteractive={false} />
-            </ReactFlow>
+          {/* 그래프 캔버스 — 위에 외부 API, 가운데 에이전트, 아래 도구 */}
+          <Card radius="xl" padded={false} style={{ overflow: "hidden" }}>
+            <AgentCanvas
+              graph={graph}
+              toolMeta={toolMeta}
+              selectedId={selectedId}
+              onSelect={selectNode}
+            />
           </Card>
 
-          {/* 선택 노드 상세 */}
-          {selected && (
-            <Card radius="xl" padded={false} style={{ marginTop: 12 }}>
-              <div style={{ padding: "16px 20px" }}>
+          {/* 선택한 에이전트 편집 — 팝업 (v6-1) */}
+          <Modal
+            open={selected !== null}
+            onClose={() => setSelectedId(null)}
+            title={selected ? `${selected.label ?? selected.id} · ${selected.id}` : ""}
+          >
+            {selected && (
+              <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                    {selected.label ?? selected.id}
-                  </span>
                   <Badge tone={selected.type === "agent" ? "accent" : "neutral"}>{TYPE_LABEL[selected.type]}</Badge>
+                  {selected.promptKey && (
+                    <code style={{ font: "12px/1.4 var(--font-mono)", color: "var(--fg-tertiary)" }}>
+                      {selected.promptKey}
+                    </code>
+                  )}
                 </div>
 
                 {selected.type === "code" && (
@@ -587,14 +452,34 @@ export default function AdminAgentsPage() {
                     </div>
 
                     {/* 도구 체크리스트 — 레지스트리(코드)가 원본, 노드는 부분집합만 고른다 */}
-                    <p style={{ margin: "16px 0 6px", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>도구 선택</p>
+                    <p style={{ margin: "16px 0 6px", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+                      도구 선택
+                      <FieldHelp title="도구 선택">
+                        <p style={{ margin: 0 }}>
+                          체크한 도구만 이 에이전트가 부를 수 있어요. 체크를 풀면 그 도구는 이
+                          에이전트에게 아예 보이지 않아서, 부르고 싶어도 부르지 못해요.
+                        </p>
+                        <p style={{ margin: "10px 0 0" }}>
+                          목록 자체는 코드(도구 레지스트리)가 원본이라 여기서 늘리거나 줄일 수 없고,
+                          그중 어떤 것을 이 에이전트에게 열어 줄지만 정해요. 파란 테두리는 외부 API를
+                          부르는 도구예요 — 키가 없으면 그 도구는 실패합니다.
+                        </p>
+                        <HelpExample>{`판정 에이전트 예시
+  ☑ 문항·앵커 조회   get_judgment_questions
+  ☑ 근거 문서 목록   list_evidence_docs
+  ☑ 문서 읽기        read_document
+  ☐ 과제 카탈로그    get_task_catalog  ← 판정에는 필요 없어 닫아 둔다`}</HelpExample>
+                      </FieldHelp>
+                    </p>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       {graphRes.tools.map((t) => {
                         const on = toolDraft.includes(t);
+                        const meta = toolMeta[t];
                         return (
                           <label
                             key={t}
-                            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: "var(--radius-m)", border: `1px solid ${on ? "var(--blue-500)" : "var(--line-default)"}`, font: "var(--text-caption)", color: on ? "var(--fg-brand)" : "var(--fg-secondary)", cursor: "pointer" }}
+                            title={meta ? `${meta.label} · ${meta.source}` : t}
+                            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: "var(--radius-m)", border: `1px solid ${on ? "var(--blue-500)" : meta?.external ? "var(--line-brand)" : "var(--line-default)"}`, font: "var(--text-caption)", color: on ? "var(--fg-brand)" : "var(--fg-secondary)", cursor: "pointer" }}
                           >
                             <input
                               type="checkbox"
@@ -604,14 +489,41 @@ export default function AdminAgentsPage() {
                               }
                               style={{ accentColor: "var(--blue-500)" }}
                             />
-                            {t}
+                            <span>
+                              {meta?.label ?? t}
+                              <span style={{ display: "block", font: "10px/1.3 var(--font-mono)", color: "var(--fg-quaternary)" }}>
+                                {t}
+                              </span>
+                            </span>
                           </label>
                         );
                       })}
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12 }}>
-                      <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>도구 호출 상한</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+                      <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+                        도구 호출 상한
+                        <FieldHelp title="도구 호출 상한">
+                          <p style={{ margin: 0 }}>
+                            에이전트가 한 번 실행되는 동안 도구를 최대 몇 번까지 부를 수 있는지예요.
+                            에이전트는 &lsquo;도구를 불러 결과를 보고, 다시 판단하고, 또 부르는&rsquo; 식으로
+                            움직이는데 그 왕복 횟수의 상한입니다.
+                          </p>
+                          <p style={{ margin: "10px 0 0" }}>
+                            마지막 1회는 결론을 쓰는 데 씁니다 — 상한을 전부 도구에 쓰면 답을 못 내고
+                            끝나요. <strong>낮으면</strong> 근거를 다 못 읽어 결측(판단 보류)이 늘고,
+                            <strong>높으면</strong> 같은 대화가 매 단계 다시 전송돼 토큰·시간이 늘고 분당
+                            한도에 걸립니다.
+                          </p>
+                          <HelpExample>{`상한 20 · 판정 에이전트
+ 1  문항·앵커 조회
+ 2  근거 문서 목록
+ 3~19  문서 읽기 (필요한 만큼)
+ 20  ← 도구가 꺼지고 판정 결과 JSON을 쓴다
+
+실측: 상한이 모자라면 문항 47개 중 14~17개만 판정됐다`}</HelpExample>
+                        </FieldHelp>
+                      </span>
                       <input
                         type="number"
                         min={1}
@@ -628,6 +540,37 @@ export default function AdminAgentsPage() {
 
                     <p style={{ margin: "14px 0 6px", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
                       출력 스키마 (JSON Schema)
+                      <FieldHelp title="출력 스키마 (JSON Schema)">
+                        <p style={{ margin: 0 }}>
+                          에이전트가 반드시 이 모양의 JSON으로만 답하도록 강제하는 규격이에요.
+                          모델이 문장으로 늘어놓지 못하게 막아, 결과를 코드가 바로 저장할 수 있게 합니다.
+                        </p>
+                        <p style={{ margin: "10px 0 0" }}>
+                          여기 없는 필드는 버려지고, <code>required</code>에 넣은 필드는 반드시 채워집니다.
+                          <code>description</code>은 모델에게 주는 힌트라 판정 품질에 영향을 줘요.
+                        </p>
+                        <HelpExample>{`{
+  "type": "object",
+  "required": ["judgments"],
+  "properties": {
+    "judgments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["questionCode", "anchorLevel"],
+        "properties": {
+          "questionCode": { "type": "string" },
+          "anchorLevel": { "type": ["integer", "null"] },
+          "rationale": {
+            "type": "string",
+            "description": "읽은 문서명·근거 인용"
+          }
+        }
+      }
+    }
+  }
+}`}</HelpExample>
+                      </FieldHelp>
                     </p>
                     <textarea
                       value={schemaDraft}
@@ -647,7 +590,25 @@ export default function AdminAgentsPage() {
                     {selectedPrompt && (
                       <>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 20, flexWrap: "wrap" }}>
-                          <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>지시문</span>
+                          <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+                            지시문
+                            <FieldHelp title="지시문 (시스템 프롬프트)">
+                              <p style={{ margin: 0 }}>
+                                에이전트에게 매 실행마다 먼저 주는 지침이에요. 역할·판단 기준·금지 사항·
+                                어체를 여기서 정합니다. 사용자 입력이나 문서 내용보다 위에 놓여서, 문서에
+                                섞여 들어온 지시를 무시하게 만드는 방어선이기도 해요.
+                              </p>
+                              <p style={{ margin: "10px 0 0" }}>
+                                저장하면 새 버전으로 쌓이고 바로 적용돼요. &lsquo;기본값으로&rsquo;를 누르면 코드에
+                                적힌 원래 지시문으로 돌아갑니다.
+                              </p>
+                              <HelpExample>{`너는 제조기업 AX 진단 판정자다.
+문항마다 앵커 하나를 고르고 근거를 인용한다.
+- 근거 문서를 읽지 않고는 앵커를 고르지 않는다
+- 근거가 없으면 anchorLevel을 null로 두고 사유를 쓴다
+- 같은 문서를 두 번 읽지 않는다`}</HelpExample>
+                            </FieldHelp>
+                          </span>
                           {selectedPrompt.usingDefault ? (
                             <Badge tone="outline">코드 기본값</Badge>
                           ) : (
@@ -747,8 +708,8 @@ export default function AdminAgentsPage() {
                   </>
                 )}
               </div>
-            </Card>
-          )}
+            )}
+          </Modal>
         </>
       )}
     </section>

@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthContext";
-import { LoginModal } from "@/components/auth/LoginModal";
 import { useDiagnosis, type AttachedFileInfo } from "@/components/flow/DiagnosisContext";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api, API_URL } from "@/lib/api";
@@ -84,7 +83,7 @@ const cardHeadingStyle: CSSProperties = {
 
 export default function LandingPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { ensureSession } = useAuth();
   const {
     companyInput,
     companyId,
@@ -95,7 +94,6 @@ export default function LandingPage() {
   } = useDiagnosis();
 
   const [phase, setPhase] = useState<Phase>("search");
-  const [loginOpen, setLoginOpen] = useState(false);
   const [company, setCompany] = useState("");
   /** 포커스가 한 번이라도 닿으면 타이핑 애니메이션 종료 */
   const [touched, setTouched] = useState(false);
@@ -187,15 +185,14 @@ export default function LandingPage() {
     }
   };
 
-  /** 목록에서 기업 선택 → 로그인 확인 후 기업 확인 단계로 */
+  /* 목록에서 기업 선택 → 기업 확인 단계로. 로그인은 여기서 묻지 않는다 (v6-4) —
+     자료 분류까지는 익명 세션으로 진행하고, 결과 분석을 누를 때 로그인을 요구한다.
+     세션 발급이 실패하면 다음 단계의 진단 생성이 401로 막히므로 그때 안내가 뜬다. */
   const pickCompany = (hit: SearchHit) => {
     setSelected(hit);
     setCompany(hit.name);
     update({ companyInput: hit.name });
-    if (!user) {
-      setLoginOpen(true); // 선택은 state에 남아 로그인 후 그대로 이어진다
-      return;
-    }
+    void ensureSession().catch(() => {});
     setPhase("confirm");
   };
 
@@ -708,15 +705,6 @@ export default function LandingPage() {
           </div>
         </Card>
       )}
-
-      <LoginModal
-        open={loginOpen}
-        onClose={() => setLoginOpen(false)}
-        onSuccess={() => {
-          setLoginOpen(false);
-          setPhase("confirm");
-        }}
-      />
 
       {/* 기업 확인 결과 팝업 — 차단은 검색으로 되돌리고, 확인 보류는 그대로 다음 단계로 (v9) */}
       <Modal

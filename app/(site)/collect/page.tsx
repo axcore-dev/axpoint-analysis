@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/auth/AuthContext";
+import { LoginModal } from "@/components/auth/LoginModal";
 import { ClassifyProgress } from "@/components/flow/ClassifyProgress";
 import { FileEditBoard } from "@/components/flow/FileEditBoard";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
@@ -129,6 +131,9 @@ function FileCell({ f }: { f: FileRow }) {
 export default function CollectPage() {
   const router = useRouter();
   const { companyInput, assessmentId, systems, completeStep, update } = useDiagnosis();
+  const { user } = useAuth();
+  /** 결과 분석 직전 로그인 요구 (v6-4) — 성공하면 곧바로 제출로 이어진다 */
+  const [loginOpen, setLoginOpen] = useState(false);
 
   /** 1단계(자료 확인) / 2단계(자료 분류) — null은 판별 전 */
   const [stage, setStage] = useState<"review" | "classify" | null>(null);
@@ -369,7 +374,7 @@ export default function CollectPage() {
   };
 
   /* 제출 전 점검 — 필수 서류가 하나도 없으면 점수를 낼 수 없다. 결과 화면에서 처음 알리지 않는다 (v9) */
-  const requestSubmit = async () => {
+  const checkThenSubmit = async () => {
     if (!assessmentId || submitting) return;
     try {
       const rd = await api<{ filled: number; total: number }>(
@@ -383,6 +388,18 @@ export default function CollectPage() {
       /* 점검 실패는 진행을 막지 않는다 */
     }
     void submit();
+  };
+
+  const requestSubmit = async () => {
+    if (!assessmentId || submitting) return;
+    /* 여기가 로그인 경계다 (v6-4) — 자료 분류까지는 익명 세션으로 왔고,
+       결과를 만들려면 결과를 담을 계정이 있어야 한다. 로그인·가입에 성공하면
+       서버가 지금까지의 진단을 그 계정으로 옮기고(auth.ts onLinkAccount) 그대로 이어진다. */
+    if (!user || user.isAnonymous) {
+      setLoginOpen(true);
+      return;
+    }
+    await checkThenSubmit();
   };
 
   /* 제출 → 판정 완료 폴링 → 진단 결과로 이동 */
@@ -910,6 +927,16 @@ export default function CollectPage() {
           </Button>
         </div>
       </Modal>
+
+      {/* 결과 분석 직전 로그인 요구 (v6-4) — 여기까지의 진단은 로그인 성공 시 그 계정으로 넘어온다 */}
+      <LoginModal
+        open={loginOpen}
+        onClose={() => setLoginOpen(false)}
+        onSuccess={() => {
+          setLoginOpen(false);
+          void checkThenSubmit();
+        }}
+      />
 
       {/* ── 다음 단계: 우측 하단 배치 (원본 레이아웃) ── */}
       <div className="mt-14 flex flex-col items-end gap-2">

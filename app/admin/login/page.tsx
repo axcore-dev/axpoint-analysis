@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth/AuthContext";
-import { Button, Card, Input } from "@/components/ui";
+import { Button, Card, Input, PasswordInput } from "@/components/ui";
 
 /**
  * 어드민 로그인 — 관리자 콘솔 전용 화면.
@@ -100,8 +100,7 @@ export default function AdminLoginPage() {
             </label>
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>비밀번호</span>
-              <Input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
