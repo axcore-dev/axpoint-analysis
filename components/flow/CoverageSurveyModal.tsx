@@ -12,7 +12,12 @@ import { waitForJudge } from "@/lib/judgeWait";
  * 어체(조직 단위 질문)로 쓴다.
  * 한 문항씩 보여주고 선지를 고르면 자동으로 다음으로 넘어간다. 아직 답하지 않은 문항부터 시작한다.
  * 모든 문항은 건너뛸 수 있고, 건너뛴 문항은 종전처럼 분석 보류로 남는다(감점 아님).
- * 마지막에 '반영하기'를 누르면 응답 저장 → 재분석까지 돌고 onApplied로 알린다.
+ *
+ * 두 시점에서 쓴다 (v7):
+ *  · phase="pre"  — 분석을 시작하기 직전. 응답만 저장하고 곧바로 onApplied로 넘긴다(호출부가 분석을
+ *    시작한다). 결과가 나온 뒤 다시 묻고 재분석하던 동선을 없앤 것이 이 모드의 목적이다.
+ *    물을 문항이 하나도 없으면 모달을 띄운 채 세우지 않고 바로 onApplied로 통과시킨다.
+ *  · phase="post" — 결과 화면에서 남은 결측을 보완할 때. 응답 저장 → 재분석까지 돌고 onApplied.
  */
 type SurveyItem = {
   code: string;
@@ -27,13 +32,17 @@ export function CoverageSurveyModal({
   open,
   onClose,
   onApplied,
+  phase = "post",
 }: {
   assessmentId: string;
   open: boolean;
   onClose: () => void;
-  /** 재분석까지 끝난 뒤 — 호출부가 결과를 다시 불러온다 */
+  /** 응답 반영이 끝난 뒤 — pre면 호출부가 분석을 시작하고, post면 결과를 다시 불러온다 */
   onApplied: () => void;
+  /** pre = 분석 시작 직전(재분석 없음) / post = 결과 화면 보완(재분석) */
+  phase?: "pre" | "post";
 }) {
+  const pre = phase === "pre";
   const [items, setItems] = useState<SurveyItem[] | null>(null);
   const [idx, setIdx] = useState(0);
   const [picked, setPicked] = useState<Record<string, string>>({});
@@ -66,6 +75,11 @@ export function CoverageSurveyModal({
   const answered = Object.keys(picked).length;
   const finished = items !== null && idx >= total;
 
+  /* pre 모드에서 물을 게 없으면 세우지 않는다 — 빈 모달을 띄우고 '닫기'를 누르게 할 이유가 없다 */
+  useEffect(() => {
+    if (pre && open && items !== null && items.length === 0) onApplied();
+  }, [pre, open, items, onApplied]);
+
   /** 선지 선택 — 잠깐 선택 상태를 보여준 뒤 자동으로 다음 문항으로 (v5-3) */
   const pick = (code: string, value: string) => {
     if (saving) return;
@@ -76,6 +90,8 @@ export function CoverageSurveyModal({
   const submit = async () => {
     if (saving) return;
     if (answered === 0) {
+      /* pre면 답이 없어도 분석은 시작해야 한다 — 건너뛴 문항은 종전대로 보류로 남는다 */
+      if (pre) onApplied();
       onClose();
       return;
     }
@@ -91,12 +107,15 @@ export function CoverageSurveyModal({
           })),
         }),
       });
-      /* 응답을 반영하려면 다시 분석해야 한다 */
-      await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
-      const outcome = await waitForJudge(assessmentId);
-      if (outcome === "failed") throw new Error("재분석에 실패했어요.");
-      if (outcome === "timeout")
-        throw new Error("재분석이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
+      /* post는 이미 나온 결과를 갈아끼워야 하므로 재분석한다.
+         pre는 이 응답을 안고 첫 분석이 도므로 여기서 돌리지 않는다 — 재분석이 사라지는 지점 */
+      if (!pre) {
+        await api(`/api/assessments/${assessmentId}/submit`, { method: "POST" });
+        const outcome = await waitForJudge(assessmentId);
+        if (outcome === "failed") throw new Error("재분석에 실패했어요.");
+        if (outcome === "timeout")
+          throw new Error("재분석이 오래 걸려요. 잠시 후 결과를 새로고침해 주세요.");
+      }
       onApplied();
       onClose();
     } catch (e) {
@@ -218,9 +237,11 @@ export function CoverageSurveyModal({
             {answered > 0 ? `${answered}문항을 답해주셨어요` : "답한 문항이 없어요"}
           </p>
           <p style={{ margin: "8px 0 18px", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
-            {answered > 0
-              ? "반영하면 다시 분석해서 점수와 결과가 새로 계산돼요."
-              : "건너뛴 문항은 분석 보류로 남고 감점되지 않아요."}
+            {answered === 0
+              ? "건너뛴 문항은 분석 보류로 남고 감점되지 않아요."
+              : pre
+                ? "답변을 반영해서 바로 분석을 시작할게요."
+                : "반영하면 다시 분석해서 점수와 결과가 새로 계산돼요."}
           </p>
           {error && (
             <p style={{ margin: "0 0 12px", font: "var(--text-caption)", color: "var(--fg-danger)" }}>
@@ -232,7 +253,15 @@ export function CoverageSurveyModal({
               다시 보기
             </Button>
             <Button variant="primary" full disabled={saving} onClick={submit}>
-              {saving ? "반영하고 있어요" : answered > 0 ? `${answered}문항 반영하기` : "닫기"}
+              {saving
+                ? "반영하고 있어요"
+                : pre
+                  ? answered > 0
+                    ? `${answered}문항 반영하고 분석`
+                    : "그대로 분석 시작"
+                  : answered > 0
+                    ? `${answered}문항 반영하기`
+                    : "닫기"}
             </Button>
           </div>
         </div>

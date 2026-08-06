@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth/AuthContext";
 import { LoginModal } from "@/components/auth/LoginModal";
 import { ClassifyProgress } from "@/components/flow/ClassifyProgress";
+import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
 import { FileEditBoard } from "@/components/flow/FileEditBoard";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { PublicDataSection } from "@/components/flow/PublicDataSection";
@@ -134,6 +135,8 @@ export default function CollectPage() {
   const { user } = useAuth();
   /** 결과 분석 직전 로그인 요구 (v6-4) — 성공하면 곧바로 제출로 이어진다 */
   const [loginOpen, setLoginOpen] = useState(false);
+  /** 분석 직전 보완 설문 (v7) — 결과가 나온 뒤 묻고 재분석하던 동선을 앞으로 당긴 것 */
+  const [surveyOpen, setSurveyOpen] = useState(false);
 
   /** 1단계(자료 확인) / 2단계(자료 분류) — null은 판별 전 */
   const [stage, setStage] = useState<"review" | "classify" | null>(null);
@@ -399,7 +402,9 @@ export default function CollectPage() {
       setLoginOpen(true);
       return;
     }
-    await checkThenSubmit();
+    /* 로그인 다음이 설문이다 (v7) — 자료로 못 채운 문항을 여기서 받아 첫 분석에 함께 넣는다.
+       물을 게 없으면 모달이 스스로 통과시킨다 */
+    setSurveyOpen(true);
   };
 
   /* 제출 → 판정 완료 폴링 → 진단 결과로 이동 */
@@ -934,6 +939,19 @@ export default function CollectPage() {
         onClose={() => setLoginOpen(false)}
         onSuccess={() => {
           setLoginOpen(false);
+          setSurveyOpen(true);
+        }}
+      />
+
+      {/* 분석 직전 보완 설문 (v7) — 응답만 저장하고 곧바로 첫 분석으로 넘어간다(재분석 없음).
+          팝업을 닫으면 분석은 시작하지 않는다 — 되돌아갈 길을 남긴다 */}
+      <CoverageSurveyModal
+        assessmentId={assessmentId}
+        open={surveyOpen}
+        phase="pre"
+        onClose={() => setSurveyOpen(false)}
+        onApplied={() => {
+          setSurveyOpen(false);
           void checkThenSubmit();
         }}
       />
