@@ -1,11 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/navigation";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { RouteLoading } from "@/components/flow/RouteLoading";
 import { api } from "@/lib/api";
-import { Badge, Button, Card, Icons, Tag } from "@/components/ui";
+import { Badge, Button, Card, Icons, Modal, Tag } from "@/components/ui";
 
 /**
  * 개선 과제 선택 — 원본 카드 UI + 백엔드 실연동.
@@ -71,14 +78,21 @@ function ClockIcon({ size = 13 }: { size?: number }) {
 
 /* ---------- 과제 카드 ---------- */
 
+/**
+ * 과제 카드 (v7 단순화) — 카드에는 고르는 데 필요한 것만 둔다: 영역·추천 배지 · 제목 · 예상 기간.
+ * 설명·기대효과·추천 사유·대상·서비스는 '자세히' 팝업으로 뺐다 — 카드 하나에 일곱 덩이가 들어가
+ * 스무 개를 훑을 때 무엇이 다른지 안 보였다.
+ */
 function TaskCard({
   task,
   selected,
   onToggle,
+  onDetail,
 }: {
   task: TaskRow;
   selected: boolean;
   onToggle: () => void;
+  onDetail: () => void;
 }) {
   /* 사용 중인 프로그램으로 이미 갖춰짐 — 선택 불가 */
   const disabled = task.coveredBySystem !== null;
@@ -163,147 +177,203 @@ function TaskCard({
         {task.title}
       </h3>
 
-      {/* 요약 (2줄) — 서버에 설명이 있을 때만 */}
-      {task.description && (
-        <p
-          style={{
-            margin: 0,
-            font: "var(--text-body3)",
-            letterSpacing: "var(--track-body)",
-            color: "var(--fg-secondary)",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-        >
-          {task.description}
-        </p>
-      )}
-
-      {/* 기대효과 정량 한 줄 — 추천 과제만 */}
-      {task.recommended && task.expectedEffect && (
-        <div
-          style={{
-            font: "var(--text-label-s)",
-            letterSpacing: "var(--track-body)",
-            color: "var(--fg-brand)",
-          }}
-        >
-          {task.expectedEffect}
-        </div>
-      )}
-
-      {/* 추천 사유 — 추천 에이전트가 이 기업의 판정 근거를 인용해 쓴다 (없으면 미표시) */}
-      {task.recommendReason && (
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            padding: "10px 12px",
-            borderRadius: "var(--radius-m)",
-            background: "var(--bg-brand-weak)",
-          }}
-        >
-          <span aria-hidden style={{ flex: "none", color: "var(--fg-brand)", marginTop: 1 }}>
-            <Icons.check size={13} />
-          </span>
-          <span
-            style={{
-              font: "var(--text-body3)",
-              lineHeight: 1.6,
-              color: "var(--fg-secondary)",
-            }}
-          >
-            {task.recommendReason}
-          </span>
-        </div>
-      )}
-
-      {/* 고정 추천 카드 — 대상·서비스 2행 (파란 라벨 + 구분선, image-4 스타일) */}
-      {task.pinned && (task.target || task.services) && (
-        <div style={{ borderTop: "1px solid var(--line-subtle)" }}>
-          {(
-            [
-              { label: "대상", text: task.target },
-              { label: "서비스", text: task.services },
-            ] as { label: string; text: string | null }[]
-          )
-            .filter((row) => row.text)
-            .map((row, i) => (
-              <div
-                key={row.label}
-                style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: 12,
-                  padding: "8px 0",
-                  borderTop: i > 0 ? "1px solid var(--line-subtle)" : undefined,
-                }}
-              >
-                <span
-                  style={{
-                    flex: "none",
-                    minWidth: 42,
-                    font: "var(--text-label-s)",
-                    fontWeight: 700,
-                    color: "var(--fg-brand)",
-                  }}
-                >
-                  {row.label}
-                </span>
-                <span style={{ font: "var(--text-caption)", color: "var(--fg-secondary)" }}>
-                  {row.text}
-                </span>
-              </div>
-            ))}
-        </div>
-      )}
-
-      {/* 예상 기간 — 서버에 기간이 있을 때만 */}
-      {duration(task) && (
-        <div
+      {/* 갖춰짐 안내 — 이미 갖춰진 과제만 (착수 조건은 서버에 없어 생략) */}
+      {disabled && (
+        <span
           style={{
             display: "inline-flex",
             alignItems: "center",
             gap: 6,
             font: "var(--text-caption)",
-            color: "var(--fg-tertiary)",
+            fontWeight: 600,
+            color: "var(--fg-success)",
           }}
         >
-          <ClockIcon size={13} />
-          예상 <span style={{ ...mono, fontWeight: 600 }}>{duration(task)}</span>
-        </div>
+          <Icons.check size={13} />
+          {task.coveredBySystem} 사용 중 — 이미 갖춰져 있어요
+        </span>
       )}
 
-      {/* 하단: 갖춰짐 안내 — 이미 갖춰진 과제만 (착수 조건은 서버에 없어 생략) */}
-      {disabled && (
-        <div
-          style={{
-            marginTop: "auto",
-            paddingTop: 10,
-            borderTop: "1px solid var(--line-subtle)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
+      {/* 하단: 예상 기간 · 자세히 (카드 클릭은 담기라 여기서 전파를 끊는다) */}
+      <div
+        style={{
+          marginTop: "auto",
+          paddingTop: 4,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+        }}
+      >
+        {duration(task) ? (
           <span
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
               font: "var(--text-caption)",
-              fontWeight: 600,
-              color: "var(--fg-success)",
+              color: "var(--fg-tertiary)",
             }}
           >
-            <Icons.check size={13} />
-            {task.coveredBySystem} 사용 중 — 이미 갖춰져 있어요
+            <ClockIcon size={13} />
+            예상 <span style={{ ...mono, fontWeight: 600 }}>{duration(task)}</span>
           </span>
+        ) : (
+          <span />
+        )}
+        <button
+          type="button"
+          className="axp-task-more"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDetail();
+          }}
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label={`${task.title} 자세히 보기`}
+          style={{
+            flex: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            border: "none",
+            background: "transparent",
+            padding: "4px 0 4px 8px",
+            font: "var(--text-label-s)",
+            fontFamily: "var(--font-sans)",
+            color: "var(--fg-tertiary)",
+            cursor: "pointer",
+            transition: "color var(--dur-fast) var(--ease)",
+          }}
+        >
+          자세히
+          <Icons.chevronRight size={14} />
+        </button>
+      </div>
+    </Card>
+  );
+}
+
+/* ---------- 과제 상세 팝업 (v7) ---------- */
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div style={{ display: "flex", gap: 14, alignItems: "baseline" }}>
+      <span
+        style={{
+          flex: "none",
+          width: 64,
+          font: "var(--text-label-s)",
+          color: "var(--fg-tertiary)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          minWidth: 0,
+          font: "var(--text-body3)",
+          lineHeight: 1.7,
+          color: "var(--fg-secondary)",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function TaskDetailModal({
+  task,
+  selected,
+  onClose,
+  onToggle,
+}: {
+  task: TaskRow | null;
+  selected: boolean;
+  onClose: () => void;
+  onToggle: () => void;
+}) {
+  const disabled = task?.coveredBySystem != null;
+  return (
+    <Modal open={task !== null} onClose={onClose} title={task?.title} wide>
+      {task && (
+        <div style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <Badge tone="neutral">{task.functionArea}</Badge>
+            {task.recommended && <Badge tone="accent">★ 추천</Badge>}
+            {duration(task) && <Badge tone="outline">예상 {duration(task)}</Badge>}
+          </div>
+
+          {task.description && <DetailRow label="개요">{task.description}</DetailRow>}
+          {task.expectedEffect && (
+            <DetailRow label="기대효과">
+              <span style={{ color: "var(--fg-brand)", fontWeight: 600 }}>
+                {task.expectedEffect}
+              </span>
+            </DetailRow>
+          )}
+          {task.target && <DetailRow label="대상">{task.target}</DetailRow>}
+          {task.services && <DetailRow label="서비스">{task.services}</DetailRow>}
+
+          {/* 추천 사유 — 추천 에이전트가 이 기업의 판정 근거를 인용해 쓴다 (없으면 미표시) */}
+          {task.recommendReason && (
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                padding: "12px 14px",
+                borderRadius: "var(--radius-m)",
+                background: "var(--bg-brand-weak)",
+              }}
+            >
+              <span aria-hidden style={{ flex: "none", color: "var(--fg-brand)", marginTop: 2 }}>
+                <Icons.check size={13} />
+              </span>
+              <span style={{ minWidth: 0 }}>
+                <span
+                  style={{
+                    display: "block",
+                    font: "var(--text-label-s)",
+                    color: "var(--fg-brand)",
+                    marginBottom: 3,
+                  }}
+                >
+                  이 기업에 추천한 이유
+                </span>
+                <span
+                  style={{ font: "var(--text-body3)", lineHeight: 1.7, color: "var(--fg-secondary)" }}
+                >
+                  {task.recommendReason}
+                </span>
+              </span>
+            </div>
+          )}
+
+          {disabled ? (
+            <p
+              style={{
+                margin: 0,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                font: "var(--text-caption)",
+                fontWeight: 600,
+                color: "var(--fg-success)",
+              }}
+            >
+              <Icons.check size={13} />
+              {task.coveredBySystem} 사용 중 — 이미 갖춰져 있어요
+            </p>
+          ) : (
+            <div style={{ marginTop: 4 }}>
+              <Button variant={selected ? "secondary" : "primary"} full onClick={onToggle}>
+                {selected ? "담기 해제" : "이 과제 담기"}
+              </Button>
+            </div>
+          )}
         </div>
       )}
-    </Card>
+    </Modal>
   );
 }
 
@@ -319,6 +389,8 @@ export default function TasksPage() {
   const [filter, setFilter] = useState<string>("recommended");
   /** 담을 때 미담긴 선행 과제가 있으면 함께 담기를 제안하는 토스트 */
   const [suggestion, setSuggestion] = useState<{ taskNos: number[] } | null>(null);
+  /** '자세히' 팝업 대상 과제 (v7) — 카드에서 뺀 설명·사유·대상·서비스를 여기서 본다 */
+  const [detail, setDetail] = useState<TaskRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -446,6 +518,7 @@ export default function TasksPage() {
         .axp-task-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
         @media (max-width: 980px) { .axp-task-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
         @media (max-width: 640px) { .axp-task-grid { grid-template-columns: 1fr; } }
+        .axp-task-more:hover { color: var(--fg-brand); }
       `}</style>
 
       <div
@@ -587,6 +660,7 @@ export default function TasksPage() {
               task={t}
               selected={selected.has(t.no)}
               onToggle={() => handleToggle(t)}
+              onDetail={() => setDetail(t)}
             />
           ))}
         </div>
@@ -603,6 +677,17 @@ export default function TasksPage() {
           </p>
         )}
       </div>
+
+      {/* ---- 과제 상세 팝업 — 카드에서 뺀 설명·기대효과·추천 사유·대상·서비스 (v7) ---- */}
+      <TaskDetailModal
+        task={detail}
+        selected={detail ? selected.has(detail.no) : false}
+        onClose={() => setDetail(null)}
+        onToggle={() => {
+          if (detail) handleToggle(detail);
+          setDetail(null);
+        }}
+      />
 
       {/* ---- 하단 고정: 연관 제안 토스트 + 담기 바 ---- */}
       <div
