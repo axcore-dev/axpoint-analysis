@@ -167,8 +167,10 @@ export function StepBar({ showSteps = true }: { showSteps?: boolean }) {
       >
         {/* hydrated 전에는 렌더하지 않아 로그인 상태 깜빡임 방지.
             SPA 이동 — <a> 전체 리로드는 진행 중 상태를 지우고 이탈 경고에 막힘 (v7) */}
+        {/* 익명 세션은 로그인으로 치지 않는다 (v6-4) — 자료 분류까지 쓰는 임시 세션이라
+            헤더에 'Anonymous'가 뜨면 로그인한 것처럼 보인다. 로그인·회원가입을 그대로 노출한다 */}
         {hydrated &&
-          (user ? (
+          (user && !user.isAnonymous ? (
             <ProfileMenu />
           ) : (
             <>

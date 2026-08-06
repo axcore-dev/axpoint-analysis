@@ -34,6 +34,13 @@ const STATIC_PLACEHOLDER = "기업명 또는 사업자번호";
 /** 올리면 좋은 서류 — 드롭존에 칩으로 강조 (v5-1: 개별 서류명 나열 → 사내 문서 통칭) */
 const DOC_HINTS = ["사내 문서(사무, 공정 등)"];
 
+/** 필수 문서 현황 — 업로드 단계 우측 패널이 쓴다 (자료 정리 화면과 같은 API) */
+type RequiredDocs = {
+  items: { docTypeId: number; docTypeName: string; groupName: string; files: { fileId: string }[] }[];
+  filled: number;
+  total: number;
+};
+
 type SearchHit = {
   name: string;
   bizNo: string;
@@ -117,6 +124,9 @@ export default function LandingPage() {
   const [verifyNotice, setVerifyNotice] = useState<
     { kind: "blocked" | "unchecked"; message: string } | null
   >(null);
+  /** 필요한 자료 목록 — 업로드 단계 우측 패널. 무엇을 모아야 하는지 먼저 보여준다 */
+  const [requiredDocs, setRequiredDocs] = useState<RequiredDocs | null>(null);
+  const [copiedDocs, setCopiedDocs] = useState(false);
 
   /* 뒤로 돌아왔을 때 진행 중 입력값 복원 */
   useEffect(() => {
@@ -340,6 +350,24 @@ export default function LandingPage() {
     router.push("/collect");
   };
 
+  /* 업로드 단계에 들어오면 필요한 자료 목록을 받아 우측에 띄운다.
+     이 시점에는 분류가 돌기 전이라 충족 여부는 알 수 없다 — '무엇을 모아야 하는가'를 보여주는 목록이다.
+     (충족/부족 검증은 자료 정리 화면에서 분류가 끝난 뒤에 한다) */
+  useEffect(() => {
+    if (phase !== "upload" || !assessmentId || requiredDocs) return;
+    let cancelled = false;
+    api<RequiredDocs>(`/api/assessments/${assessmentId}/required-docs`)
+      .then((res) => {
+        if (!cancelled) setRequiredDocs(res);
+      })
+      .catch(() => {
+        /* 목록을 못 받아도 업로드는 그대로 진행한다 — 패널만 뜨지 않는다 */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [phase, assessmentId, requiredDocs]);
+
   return (
     <div className="axp-landing flex min-h-[calc(100vh-56px)] flex-col bg-surface px-[var(--gutter)] py-12">
       {/* 자료 올리기 페이지 한정 타이포 20% 확대 — 페이지 스코프 토큰 재정의 (v7: +2px) */}
@@ -559,8 +587,14 @@ export default function LandingPage() {
       )}
 
       {/* ─── phase: upload — 자료 올리기 (2/2) — 중앙 드롭존에 모두 올리기 (개편 원복) ── */}
+      {/* 업로드 단계 — 카드 + 우측 '필요한 자료' 패널 (자료 정리 화면과 같은 배치) */}
       {phase === "upload" && (
-        <Card key="upload" className="ax-step-enter" radius="2xl" style={stepCardStyle}>
+        <div
+          key="upload"
+          className="m-auto flex w-full max-w-[1000px] flex-col items-start justify-center gap-4 md:flex-row"
+          style={{ position: "relative", top: "calc(-28px - 10vh)" }}
+        >
+        <Card className="ax-step-enter" radius="2xl" style={{ ...stepCardStyle, top: 0, margin: 0 }}>
           <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
           <DotProgress step={2} total={2} />
           {/* v5-1 — 업로드 단계 명칭 '파일 업로드' */}
@@ -615,7 +649,7 @@ export default function LandingPage() {
                     <Icons.upload size={20} />
                   </span>
                   <span className="[font:var(--text-label-m)] text-ink">
-                    파일 업로드, 또는 가져다 놓기
+                    파일 업로드, 또는 드래그
                   </span>
                   {/* 올리면 좋은 서류 — 칩으로 강조 (v3 개선) */}
                   <span className="flex flex-wrap items-center justify-center gap-1.5">
@@ -704,6 +738,55 @@ export default function LandingPage() {
             )}
           </div>
         </Card>
+
+        {/* ── 필요한 자료 — 카드 밖 우측 패널. 무엇을 모아야 하는지 먼저 보여준다.
+             올리기 버튼은 두지 않는다 — 업로드는 왼쪽 드롭존 하나로 받는다(중복 제거) ── */}
+        {requiredDocs && requiredDocs.items.length > 0 && (
+          <aside className="ax-step-enter w-full flex-none rounded-[var(--radius-2xl)] border border-line bg-[var(--bg-elevated)] md:sticky md:top-20 md:w-[280px]">
+            <div className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+              <span className="[font:var(--text-label-s)] text-ink">
+                필요한 자료 {requiredDocs.items.length}종
+              </span>
+              <Button
+                variant="utility"
+                size="sm"
+                onClick={() => {
+                  const text = [
+                    "필요한 자료",
+                    ...requiredDocs.items.map((d) => `- ${d.docTypeName}`),
+                  ].join("\n");
+                  void navigator.clipboard.writeText(text).then(() => {
+                    setCopiedDocs(true);
+                    setTimeout(() => setCopiedDocs(false), 1500);
+                  });
+                }}
+              >
+                {copiedDocs ? "복사됨" : "목록 복사"}
+              </Button>
+            </div>
+            <div className="ax-scrollbar-none max-h-[60vh] overflow-y-auto px-3.5 py-2">
+              {Object.entries(
+                requiredDocs.items.reduce<Record<string, string[]>>((acc, d) => {
+                  (acc[d.groupName] ??= []).push(d.docTypeName);
+                  return acc;
+                }, {}),
+              ).map(([group, names]) => (
+                <div key={group} className="border-b border-line-subtle py-2 last:border-b-0">
+                  <p className="m-0 mb-1 [font:var(--text-caption)] text-ink-4">{group}</p>
+                  {names.map((name) => (
+                    <p key={name} className="m-0 py-0.5 [font:var(--text-label-s)] text-ink">
+                      {name}
+                    </p>
+                  ))}
+                </div>
+              ))}
+            </div>
+            <p className="m-0 border-t border-line px-3.5 py-2.5 [font:var(--text-caption)] text-ink-4">
+              없는 자료는 건너뛰어도 돼요. 올린 자료는 다음 단계에서 분류돼요.
+            </p>
+          </aside>
+        )}
+        </div>
       )}
 
       {/* 기업 확인 결과 팝업 — 차단은 검색으로 되돌리고, 확인 보류는 그대로 다음 단계로 (v9) */}
