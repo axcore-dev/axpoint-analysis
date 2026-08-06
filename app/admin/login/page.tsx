@@ -28,6 +28,10 @@ export default function AdminLoginPage() {
     setBusy(true);
     setError(null);
     try {
+      /* 익명 게스트 세션이 남아 있으면 먼저 끊는다 (v7).
+         그대로 로그인하면 better-auth가 계정 연결로 보고 게스트의 진단을 관리자 계정으로 옮긴다 —
+         사이트 흐름에서는 맞는 동작이지만 관리자 콘솔 로그인에서는 남의 진단을 떠안는 셈이다 */
+      if (user?.isAnonymous) await logout();
       await login(email.trim(), password);
       /* 로그인은 됐지만 권한이 없는 계정 — 관리자 화면에 들이지 않는다 */
       router.replace("/admin");
@@ -38,7 +42,10 @@ export default function AdminLoginPage() {
     }
   };
 
-  const wrongAccount = hydrated && user && user.role !== "admin";
+  /* 익명 게스트는 '권한 없는 계정'이 아니라 계정이 없는 상태다 (v7) — 로그인 폼을 그대로 보여준다.
+     종전에는 진단을 체험하다 온 게스트 세션에도 "관리자 권한이 없어요"가 떠서
+     관리자 계정에 권한이 없는 것처럼 보였다 */
+  const wrongAccount = hydrated && user && !user.isAnonymous && user.role !== "admin";
 
   return (
     <div
