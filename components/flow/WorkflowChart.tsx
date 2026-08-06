@@ -70,6 +70,7 @@ const ARROW = { type: MarkerType.ArrowClosed, width: 15, height: 15 } as const;
 
 type TaskData = {
   name: string;
+  /** 영역 이름 — 화면에는 쓰지 않고 스크린리더·툴팁에만 (색과 범례가 이미 알려 준다) */
   stageName: string;
   tone: string;
   docs: string[];
@@ -80,72 +81,64 @@ type TaskData = {
   dragging: boolean;
 };
 
+/**
+ * 업무 상자 — 영역 구분은 **테두리 색**만 맡는다 (v7-1).
+ * 왼쪽 색 띠와 상자 안 영역 이름은 뺐다: 띠는 군더더기였고, 영역 이름은 하단 범례와 겹쳤다.
+ * 글자 색은 전부 기본색으로 통일해 읽는 흐름을 끊지 않는다.
+ */
 function TaskNode({ data }: NodeProps) {
   const d = data as unknown as TaskData;
-  const border = d.dragging
-    ? d.tone
-    : d.bottleneck
-      ? "var(--fg-danger)"
-      : "var(--line-default)";
+  const border = d.bottleneck ? "var(--fg-danger)" : d.tone;
   return (
     <div
+      title={d.stageName}
       style={{
         width: NODE_W,
         boxSizing: "border-box",
         borderRadius: 12,
-        padding: "9px 11px",
-        borderLeft: `4px solid ${d.tone}`,
-        borderTop: `1.5px solid ${border}`,
-        borderRight: `1.5px solid ${border}`,
-        borderBottom: `1.5px solid ${border}`,
+        padding: "10px 12px",
+        border: `1.5px solid ${border}`,
         background: d.bottleneck ? "var(--bg-danger-weak)" : "var(--bg-elevated)",
         boxShadow: d.dragging
           ? `0 14px 30px rgba(16,24,40,0.18), 0 0 0 4px ${d.tone}2e`
           : "var(--shadow-1)",
         transform: d.dragging ? "scale(1.04)" : undefined,
         transition:
-          "box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease), border-color 160ms var(--ease, ease)",
+          "box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease)",
         cursor: d.grabbable ? (d.dragging ? "grabbing" : "grab") : "default",
       }}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
 
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          font: "var(--text-caption)",
-          color: d.tone,
-        }}
-      >
+      <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
         <span
-          aria-hidden
-          style={{ width: 5, height: 5, borderRadius: 999, background: d.tone, flex: "none" }}
-        />
-        {d.stageName}
+          style={{
+            minWidth: 0,
+            flex: 1,
+            font: "var(--text-label-s)",
+            lineHeight: 1.35,
+            color: "var(--fg-primary)",
+          }}
+        >
+          {d.name}
+        </span>
         {d.bottleneck && (
-          <span style={{ marginLeft: "auto", color: "var(--fg-danger)", fontWeight: 600 }}>
+          <span
+            style={{
+              flex: "none",
+              font: "var(--text-caption)",
+              fontWeight: 600,
+              color: "var(--fg-danger)",
+            }}
+          >
             기록 끊김
           </span>
         )}
       </span>
 
-      <span
-        style={{
-          display: "block",
-          marginTop: 3,
-          font: "var(--text-label-s)",
-          lineHeight: 1.35,
-          color: "var(--fg-primary)",
-        }}
-      >
-        {d.name}
-      </span>
-
       {d.docs.length > 0 && (
-        <span style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+        <span style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 7 }}>
           {d.docs.map((name) => (
             <span
               key={name}
@@ -153,9 +146,9 @@ function TaskNode({ data }: NodeProps) {
                 font: "10.5px/1.3 var(--font-sans)",
                 padding: "2px 6px",
                 borderRadius: 999,
-                border: "1px solid var(--line-brand)",
-                color: "var(--fg-brand)",
-                background: "var(--bg-brand-weak)",
+                border: "1px solid var(--line-default)",
+                color: "var(--fg-tertiary)",
+                background: "var(--bg-secondary)",
                 maxWidth: "100%",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
@@ -317,8 +310,15 @@ type Placed = {
   rows: number;
 };
 
-/** 계층 배치 — 층은 좌→우, 층 안 순서는 세로. 각 층은 세로 가운데로 모은다 */
-function placeGraph(acts: Act[], connections: Connection[]): Placed & { back: Set<string> } {
+/**
+ * 계층 배치 — 층은 좌→우, 층 안 순서는 세로. 각 층은 세로 가운데로 모은다.
+ * 사용자가 옮겨 둔 상자(saved)는 그 자리를 그대로 쓴다 — 자동 배치는 아직 안 옮긴 상자만 맡는다.
+ */
+function placeGraph(
+  acts: Act[],
+  connections: Connection[],
+  saved: Record<string, { x: number; y: number }> = {},
+): Placed & { back: Set<string> } {
   const edges = allEdges(acts, connections);
   const back = findBackEdges(acts, edges);
   const forward = edges.filter((e) => !back.has(`${e.from}->${e.to}`));
@@ -330,7 +330,17 @@ function placeGraph(acts: Act[], connections: Connection[]): Placed & { back: Se
     const offset = ((tallest - row.length) * ROW_H) / 2;
     row.forEach((id, i) => pos.set(id, { x: l * LAYER_X, y: offset + i * ROW_H }));
   });
-  return { pos, back, width: rows.length * LAYER_X, height: tallest * ROW_H, rows: tallest };
+  /* 옮겨 둔 자리로 덮어쓴다. 캔버스 크기는 그 자리까지 담도록 넓힌다 */
+  let maxX = rows.length * LAYER_X;
+  let maxY = tallest * ROW_H;
+  for (const a of acts) {
+    const p = saved[String(a.id)];
+    if (!p) continue;
+    pos.set(a.id, p);
+    maxX = Math.max(maxX, p.x + LAYER_X);
+    maxY = Math.max(maxY, p.y + ROW_H);
+  }
+  return { pos, back, width: maxX, height: maxY, rows: Math.ceil(maxY / ROW_H) };
 }
 
 /** 표준 배치 — 비교용. 영역이 열, 영역 안 표준 순서가 행 (v5까지 쓰던 그림) */
@@ -439,15 +449,16 @@ function Legend({ stages, bottlenecks }: { stages: ChartStage[]; bottlenecks: nu
         color: "var(--fg-tertiary)",
       }}
     >
+      {/* 표시는 상자와 같은 문법 — 테두리 색이 영역이다 (v7-1) */}
       {stages.map((s) => (
         <span key={s.code} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
           <span
             aria-hidden
             style={{
-              width: 9,
+              width: 12,
               height: 9,
               borderRadius: 3,
-              background: toneOf(s.code),
+              border: `1.5px solid ${toneOf(s.code)}`,
               flex: "none",
             }}
           />
@@ -503,6 +514,8 @@ export function WorkflowChart({
 }) {
   const [stages, setStages] = useState<ChartStage[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
+  /** 사용자가 옮겨 둔 상자 좌표 — 옮긴 것만 담긴다. 나머지는 자동 배치 (v7-1) */
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [saving, setSaving] = useState(false);
   const [linking, setLinking] = useState(false);
   /** 드래그 중인 업무 — 잡고 있다는 걸 카드가 커지고 그림자가 짙어지며 알린다 (v7) */
@@ -512,12 +525,15 @@ export function WorkflowChart({
   const linkRequested = useRef(false);
 
   const load = useCallback(() => {
-    api<{ stages: ChartStage[]; connections: Connection[] | null }>(
-      `/api/assessments/${assessmentId}/workflow`,
-    )
-      .then(({ stages, connections }) => {
+    api<{
+      stages: ChartStage[];
+      connections: Connection[] | null;
+      positions?: Record<string, { x: number; y: number }>;
+    }>(`/api/assessments/${assessmentId}/workflow`)
+      .then(({ stages, connections, positions }) => {
         setStages(stages ?? []);
         setConnections(connections);
+        setPositions(positions ?? {});
       })
       .catch(() => setStages([]));
   }, [assessmentId]);
@@ -539,7 +555,10 @@ export function WorkflowChart({
   }, [stages, connections, assessmentId]);
 
   const acts = useMemo(() => toActs(stages ?? []), [stages]);
-  const graph = useMemo(() => placeGraph(acts, connections ?? []), [acts, connections]);
+  const graph = useMemo(
+    () => placeGraph(acts, connections ?? [], positions),
+    [acts, connections, positions],
+  );
   const flow = useMemo(
     () =>
       buildChart({
@@ -567,42 +586,27 @@ export function WorkflowChart({
     });
   }, [compare, acts, standardPlaced]);
 
-  /* 드래그 종료 — 놓은 x좌표로 그 영역 안 업무 순서를 다시 정한다.
-     흐름이 좌→우라 왼쪽으로 끌면 앞 순서, 오른쪽으로 끌면 뒤 순서가 된다.
-     순서가 그대로면 흐트러진 좌표만 원위치로 되돌린다 */
+  /* 드래그 종료 — 놓은 자리를 그대로 저장한다 (v7-1).
+     종전에는 영역 안 순서만 바꾸고 상자는 정해진 칸으로 되돌아갔는데, 옮겨 놓고 제자리로 튕기는
+     느낌이 갇혀 보였다. 이제 놓은 곳에 남고, 그 좌표가 이 진단에 저장된다 */
   const onDragStop = useCallback(
     (_e: unknown, node: Node) => {
       setDraggingId(null);
-      if (!editable || !stages) return;
-      if (!node.id.startsWith("act:")) return;
-
-      const actId = Number(node.id.slice("act:".length));
-      const me = acts.find((a) => a.id === actId);
-      const siblings = acts.filter((a) => a.stageCode === me?.stageCode);
-      if (!me || siblings.length < 2) {
-        load();
-        return;
-      }
-      const others = siblings.filter((a) => a.id !== actId);
-      const centers = others.map((a) => (graph.pos.get(a.id)?.x ?? 0) + NODE_W / 2);
-      const to = centers.filter((cx) => cx < node.position.x + NODE_W / 2).length;
-      const from = siblings.findIndex((a) => a.id === actId);
-      if (to === from) {
-        load();
-        return;
-      }
-      const activityIds = others.map((a) => a.id);
-      activityIds.splice(to, 0, actId);
+      if (!editable || !node.id.startsWith("act:")) return;
+      const actId = node.id.slice("act:".length);
+      const at = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
+      setPositions((prev) => ({ ...prev, [actId]: at }));
       setSaving(true);
       api(`/api/assessments/${assessmentId}/workflow`, {
         method: "PUT",
-        body: JSON.stringify({ taskOrder: { stageCode: me.stageCode, activityIds } }),
+        body: JSON.stringify({ positions: { [actId]: at } }),
       })
-        .then(load)
-        .catch(load)
+        .catch(() => {
+          /* 저장 실패해도 화면의 자리는 유지한다 — 다시 옮기면 그때 저장된다 */
+        })
         .finally(() => setSaving(false));
     },
-    [editable, stages, acts, graph, assessmentId, load],
+    [editable, assessmentId],
   );
 
   /* 불러오는 중·AI가 연결을 만드는 중 — 섹션 안에서 그대로 알린다 (v7).
@@ -675,7 +679,7 @@ export function WorkflowChart({
           }}
         >
           {editable
-            ? "업무 상자를 좌우로 드래그해 우리 회사의 실제 순서로 바꿀 수 있어요"
+            ? "업무 상자를 드래그해 우리 회사의 실제 흐름대로 놓을 수 있어요"
             : "화살표가 업무 흐름의 방향이에요 — 파란 선은 AI가 문서 흐름으로 판단한 연결이에요"}
           {saving ? " · 저장 중…" : linking ? " · AI가 업무 연결을 분석하고 있어요…" : ""}
         </p>
