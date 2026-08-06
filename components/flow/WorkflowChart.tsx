@@ -79,6 +79,8 @@ type TaskData = {
   bottleneck: boolean;
   grabbable: boolean;
   dragging: boolean;
+  /** 범례에서 다른 영역을 고른 상태 — 색을 빼고 흐리게 물러난다 (v7-1) */
+  dimmed: boolean;
 };
 
 /**
@@ -88,7 +90,12 @@ type TaskData = {
  */
 function TaskNode({ data }: NodeProps) {
   const d = data as unknown as TaskData;
-  const border = d.bottleneck ? "var(--fg-danger)" : d.tone;
+  /* 물러난 상자는 영역 색도 병목 색도 쓰지 않는다 — 고른 영역만 두각을 나타내야 한다 */
+  const border = d.dimmed
+    ? "var(--line-default)"
+    : d.bottleneck
+      ? "var(--fg-danger)"
+      : d.tone;
   return (
     <div
       title={d.stageName}
@@ -98,13 +105,15 @@ function TaskNode({ data }: NodeProps) {
         borderRadius: 12,
         padding: "10px 12px",
         border: `1.5px solid ${border}`,
-        background: d.bottleneck ? "var(--bg-danger-weak)" : "var(--bg-elevated)",
+        opacity: d.dimmed ? 0.34 : 1,
+        filter: d.dimmed ? "grayscale(1)" : undefined,
+        background: d.bottleneck && !d.dimmed ? "var(--bg-danger-weak)" : "var(--bg-elevated)",
         boxShadow: d.dragging
           ? `0 14px 30px rgba(16,24,40,0.18), 0 0 0 4px ${d.tone}2e`
           : "var(--shadow-1)",
         transform: d.dragging ? "scale(1.04)" : undefined,
         transition:
-          "box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease)",
+          "box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease), opacity 180ms var(--ease, ease), border-color 180ms var(--ease, ease)",
         cursor: d.grabbable ? (d.dragging ? "grabbing" : "grab") : "default",
       }}
     >
@@ -123,7 +132,7 @@ function TaskNode({ data }: NodeProps) {
         >
           {d.name}
         </span>
-        {d.bottleneck && (
+        {d.bottleneck && !d.dimmed && (
           <span
             style={{
               flex: "none",
@@ -369,6 +378,7 @@ function buildChart({
   editable,
   draggingId,
   showLinks,
+  focus,
 }: {
   acts: Act[];
   connections: Connection[];
@@ -378,6 +388,8 @@ function buildChart({
   draggingId: number | null;
   /** 표준 배치에서는 에이전트 연결선을 그리지 않는다 — 표준 순서만 보여 주는 그림이라 */
   showLinks: boolean;
+  /** 범례에서 고른 영역 코드, 또는 BOTTLENECK. null이면 전부 그대로 (v7-1) */
+  focus: string | null;
 }): { nodes: Node[]; edges: Edge[]; bottlenecks: number[] } {
   const edgeList = allEdges(acts, showLinks ? connections : []);
   const hasIn = new Set(edgeList.map((e) => e.to));
@@ -388,6 +400,12 @@ function buildChart({
       .filter((a) => a.standardDocs > 0 && a.docs.length === 0 && hasIn.has(a.id) && hasOut.has(a.id))
       .map((a) => a.id),
   );
+
+  /** 고른 영역(또는 기록 끊김)에 드는 업무만 두각을 나타낸다 */
+  const inFocus = (a: Act) =>
+    focus === null ||
+    (focus === BOTTLENECK ? bottleneck.has(a.id) : a.stageCode === focus);
+  const focused = new Set(acts.filter(inFocus).map((a) => a.id));
 
   const nodes: Node[] = acts.map((a) => ({
     id: `act:${a.id}`,
@@ -403,6 +421,7 @@ function buildChart({
       bottleneck: bottleneck.has(a.id),
       grabbable: editable,
       dragging: draggingId === a.id,
+      dimmed: focus !== null && !focused.has(a.id),
     } satisfies TaskData as unknown as Record<string, unknown>,
   }));
 
@@ -411,11 +430,15 @@ function buildChart({
     const isBack = back.has(`${e.from}->${e.to}`);
     /* 병목에서 나가는 선은 붉게 — 그 자리에서 기록이 끊긴 채 다음으로 넘어간다는 뜻 */
     const broken = bottleneck.has(e.from);
-    const color = broken
-      ? "var(--fg-danger)"
-      : e.cross
-        ? "var(--blue-500)"
-        : (toneById.get(e.from) ?? "var(--grey-400)");
+    /* 고른 영역에 한쪽이라도 닿는 선만 색을 남긴다 — 나머지는 회색으로 물러난다 */
+    const near = focus === null || focused.has(e.from) || focused.has(e.to);
+    const color = !near
+      ? "var(--grey-300)"
+      : broken
+        ? "var(--fg-danger)"
+        : e.cross
+          ? "var(--blue-500)"
+          : (toneById.get(e.from) ?? "var(--grey-400)");
     return {
       id: `e:${e.from}-${e.to}`,
       source: `act:${e.from}`,
@@ -425,7 +448,7 @@ function buildChart({
         stroke: color,
         strokeWidth: e.cross ? 1.6 : 1.3,
         strokeDasharray: isBack ? "5 4" : undefined,
-        opacity: broken ? 0.75 : e.cross ? 0.6 : 0.45,
+        opacity: !near ? 0.18 : broken ? 0.85 : e.cross ? 0.7 : 0.5,
       },
     };
   });
@@ -435,7 +458,66 @@ function buildChart({
 
 /* ── 범례 ──────────────────────────────────────────────────────────── */
 
-function Legend({ stages, bottlenecks }: { stages: ChartStage[]; bottlenecks: number }) {
+/** 범례에서 '기록 끊김'을 고른 상태를 가리키는 값 — 영역 코드와 섞이지 않게 따로 둔다 */
+const BOTTLENECK = "__bottleneck";
+
+/**
+ * 범례 — 표시가 아니라 **버튼**이다 (v7-1).
+ * 누르면 그 영역만 색을 남기고 나머지는 회색으로 물러난다. 다시 누르면 전부 돌아온다.
+ */
+function Legend({
+  stages,
+  bottlenecks,
+  focus,
+  onFocus,
+}: {
+  stages: ChartStage[];
+  bottlenecks: number;
+  focus: string | null;
+  onFocus: (next: string | null) => void;
+}) {
+  const chip = (key: string, tone: string, label: string, danger = false) => {
+    const on = focus === key;
+    const off = focus !== null && !on;
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => onFocus(on ? null : key)}
+        aria-pressed={on}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 5,
+          padding: "4px 10px",
+          borderRadius: "var(--radius-full)",
+          border: `1px solid ${on ? tone : "transparent"}`,
+          background: on ? `${tone}14` : "transparent",
+          font: "var(--text-caption)",
+          fontFamily: "var(--font-sans)",
+          color: danger ? "var(--fg-danger)" : "var(--fg-tertiary)",
+          opacity: off ? 0.45 : 1,
+          cursor: "pointer",
+          transition:
+            "opacity var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease)",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            width: 12,
+            height: 9,
+            borderRadius: 3,
+            border: `1.5px solid ${tone}`,
+            background: danger ? "var(--bg-danger-weak)" : "transparent",
+            flex: "none",
+          }}
+        />
+        {label}
+      </button>
+    );
+  };
+
   return (
     <div
       style={{
@@ -443,50 +525,32 @@ function Legend({ stages, bottlenecks }: { stages: ChartStage[]; bottlenecks: nu
         flexWrap: "wrap",
         alignItems: "center",
         justifyContent: "center",
-        gap: "6px 14px",
-        marginTop: 10,
-        font: "var(--text-caption)",
-        color: "var(--fg-tertiary)",
+        gap: "4px 4px",
+        marginTop: 8,
       }}
     >
       {/* 표시는 상자와 같은 문법 — 테두리 색이 영역이다 (v7-1) */}
-      {stages.map((s) => (
-        <span key={s.code} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <span
-            aria-hidden
-            style={{
-              width: 12,
-              height: 9,
-              borderRadius: 3,
-              border: `1.5px solid ${toneOf(s.code)}`,
-              flex: "none",
-            }}
-          />
-          {s.name}
-        </span>
-      ))}
-      {bottlenecks > 0 && (
-        <span
+      {stages.map((s) => chip(s.code, toneOf(s.code), s.name))}
+      {bottlenecks > 0 &&
+        chip(BOTTLENECK, "var(--fg-danger)", `기록 끊김 ${bottlenecks}곳`, true)}
+      {focus !== null && (
+        <button
+          type="button"
+          onClick={() => onFocus(null)}
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            color: "var(--fg-danger)",
+            marginLeft: 4,
+            padding: "4px 10px",
+            borderRadius: "var(--radius-full)",
+            border: "1px solid var(--line-default)",
+            background: "var(--bg-elevated)",
+            font: "var(--text-caption)",
+            fontFamily: "var(--font-sans)",
+            color: "var(--fg-secondary)",
+            cursor: "pointer",
           }}
         >
-          <span
-            aria-hidden
-            style={{
-              width: 9,
-              height: 9,
-              borderRadius: 3,
-              border: "1.5px solid var(--fg-danger)",
-              background: "var(--bg-danger-weak)",
-              flex: "none",
-            }}
-          />
-          기록 끊김 {bottlenecks}곳 — 표준상 문서가 나와야 하는데 없어요
-        </span>
+          전체 보기
+        </button>
       )}
     </div>
   );
@@ -522,7 +586,12 @@ export function WorkflowChart({
   const [draggingId, setDraggingId] = useState<number | null>(null);
   /** 표준 워크플로우 비교 — 아래에 표준 배치를 함께 편다 (v7) */
   const [compare, setCompare] = useState(false);
+  /** 범례에서 고른 영역 — 그 영역만 색을 남기고 나머지는 회색으로 물러난다 (v7-1) */
+  const [focus, setFocus] = useState<string | null>(null);
   const linkRequested = useRef(false);
+  /* 옮긴 좌표는 모아 뒀다 한 번에 보낸다 — 상자를 여러 개 재배치할 때 드롭마다 요청이 나가지 않게 */
+  const pendingPos = useRef<Record<string, { x: number; y: number }>>({});
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(() => {
     api<{
@@ -569,8 +638,9 @@ export function WorkflowChart({
         editable,
         draggingId,
         showLinks: true,
+        focus,
       }),
-    [acts, connections, graph, editable, draggingId],
+    [acts, connections, graph, editable, draggingId, focus],
   );
   const standardPlaced = useMemo(() => (compare ? placeStandard(acts) : null), [compare, acts]);
   const standardFlow = useMemo(() => {
@@ -583,30 +653,53 @@ export function WorkflowChart({
       editable: false,
       draggingId: null,
       showLinks: false,
+      focus,
     });
-  }, [compare, acts, standardPlaced]);
+  }, [compare, acts, standardPlaced, focus]);
+
+  /** 모아 둔 좌표를 한 번에 보낸다 — 상자 여러 개를 재배치해도 요청은 한 번 */
+  const flushPositions = useCallback(() => {
+    const batch = pendingPos.current;
+    pendingPos.current = {};
+    if (Object.keys(batch).length === 0) return;
+    setSaving(true);
+    api(`/api/assessments/${assessmentId}/workflow`, {
+      method: "PUT",
+      body: JSON.stringify({ positions: batch }),
+    })
+      .catch(() => {
+        /* 저장 실패해도 화면의 자리는 유지한다 — 다시 옮기면 그때 함께 올라간다 */
+      })
+      .finally(() => setSaving(false));
+  }, [assessmentId]);
 
   /* 드래그 종료 — 놓은 자리를 그대로 저장한다 (v7-1).
      종전에는 영역 안 순서만 바꾸고 상자는 정해진 칸으로 되돌아갔는데, 옮겨 놓고 제자리로 튕기는
-     느낌이 갇혀 보였다. 이제 놓은 곳에 남고, 그 좌표가 이 진단에 저장된다 */
+     느낌이 갇혀 보였다. 이제 놓은 곳에 남고, 그 좌표가 이 진단에 저장된다.
+     저장은 드롭 순간이 아니라 손을 멈춘 뒤 한 번 — 정리하는 동안 요청이 줄줄이 나가지 않게 */
   const onDragStop = useCallback(
     (_e: unknown, node: Node) => {
       setDraggingId(null);
       if (!editable || !node.id.startsWith("act:")) return;
       const actId = node.id.slice("act:".length);
       const at = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
+      const before = positions[actId];
+      if (before && before.x === at.x && before.y === at.y) return; // 제자리 — 보낼 것 없다
       setPositions((prev) => ({ ...prev, [actId]: at }));
-      setSaving(true);
-      api(`/api/assessments/${assessmentId}/workflow`, {
-        method: "PUT",
-        body: JSON.stringify({ positions: { [actId]: at } }),
-      })
-        .catch(() => {
-          /* 저장 실패해도 화면의 자리는 유지한다 — 다시 옮기면 그때 저장된다 */
-        })
-        .finally(() => setSaving(false));
+      pendingPos.current = { ...pendingPos.current, [actId]: at };
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = setTimeout(flushPositions, 800);
     },
-    [editable, assessmentId],
+    [editable, positions, flushPositions],
+  );
+
+  /* 화면을 떠날 때 아직 못 보낸 좌표가 있으면 그때 보낸다 */
+  useEffect(
+    () => () => {
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushPositions();
+    },
+    [flushPositions],
   );
 
   /* 불러오는 중·AI가 연결을 만드는 중 — 섹션 안에서 그대로 알린다 (v7).
@@ -726,7 +819,12 @@ export function WorkflowChart({
         </ReactFlow>
       </div>
 
-      <Legend stages={stages} bottlenecks={flow.bottlenecks.length} />
+      <Legend
+        stages={stages}
+        bottlenecks={flow.bottlenecks.length}
+        focus={focus}
+        onFocus={setFocus}
+      />
 
       {/* 표준 워크플로우 — 비교하기로 펼친다. ISO 절차서 기준 영역별 순서 그대로 */}
       {compare && standardFlow && (
