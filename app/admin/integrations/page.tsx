@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Card, Icons, Input, Loader } from "@/components/ui";
 import { api } from "@/lib/api";
 
 /**
- * 외부 연동 — API 키 등록·테스트 + 인증 명단 업로드 (어드민)
+ * 외부 연동 — API 키 등록·테스트 (어드민)
  * 값은 서버가 AES-256-GCM으로 저장하고 응답은 항상 마스킹(앞 4자)이다. 평문 조회는 없다.
  * 키는 여기 등록한 값만 쓴다 — 서버 env 폴백은 없으므로 미등록 서비스는 동작하지 않는다.
+ *
+ * 인증 명단 CSV 업로드는 2026-08-06에 걷어냈다 — 이노비즈·메인비즈 모두 확인서 API로
+ * 사업자번호 조회하므로, 아래 '데이터·메일' 목록의 키 카드로 대체됐다.
  */
 type Integration = {
   service: string;
@@ -24,13 +27,6 @@ type Integration = {
 };
 
 type TestResult = { ok: boolean; message: string; latencyMs?: number };
-type CertList = {
-  kind: string;
-  label: string;
-  fileName: string | null;
-  rowCount: number;
-  uploadedAt: string | null;
-};
 
 /** 키 발급·관리 콘솔 바로가기 — 값이 만료됐을 때 여기서 바로 재발급한다 */
 const ISSUE_URL: Record<string, string> = {
@@ -56,11 +52,8 @@ export default function AdminIntegrationsPage() {
   const [secretInput, setSecretInput] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, TestResult>>({});
-  /* 인증 명단 · DART 기업코드 색인 */
-  const [certs, setCerts] = useState<CertList[]>([]);
-  const [certMsg, setCertMsg] = useState<Record<string, string>>({});
+  /* DART 기업코드 색인 */
   const [corpCount, setCorpCount] = useState<number | null>(null);
-  const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = useCallback(() => {
     api<{ items: Integration[]; encryptionReady: boolean }>("/api/admin/integrations")
@@ -69,9 +62,6 @@ export default function AdminIntegrationsPage() {
         setEncryptionReady(res.encryptionReady);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "목록을 불러오지 못했어요."));
-    api<{ items: CertList[] }>("/api/admin/cert-lists")
-      .then((res) => setCerts(res.items))
-      .catch(() => {});
     api<{ count: number }>("/api/admin/dart-corp")
       .then((res) => setCorpCount(res.count))
       .catch(() => {});
@@ -153,41 +143,6 @@ export default function AdminIntegrationsPage() {
         ...p,
         dart: { ok: false, message: e instanceof Error ? e.message : "갱신 실패" },
       }));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const uploadCert = async (kind: string, file: File) => {
-    setBusy(kind);
-    setCertMsg((p) => ({ ...p, [kind]: "" }));
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await api<{ rowCount: number; skipped: number }>(
-        `/api/admin/cert-lists/${kind}`,
-        { method: "POST", body: fd },
-      );
-      setCertMsg((p) => ({
-        ...p,
-        [kind]: `${res.rowCount.toLocaleString("ko-KR")}건 적재${res.skipped ? ` · 업체명 없는 ${res.skipped}행 제외` : ""}`,
-      }));
-      load();
-    } catch (e) {
-      setCertMsg((p) => ({ ...p, [kind]: e instanceof Error ? e.message : "업로드 실패" }));
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const removeCert = async (kind: string) => {
-    setBusy(kind);
-    try {
-      await api(`/api/admin/cert-lists/${kind}`, { method: "DELETE" });
-      setCertMsg((p) => ({ ...p, [kind]: "" }));
-      load();
-    } catch (e) {
-      setCertMsg((p) => ({ ...p, [kind]: e instanceof Error ? e.message : "삭제 실패" }));
     } finally {
       setBusy(null);
     }
@@ -340,59 +295,6 @@ export default function AdminIntegrationsPage() {
     );
   };
 
-  const renderCert = (c: CertList) => (
-    <Card key={c.kind} radius="xl" padded={false}>
-      <div style={{ padding: "16px 20px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>{c.label}</span>
-          {c.rowCount > 0 ? (
-            <Badge tone="success">{c.rowCount.toLocaleString("ko-KR")}개사</Badge>
-          ) : (
-            <Badge tone="outline">미등록</Badge>
-          )}
-        </div>
-        <p style={{ margin: "4px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-          {c.fileName
-            ? `${c.fileName} · ${c.uploadedAt?.slice(0, 10) ?? ""}`
-            : "명단 CSV를 올리면 회사명으로 맞춰 인증 카드를 채워요"}
-        </p>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12 }}>
-          <input
-            ref={(el) => {
-              fileRefs.current[c.kind] = el;
-            }}
-            type="file"
-            accept=".csv,text/csv"
-            style={{ display: "none" }}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) uploadCert(c.kind, f);
-              e.target.value = "";
-            }}
-          />
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={busy === c.kind}
-            onClick={() => fileRefs.current[c.kind]?.click()}
-          >
-            {busy === c.kind ? "올리는 중" : c.rowCount > 0 ? "명단 교체" : "명단 올리기"}
-          </Button>
-          {c.rowCount > 0 && (
-            <Button variant="ghost" size="sm" disabled={busy === c.kind} onClick={() => removeCert(c.kind)}>
-              삭제
-            </Button>
-          )}
-          {certMsg[c.kind] && (
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-secondary)" }}>
-              {certMsg[c.kind]}
-            </span>
-          )}
-        </div>
-      </div>
-    </Card>
-  );
-
   const sectionTitle = (text: string) => (
     <h2 style={{ margin: 0, font: "var(--text-label-m)", color: "var(--fg-secondary)" }}>{text}</h2>
   );
@@ -450,14 +352,6 @@ export default function AdminIntegrationsPage() {
             <div style={{ display: "grid", gap: 12 }}>
               {sectionTitle("AI API KEY")}
               {items.filter((s) => s.group === "ai").map(renderCard)}
-            </div>
-            <div style={{ display: "grid", gap: 12 }}>
-              {sectionTitle("인증 명단 (파일 업로드)")}
-              <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                조회용 공개 API가 없는 인증이에요. 기관이 공개한 명단을 CSV(UTF-8)로 올리면 회사명으로
-                맞춰 카드를 채워요.
-              </p>
-              {certs.map(renderCert)}
             </div>
           </div>
         </div>
