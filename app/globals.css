@@ -548,6 +548,11 @@ body {
 .ax-modal--wide {
   width: min(640px, calc(100vw - 32px));
 }
+/* 편집기용 — 도구 목록·JSON 스키마·지시문을 한 화면에서 다루는 팝업 (어드민 멀티 에이전트) */
+.ax-modal--xl {
+  width: min(960px, calc(100vw - 48px));
+  max-height: min(90vh, 900px);
+}
 .ax-modal--full {
   /* 데스크톱에서 칸반 컬럼이 가로 스크롤 없이 다 보이게 — 뷰포트에 맞춰 확장 */
   width: min(96vw, 1880px);

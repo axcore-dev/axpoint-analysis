@@ -9,6 +9,8 @@ export interface ModalProps {
   onClose: () => void;
   title?: ReactNode;
   wide?: boolean;
+  /** 편집기용 — 도구 목록·JSON 스키마·지시문을 한 화면에서 다룰 때 (960px) */
+  xl?: boolean;
   /** 풀스크린에 가까운 대형 — 칸반 보드처럼 가로로 넓은 콘텐츠용 */
   full?: boolean;
   /** 스크림 클릭으로 닫기 허용 (기본 true) */
@@ -20,13 +22,13 @@ export interface ModalProps {
  * 센터 모달 — Radix Dialog 기반 (포커스 트랩·스크롤 잠금·ESC 처리 내장).
  * 시각은 기존 .ax-scrim / .ax-modal 문법 그대로 유지한다.
  */
-export function Modal({ open, onClose, title, wide, full, dismissible = true, children }: ModalProps) {
+export function Modal({ open, onClose, title, wide, xl, full, dismissible = true, children }: ModalProps) {
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="ax-scrim" />
         <Dialog.Content
-          className={`ax-modal ${wide ? "ax-modal--wide" : ""} ${full ? "ax-modal--full" : ""}`}
+          className={`ax-modal ${wide ? "ax-modal--wide" : ""} ${xl ? "ax-modal--xl" : ""} ${full ? "ax-modal--full" : ""}`}
           aria-describedby={undefined}
           onEscapeKeyDown={dismissible ? undefined : (e) => e.preventDefault()}
           onPointerDownOutside={dismissible ? undefined : (e) => e.preventDefault()}

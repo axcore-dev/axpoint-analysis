@@ -387,6 +387,7 @@ export default function AdminAgentsPage() {
             open={selected !== null}
             onClose={() => setSelectedId(null)}
             title={selected ? `${selected.label ?? selected.id} · ${selected.id}` : ""}
+            xl
           >
             {selected && (
               <div>

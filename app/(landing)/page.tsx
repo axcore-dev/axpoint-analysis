@@ -587,14 +587,16 @@ export default function LandingPage() {
       )}
 
       {/* ─── phase: upload — 자료 올리기 (2/2) — 중앙 드롭존에 모두 올리기 (개편 원복) ── */}
-      {/* 업로드 단계 — 카드 + 우측 '필요한 자료' 패널 (자료 정리 화면과 같은 배치) */}
+      {/* 업로드 단계 — 카드는 원래 자리(중앙) 그대로 두고, '필요한 자료' 패널만 오른쪽에 덧붙인다.
+          패널을 흐름에 넣으면 카드가 왼쪽으로 밀리므로 넓은 화면에서는 absolute로 띄운다.
+          좁은 화면(1024px 미만)에서는 카드 아래로 내려 쌓인다 */}
       {phase === "upload" && (
         <div
           key="upload"
-          className="m-auto flex w-full max-w-[1000px] flex-col items-start justify-center gap-4 md:flex-row"
-          style={{ position: "relative", top: "calc(-28px - 10vh)" }}
+          className="relative m-auto w-full max-w-[640px]"
+          style={{ top: "calc(-28px - 10vh)" }}
         >
-        <Card className="ax-step-enter" radius="2xl" style={{ ...stepCardStyle, top: 0, margin: 0 }}>
+        <Card className="ax-step-enter" radius="2xl" style={{ ...stepCardStyle, top: 0, margin: 0, maxWidth: "none" }}>
           <BackIconButton label="기업 확인으로 돌아가기" onClick={() => setPhase("confirm")} />
           <DotProgress step={2} total={2} />
           {/* v5-1 — 업로드 단계 명칭 '파일 업로드' */}
@@ -742,8 +744,8 @@ export default function LandingPage() {
         {/* ── 필요한 자료 — 카드 밖 우측 패널. 무엇을 모아야 하는지 먼저 보여준다.
              올리기 버튼은 두지 않는다 — 업로드는 왼쪽 드롭존 하나로 받는다(중복 제거) ── */}
         {requiredDocs && requiredDocs.items.length > 0 && (
-          <aside className="ax-step-enter w-full flex-none rounded-[var(--radius-2xl)] border border-line bg-[var(--bg-elevated)] md:sticky md:top-20 md:w-[280px]">
-            <div className="flex items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
+          <aside className="ax-step-enter mt-4 flex w-full flex-col rounded-[var(--radius-2xl)] border border-line bg-[var(--bg-elevated)] lg:absolute lg:left-full lg:top-0 lg:ml-4 lg:mt-0 lg:h-full lg:w-[280px]">
+            <div className="flex flex-none items-center justify-between gap-2 border-b border-line px-3.5 py-2.5">
               <span className="[font:var(--text-label-s)] text-ink">
                 필요한 자료 {requiredDocs.items.length}종
               </span>
@@ -764,7 +766,8 @@ export default function LandingPage() {
                 {copiedDocs ? "복사됨" : "목록 복사"}
               </Button>
             </div>
-            <div className="ax-scrollbar-none max-h-[60vh] overflow-y-auto px-3.5 py-2">
+            {/* 카드 높이에 맞춰 남는 공간을 목록이 차지하고, 넘치면 이 안에서만 스크롤한다 */}
+            <div className="ax-scrollbar-none min-h-0 flex-1 overflow-y-auto px-3.5 py-2 max-lg:max-h-[50vh]">
               {Object.entries(
                 requiredDocs.items.reduce<Record<string, string[]>>((acc, d) => {
                   (acc[d.groupName] ??= []).push(d.docTypeName);
@@ -781,7 +784,7 @@ export default function LandingPage() {
                 </div>
               ))}
             </div>
-            <p className="m-0 border-t border-line px-3.5 py-2.5 [font:var(--text-caption)] text-ink-4">
+            <p className="m-0 flex-none border-t border-line px-3.5 py-2.5 [font:var(--text-caption)] text-ink-4">
               없는 자료는 건너뛰어도 돼요. 올린 자료는 다음 단계에서 분류돼요.
             </p>
           </aside>

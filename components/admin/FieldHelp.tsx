@@ -31,7 +31,8 @@ export function FieldHelp({ title, children }: { title: string; children: ReactN
       >
         ?
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title={title}>
+      {/* 예시 블록에 코드가 들어가 기본 폭(440)에서는 줄바꿈이 심하다 */}
+      <Modal open={open} onClose={() => setOpen(false)} title={title} wide>
         <div style={{ font: "var(--text-body3)", color: "var(--fg-secondary)", lineHeight: 1.7 }}>
           {children}
         </div>
