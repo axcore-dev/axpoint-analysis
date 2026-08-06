@@ -6,8 +6,19 @@ import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { RouteLoading } from "@/components/flow/RouteLoading";
 import {
   ReportDocument,
+  type ReportArea,
+  type ReportAxis,
+  type ReportCompany,
+  type ReportDocumentProps,
+  type ReportFile,
+  type ReportJudgment,
+  type ReportNarrative,
+  type ReportPublicSource,
   type ReportRoi,
+  type ReportStage,
+  type ReportStat,
   type ReportSummary,
+  type ReportTask,
 } from "@/components/report/ReportDocument";
 import { api } from "@/lib/api";
 import { generateReportPdf, reportFileName } from "@/lib/pdf";
@@ -31,9 +42,67 @@ const fmt = (n: number) => n.toLocaleString("ko-KR");
 const mono = { fontFamily: "var(--font-mono)", letterSpacing: "0" } as const;
 
 type Roi = ReportRoi;
-type Summary = ReportSummary;
 
 type Drill = "roi" | "payback" | null;
+
+/** 보고서 문서에 그대로 넘길 한 덩이 — 화면 요약(summary)은 여기서 꺼내 쓴다 (v7) */
+type ReportBundle = Omit<ReportDocumentProps, "companyName">;
+
+/** 연 매출 표기 — 백만원 단위 값을 억 원으로 (결과 화면과 같은 규칙) */
+const fmtRevenue = (m: number) => (m >= 100 ? `${Math.round(m / 10) / 10}억 원` : `${m}백만 원`);
+
+/* ---- 서버 응답 타입 (필요한 조각만) ---- */
+
+type ResultResponse = {
+  axes: {
+    axisCode: string;
+    axisName: string;
+    score: string | null;
+    answeredCount: number | null;
+    totalCount: number | null;
+  }[];
+  levels: { level: number; name: string }[];
+  company: (ReportCompany & { name: string }) | null;
+  publicStats?: {
+    source: string;
+    itemCount: number;
+    registeredCount?: number;
+    amountWon?: number;
+  }[];
+  areas: ReportArea[];
+  judgments: ReportJudgment[];
+  benchmarks?: { axisCode: string | null; avgScore: string }[];
+  result: {
+    totalScore: string;
+    level: number;
+    levelName: string;
+    scoreLevel?: number;
+    capReasons?: { level: number; reasons: string[] } | null;
+    balanceLabel: string | null;
+    createdAt?: string;
+    narrative:
+      | (ReportNarrative & {
+          axisFindings?: { axisCode: string; finding: string }[];
+          detail?: {
+            overview?: string;
+            strengths_detail?: string;
+            improvements_detail?: string;
+            strategy_detail?: string;
+            axis_details?: { axisCode: string; text: string; function_links?: string }[];
+          } | null;
+        })
+      | null;
+  } | null;
+};
+
+type RoadmapResponse = {
+  stages: ReportStage[];
+  tasks: { no: number }[];
+  totalMonths: number;
+  costMin: number;
+  costMax: number;
+  roi?: Roi;
+};
 
 /* ---- 요약 카드 공용 문법 (원본) ---- */
 function SummaryLabel({ children }: { children: React.ReactNode }) {
@@ -138,7 +207,7 @@ function WorkspaceMockup() {
 export default function ReportPage() {
   const router = useRouter();
   const { companyInput, assessmentId, completedSteps, completeStep } = useDiagnosis();
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [bundle, setBundle] = useState<ReportBundle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drill, setDrill] = useState<Drill>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -149,40 +218,125 @@ export default function ReportPage() {
   const [sending, setSending] = useState(false);
   const reportRef = useRef<HTMLDivElement>(null);
 
+  /* 보고서는 화면에 있는 것을 전부 담는다 (v7) — 결과·로드맵은 필수, 과제 상세·제출 자료·공개
+     데이터는 부록이라 실패해도 그 절만 빠지고 보고서는 나온다 */
   useEffect(() => {
     if (!assessmentId) return;
+    const optional = <T,>(p: Promise<T>, fallback: T) => p.catch(() => fallback);
     Promise.all([
-      api<{
-        result: {
-          level: number;
-          levelName: string;
-          totalScore: string;
-          createdAt?: string;
-        } | null;
-        benchmarks?: { axisCode: string | null; avgScore: string }[];
-      }>(`/api/assessments/${assessmentId}/result`),
-      api<{
-        stages: { taskNos: number[] }[];
-        totalMonths: number;
-        costMin: number;
-        costMax: number;
-        roi?: Roi;
-      }>(`/api/assessments/${assessmentId}/roadmap`),
+      api<ResultResponse>(`/api/assessments/${assessmentId}/result`),
+      api<RoadmapResponse>(`/api/assessments/${assessmentId}/roadmap`),
+      optional(
+        api<{ items: ReportTask[] }>(`/api/assessments/${assessmentId}/tasks`),
+        { items: [] as ReportTask[] },
+      ),
+      optional(
+        api<{ items: ReportFile[] }>(`/api/assessments/${assessmentId}/files`),
+        { items: [] as ReportFile[] },
+      ),
+      optional(
+        api<{ items: ReportPublicSource[] }>(`/api/assessments/${assessmentId}/public-data`),
+        { items: [] as ReportPublicSource[] },
+      ),
     ])
-      .then(([r, rm]) => {
+      .then(([r, rm, taskRes, fileRes, pubRes]) => {
         if (!r.result) throw new Error("진단 결과가 아직 없어요.");
         const overallAvg = r.benchmarks?.find((b) => b.axisCode === null);
-        setSummary({
-          level: r.result.level,
-          levelName: r.result.levelName,
-          totalScore: r.result.totalScore,
-          diagnosedAt: r.result.createdAt?.slice(0, 10) ?? null,
-          industryAvg: overallAvg ? Number(overallAvg.avgScore) : null,
-          taskCount: rm.stages.reduce((s, st) => s + st.taskNos.length, 0),
-          totalMonths: rm.totalMonths,
-          costMin: rm.costMin,
-          costMax: rm.costMax,
-          roi: rm.roi ?? null,
+        const benchByAxis = new Map(
+          (r.benchmarks ?? [])
+            .filter((b) => b.axisCode !== null)
+            .map((b) => [b.axisCode as string, Number(b.avgScore)]),
+        );
+        const narrative = r.result.narrative;
+        const findingByAxis = new Map(
+          (narrative?.axisFindings ?? []).map((f) => [f.axisCode, f.finding]),
+        );
+        const axisDetailByCode = new Map(
+          (narrative?.detail?.axis_details ?? []).map((d) => [
+            d.axisCode,
+            { text: d.text, functionLinks: d.function_links ?? null },
+          ]),
+        );
+
+        const axes: ReportAxis[] = (r.axes ?? [])
+          .filter((a) => a.score !== null)
+          .map((a) => ({
+            code: a.axisCode,
+            name: a.axisName,
+            score: Number(a.score),
+            answeredCount: a.answeredCount ?? 0,
+            totalCount: a.totalCount ?? 0,
+            industryAvg: benchByAxis.get(a.axisCode) ?? null,
+            finding: findingByAxis.get(a.axisCode) ?? null,
+            detail: axisDetailByCode.get(a.axisCode)?.text ?? null,
+            functionLinks: axisDetailByCode.get(a.axisCode)?.functionLinks ?? null,
+          }));
+
+        /* 담은 과제만 — 로드맵이 포함한 번호 기준 (과제 목록 조회가 실패하면 이 절은 비워 둔다) */
+        const included = new Set(rm.stages.flatMap((s) => s.taskNos));
+        const tasks = (taskRes.items ?? []).filter((t) => included.has(t.no));
+
+        /* 공개데이터 통계 칩 — 결과 화면과 같은 표기 */
+        const statBy = new Map((r.publicStats ?? []).map((s) => [s.source, s]));
+        const procurement = statBy.get("procurement");
+        const stats: ReportStat[] = [
+          r.company?.revenueMillion != null
+            ? { label: "연 매출", value: fmtRevenue(r.company.revenueMillion) }
+            : null,
+          r.company?.employees != null
+            ? { label: "고용", value: `${r.company.employees.toLocaleString("ko-KR")}명` }
+            : null,
+          statBy.has("rnd")
+            ? {
+                label: "스마트공장",
+                value: (statBy.get("rnd")?.itemCount ?? 0) > 0 ? "수혜 기업" : "수혜 이력 없음",
+              }
+            : null,
+          statBy.has("patent")
+            ? { label: "특허", value: `등록 ${statBy.get("patent")?.registeredCount ?? 0}건` }
+            : null,
+          statBy.has("news")
+            ? { label: "최근 보도", value: `${statBy.get("news")?.itemCount ?? 0}건` }
+            : null,
+          procurement
+            ? {
+                label: "조달 실적",
+                value:
+                  (procurement.amountWon ?? 0) > 0
+                    ? `${procurement.itemCount}건 · ${Math.round((procurement.amountWon ?? 0) / 1e7) / 10}억 원`
+                    : `${procurement.itemCount}건`,
+              }
+            : null,
+        ].filter(Boolean) as ReportStat[];
+
+        setBundle({
+          summary: {
+            level: r.result.level,
+            levelName: r.result.levelName,
+            totalScore: r.result.totalScore,
+            scoreLevel: r.result.scoreLevel ?? null,
+            capReasons: r.result.capReasons ?? null,
+            balanceLabel: r.result.balanceLabel,
+            diagnosedAt: r.result.createdAt?.slice(0, 10) ?? null,
+            industryAvg: overallAvg ? Number(overallAvg.avgScore) : null,
+            taskCount: rm.stages.reduce((s, st) => s + st.taskNos.length, 0),
+            totalMonths: rm.totalMonths,
+            costMin: rm.costMin,
+            costMax: rm.costMax,
+            roi: rm.roi ?? null,
+          },
+          company: r.company,
+          stats,
+          levels: r.levels ?? [],
+          axes,
+          judgments: r.judgments ?? [],
+          areas: r.areas ?? [],
+          narrative: narrative ?? null,
+          tasks,
+          stages: rm.stages ?? [],
+          /* 양식집 분할 자식(부모가 split)까지 다 싣지 않고, 분류가 끝난 자료만 부록에 올린다 */
+          files: (fileRes.items ?? []).filter((f) => f.status !== "split"),
+          publicSources: pubRes.items ?? [],
         });
       })
       .catch((e) => setError(e instanceof Error ? e.message : "잠시 후 다시 시도해 주세요."));
@@ -211,7 +365,8 @@ export default function ReportPage() {
         <p style={{ font: "var(--text-body1)", color: "var(--fg-tertiary)" }}>{error}</p>
       </div>
     );
-  if (!summary) return <RouteLoading messages={["보고서를 준비하고 있어요"]} />;
+  if (!bundle) return <RouteLoading messages={["보고서를 준비하고 있어요"]} />;
+  const summary = bundle.summary;
 
   const companyName = companyInput.trim();
   const canSend = email.includes("@") && email.trim().length >= 3;
@@ -271,6 +426,8 @@ export default function ReportPage() {
       {/* 드릴다운 카드 호버 시 '산출 내역 보기' 브랜드 컬러 */}
       <style>{`
         .axp-drill:hover .axp-drill-link { color: var(--fg-brand); }
+        .axp-drill:hover .axp-drill-arrow { transform: translateX(3px); }
+        .axp-drill-arrow { display: inline-flex; transition: transform var(--dur-base) var(--ease-out); }
         .axp-drill-link { transition: color var(--dur-fast) var(--ease); }
       `}</style>
       {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준)
@@ -374,7 +531,7 @@ export default function ReportPage() {
                   }}
                 >
                   산출 내역 보기
-                  <span style={{ display: "inline-flex" }}>
+                  <span className="axp-drill-arrow">
                     <Icons.arrow size={14} />
                   </span>
                 </div>
@@ -421,7 +578,7 @@ export default function ReportPage() {
                   }}
                 >
                   산출 내역 보기
-                  <span style={{ display: "inline-flex" }}>
+                  <span className="axp-drill-arrow">
                     <Icons.arrow size={14} />
                   </span>
                 </div>
@@ -431,6 +588,7 @@ export default function ReportPage() {
 
           {/* ── ③ 드릴다운: 연 효과 산출 내역 ── */}
           {roi && drill === "roi" && (
+            <div className="ax-reveal"><div>
             <Card style={{ marginTop: "var(--space-4)" }}>
               <div style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>
                 예상 연 효과 산출 내역
@@ -545,10 +703,12 @@ export default function ReportPage() {
                 과제(코드 표준화 등)의 효과는 정성 효과로 분류되어 합산에서 제외됩니다.
               </p>
             </Card>
+            </div></div>
           )}
 
           {/* ── ④ 드릴다운: 투자 회수 계산식 ── */}
           {roi && drill === "payback" && (
+            <div className="ax-reveal"><div>
             <Card style={{ marginTop: "var(--space-4)" }}>
               <div style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>
                 투자 회수 계산식
@@ -591,6 +751,7 @@ export default function ReportPage() {
                 </p>
               )}
             </Card>
+            </div></div>
           )}
 
           {/* ══ CTA — 버튼 2개만 (카드·설명문 없음) ══════════════ */}
@@ -713,7 +874,7 @@ export default function ReportPage() {
         aria-hidden
         style={{ position: "fixed", left: -10000, top: 0, width: 794, pointerEvents: "none" }}
       >
-        <ReportDocument companyName={companyName || "귀사"} summary={summary} />
+        <ReportDocument companyName={companyName || "귀사"} {...bundle} />
       </div>
     </div>
   );

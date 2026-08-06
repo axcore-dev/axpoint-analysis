@@ -290,6 +290,12 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
+/* 화면 전체 너비로 빠져나오는 섹션(워크플로우)이 100vw를 쓰는데, 100vw는 세로 스크롤바 폭을 포함해
+   그만큼 가로 스크롤바가 생긴다. clip은 hidden과 달리 스크롤 컨테이너를 만들지 않아
+   position: sticky를 깨지 않는다 (v7) */
+body {
+  overflow-x: clip;
+}
 ::selection {
   background: var(--bg-brand-weak);
   color: var(--fg-brand);
@@ -716,6 +722,29 @@ body {
 }
 .ax-step-enter {
   animation: ax-step-in var(--dur-slow) var(--ease-out);
+}
+
+/* ---- 접힌 내용 펼치기 (산출 내역 등) — 높이까지 함께 자라 딱딱하지 않게 (v7).
+   grid-template-rows 0fr→1fr은 auto 높이를 애니메이션할 수 있는 유일한 방법이다.
+   자식(.ax-reveal > *)이 overflow:hidden이어야 내용이 잘리며 자란다 ---- */
+@keyframes ax-reveal {
+  from {
+    opacity: 0;
+    grid-template-rows: 0fr;
+  }
+  to {
+    opacity: 1;
+    grid-template-rows: 1fr;
+  }
+}
+.ax-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: ax-reveal var(--dur-slow) var(--ease-out);
+}
+.ax-reveal > * {
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {
