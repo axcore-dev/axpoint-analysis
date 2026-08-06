@@ -48,7 +48,8 @@ export function WorkflowSection({
       {open && (
         /* v5 — 섹션만 화면 전체 너비로 브레이크아웃 (컨테이너 max-width 밖으로) */
         <div className="relative left-1/2 mt-4 w-screen -translate-x-1/2 px-6">
-          <div className="mb-3 flex flex-wrap items-center gap-1.5 [font:var(--text-caption)] text-ink-3">
+          {/* v7 — 기업명 칩과 안내 문구를 가운데로 (차트 폭이 화면 전체라 왼쪽에 붙어 있으면 떠 보인다) */}
+          <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5 [font:var(--text-caption)] text-ink-3">
             <span className="rounded-[var(--radius-s)] bg-[var(--bg-brand-weak)] px-2 py-1 text-[var(--fg-brand)]">
               {companyName || "이 기업"}
             </span>
