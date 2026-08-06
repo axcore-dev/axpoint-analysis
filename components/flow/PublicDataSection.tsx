@@ -11,7 +11,7 @@ import { api, API_URL } from "@/lib/api";
  */
 type PublicItem = { title: string; date: string | null; summary: string | null; sourceUrl: string | null };
 
-type SourceCard = {
+export type PublicSourceCard = {
   source: string;
   label: string;
   status: "pending" | "running" | "done" | "failed" | "skipped";
@@ -34,7 +34,7 @@ type CompanyBrief = {
 
 type Snapshot = {
   company: CompanyBrief | null;
-  items: SourceCard[];
+  items: PublicSourceCard[];
   progress: { settled: number; total: number; running: boolean };
 };
 
@@ -42,7 +42,7 @@ type Snapshot = {
 const formatBizNo = (v: string) =>
   /^\d{10}$/.test(v) ? `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}` : v;
 
-const STATUS_TEXT: Record<SourceCard["status"], string> = {
+const STATUS_TEXT: Record<PublicSourceCard["status"], string> = {
   pending: "대기",
   running: "수집 중",
   done: "",
@@ -52,7 +52,7 @@ const STATUS_TEXT: Record<SourceCard["status"], string> = {
 
 export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [opened, setOpened] = useState<SourceCard | null>(null);
+  const [opened, setOpened] = useState<PublicSourceCard | null>(null);
   const [tab, setTab] = useState<"summary" | "items">("items");
 
   useEffect(() => {
@@ -109,8 +109,9 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
         </span>
       </div>
 
+      {/* 사업자번호·대표는 폭이 고정이고 주소가 남는 자리를 다 쓴다 — 3등분하면 주소가 잘렸다 (v7) */}
       {snap.company && (
-        <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-[var(--radius-l)] bg-surface-3 px-4 py-3 sm:grid-cols-3">
+        <dl className="mb-4 grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-[var(--radius-l)] bg-surface-3 px-4 py-3 sm:grid-cols-[auto_auto_minmax(0,1fr)]">
           {[
             { label: "사업자번호", value: snap.company.bizNo && formatBizNo(snap.company.bizNo), mono: true },
             { label: "대표", value: snap.company.ceoName },
@@ -119,10 +120,9 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
             <div key={label} className="flex min-w-0 gap-2">
               <dt className="flex-none [font:var(--text-caption)] text-ink-4">{label}</dt>
               <dd
-                className={`m-0 min-w-0 truncate [font:var(--text-caption)] text-ink-2 ${
-                  mono ? "[font-family:var(--font-mono)]" : ""
+                className={`m-0 min-w-0 break-words [font:var(--text-caption)] text-ink-2 ${
+                  mono ? "[font-family:var(--font-mono)] whitespace-nowrap" : ""
                 }`}
-                title={value || undefined}
               >
                 {value || "—"}
               </dd>
@@ -190,82 +190,104 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
 
       {/* 상세 팝업 — 요약 / 원본(제목에 출처 링크) */}
       <Modal open={opened !== null} onClose={() => setOpened(null)} title={opened?.label} wide>
-        {opened && (
-          <div>
-            {opened.summary?.length ? (
-              <div className="mb-3 flex gap-1 rounded-[var(--radius-m)] bg-surface-3 p-1">
-                {(["summary", "items"] as const).map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => setTab(t)}
-                    className={`h-8 flex-1 cursor-pointer rounded-[9px] border-0 [font:var(--text-label-s)] [font-family:var(--font-sans)] transition-colors ${
-                      tab === t ? "bg-surface text-ink shadow-[var(--shadow-1)]" : "bg-transparent text-ink-3"
-                    }`}
-                  >
-                    {t === "summary" ? "요약" : `원본 ${opened.itemCount}건`}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {tab === "summary" && opened.summary?.length ? (
-              <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
-                {opened.summary.map((line, i) => (
-                  <li key={i} className="flex gap-2 [font:var(--text-body3)] text-ink-2">
-                    <span aria-hidden className="flex-none text-ink-4">
-                      •
-                    </span>
-                    <span className="min-w-0">{line}</span>
-                  </li>
-                ))}
-                <li className="mt-1 [font:var(--text-caption)] text-ink-4">
-                  AI가 수집 원본을 정리한 요약이에요 — 원문은 원본 탭에서 확인해 주세요.
-                </li>
-              </ul>
-            ) : (
-              <div>
-                {(opened.note ?? opened.error) && (
-                  <p className="mt-0 mb-2 [font:var(--text-caption)] text-ink-3">
-                    {opened.note ?? opened.error}
-                  </p>
-                )}
-                <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
-                  {opened.items.map((it, i) => (
-                    <li
-                      key={`${it.title}-${i}`}
-                      className="border-t border-line-subtle pt-2 first:border-t-0 first:pt-0"
-                    >
-                      <div className="flex items-baseline justify-between gap-3">
-                        {it.sourceUrl ? (
-                          <a
-                            href={it.sourceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="min-w-0 [font:var(--text-label-m)] text-[var(--fg-brand)] hover:underline"
-                          >
-                            {it.title}
-                          </a>
-                        ) : (
-                          <span className="min-w-0 [font:var(--text-label-m)] text-ink">{it.title}</span>
-                        )}
-                        {it.date && (
-                          <span className="flex-none [font-family:var(--font-mono)] text-[12px] text-ink-4">
-                            {it.date}
-                          </span>
-                        )}
-                      </div>
-                      {it.summary && (
-                        <p className="mt-1 mb-0 [font:var(--text-body3)] text-ink-3">{it.summary}</p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
+        {opened && <PublicSourceDetail card={opened} tab={tab} onTab={setTab} />}
       </Modal>
     </section>
+  );
+}
+
+/**
+ * 출처 하나의 상세 — 요약 탭 / 원본 탭 (제목에 출처 링크).
+ * 자료 정리 화면의 팝업과 진단 결과 화면의 통계 칩 팝업이 같은 몸통을 쓴다 (v7).
+ */
+export function PublicSourceDetail({
+  card,
+  tab,
+  onTab,
+}: {
+  card: PublicSourceCard;
+  tab: "summary" | "items";
+  onTab: (t: "summary" | "items") => void;
+}) {
+  return (
+    <div>
+      {card.summary?.length ? (
+        <div className="mb-3 flex gap-1 rounded-[var(--radius-m)] bg-surface-3 p-1">
+          {(["summary", "items"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onTab(t)}
+              className={`h-8 flex-1 cursor-pointer rounded-[9px] border-0 [font:var(--text-label-s)] [font-family:var(--font-sans)] transition-colors ${
+                tab === t ? "bg-surface text-ink shadow-[var(--shadow-1)]" : "bg-transparent text-ink-3"
+              }`}
+            >
+              {t === "summary" ? "요약" : `원본 ${card.itemCount}건`}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {tab === "summary" && card.summary?.length ? (
+        <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
+          {card.summary.map((line, i) => (
+            <li key={i} className="flex gap-2 [font:var(--text-body3)] text-ink-2">
+              <span aria-hidden className="flex-none text-ink-4">
+                •
+              </span>
+              <span className="min-w-0">{line}</span>
+            </li>
+          ))}
+          <li className="mt-1 [font:var(--text-caption)] text-ink-4">
+            AI가 수집 원본을 정리한 요약이에요 — 원문은 원본 탭에서 확인해 주세요.
+          </li>
+        </ul>
+      ) : (
+        <div>
+          {(card.note ?? card.error) && (
+            <p className="mt-0 mb-2 [font:var(--text-caption)] text-ink-3">
+              {card.note ?? card.error}
+            </p>
+          )}
+          {card.items.length === 0 ? (
+            <p className="m-0 [font:var(--text-body3)] text-ink-3">
+              수집된 원본이 없어요.
+            </p>
+          ) : (
+            <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
+              {card.items.map((it, i) => (
+                <li
+                  key={`${it.title}-${i}`}
+                  className="border-t border-line-subtle pt-2 first:border-t-0 first:pt-0"
+                >
+                  <div className="flex items-baseline justify-between gap-3">
+                    {it.sourceUrl ? (
+                      <a
+                        href={it.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="min-w-0 [font:var(--text-label-m)] text-[var(--fg-brand)] hover:underline"
+                      >
+                        {it.title}
+                      </a>
+                    ) : (
+                      <span className="min-w-0 [font:var(--text-label-m)] text-ink">{it.title}</span>
+                    )}
+                    {it.date && (
+                      <span className="flex-none [font-family:var(--font-mono)] text-[12px] text-ink-4">
+                        {it.date}
+                      </span>
+                    )}
+                  </div>
+                  {it.summary && (
+                    <p className="mt-1 mb-0 [font:var(--text-body3)] text-ink-3">{it.summary}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

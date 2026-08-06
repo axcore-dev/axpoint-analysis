@@ -16,6 +16,10 @@ import {
 } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
+import {
+  PublicSourceDetail,
+  type PublicSourceCard,
+} from "@/components/flow/PublicDataSection";
 import { WorkflowStandard } from "@/components/flow/WorkflowStandard";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api } from "@/lib/api";
@@ -193,23 +197,66 @@ function EvidenceTextList({ items }: { items: EvidenceItem[] }) {
   );
 }
 
-/** AI 서술의 마크다운 중 굵기(**…**)만 적용해 렌더 — 나머지 마크다운 문법은 그대로 텍스트 (v5-6) */
-function renderBold(text: string): ReactNode {
-  const parts = text.split(/\*\*(.+?)\*\*/g);
-  if (parts.length === 1) return text;
-  return parts.map((part, i) =>
-    i % 2 === 1 ? (
-      <strong key={i} style={{ fontWeight: 700, color: "var(--fg-primary)" }}>
-        {part}
-      </strong>
-    ) : (
-      part
-    ),
-  );
+/** 서술에 등장하는 축 — 코드는 풀어 쓰고 이름은 굵게 (v7) */
+export type AxisLabel = { code: string; name: string };
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const boldStyle: CSSProperties = { fontWeight: 700, color: "var(--fg-primary)" };
+
+/**
+ * AI 서술 렌더 (v7) — 굵기(**…**)를 적용하면서 축 표기를 사용자 말로 바꾼다.
+ *  ① "IT 축" 같은 축 코드 약어를 축 이름("AI인프라 및 기술")으로 편다 — 약어는 읽는 사람 것이 아니다
+ *  ② 축 이름은 굵게 표시한다 (이미 **…**로 감싼 것은 건드리지 않는다)
+ * 나머지 마크다운 문법은 그대로 텍스트로 남긴다 (v5-6 정책 유지).
+ */
+function renderRich(text: string, axes: AxisLabel[]): ReactNode {
+  let s = text;
+  for (const a of axes) {
+    if (!a.code || !a.name) continue;
+    // "IT 축" · "IT축" · "(IT) 축" → 축 이름. 앞뒤가 영문·숫자면 다른 낱말이므로 건드리지 않는다
+    s = s
+      .replace(new RegExp(`(^|[^A-Za-z0-9_])\\(?${escapeRe(a.code)}\\)?(\\s*)축`, "g"), `$1${a.name}$2축`)
+      // 이름을 이미 쓰고 괄호로 코드를 덧붙인 경우 — 괄호는 지운다 (v7 표기 규칙)
+      .replace(new RegExp(`${escapeRe(a.name)}\\s*\\(${escapeRe(a.code)}\\)`, "g"), a.name);
+  }
+
+  const names = axes
+    .map((a) => a.name)
+    .filter(Boolean)
+    .sort((x, y) => y.length - x.length); // 긴 이름부터 — 짧은 이름이 먼저 먹지 않게
+  const namePattern = names.length ? new RegExp(`(${names.map(escapeRe).join("|")})`, "g") : null;
+
+  return s.split(/\*\*(.+?)\*\*/g).map((part, i) => {
+    if (i % 2 === 1)
+      return (
+        <strong key={i} style={boldStyle}>
+          {part}
+        </strong>
+      );
+    if (!namePattern) return part;
+    return part.split(namePattern).map((sub, j) =>
+      names.includes(sub) ? (
+        <strong key={`${i}-${j}`} style={boldStyle}>
+          {sub}
+        </strong>
+      ) : (
+        sub
+      ),
+    );
+  });
 }
 
 /** 종합 분석 상세 서술 — 추론 AI 작성 본문. 왼쪽 정렬·문단 유지, 없으면 아무것도 렌더하지 않는다 */
-function DetailText({ text, style }: { text?: string | null; style?: CSSProperties }) {
+function DetailText({
+  text,
+  style,
+  axes,
+}: {
+  text?: string | null;
+  style?: CSSProperties;
+  axes: AxisLabel[];
+}) {
   if (!text) return null;
   return (
     <p
@@ -224,7 +271,7 @@ function DetailText({ text, style }: { text?: string | null; style?: CSSProperti
         ...style,
       }}
     >
-      {renderBold(text)}
+      {renderRich(text, axes)}
     </p>
   );
 }
@@ -720,6 +767,18 @@ export default function ResultPage() {
   const [judging, setJudging] = useState(false);
   const [judgeProgress, setJudgeProgress] = useState<JudgeProgress | null>(null);
   const statRowRef = useRef<HTMLDivElement>(null);
+  /* 통계 칩 상세 팝업 (v7) — 자료 정리 화면의 공개데이터 팝업과 같은 몸통을 쓴다.
+     원본 목록은 결과 응답에 없으므로 처음 열 때 공개데이터 스냅샷을 한 번 받아 온다 */
+  const [statOpen, setStatOpen] = useState<{ label: string; sources: string[] } | null>(null);
+  const [statTab, setStatTab] = useState<"summary" | "items">("summary");
+  const [pubCards, setPubCards] = useState<PublicSourceCard[] | null>(null);
+  const [pubError, setPubError] = useState(false);
+  useEffect(() => {
+    if (!statOpen || !assessmentId || pubCards !== null) return;
+    api<{ items: PublicSourceCard[] }>(`/api/assessments/${assessmentId}/public-data`)
+      .then(({ items }) => setPubCards(items ?? []))
+      .catch(() => setPubError(true));
+  }, [statOpen, assessmentId, pubCards]);
   /* 통계 칩 캐러셀 — 양쪽 화살표 노출 여부 (v5-4) */
   const [statScroll, setStatScroll] = useState({ left: false, right: false });
   const updateStatScroll = () => {
@@ -736,17 +795,10 @@ export default function ResultPage() {
     return () => clearTimeout(t);
   }, [data]);
 
-  /* 진단 질문 자동 노출 (v5-3) — 분석 보류 문항이 있으면 결과 진입 시 한 번 자동으로 연다.
-     사전 설문은 서버가 항상 함께 내려주므로, 보완할 게 없어도 미응답 사전 설문을 이어서 묻는다 */
-  useEffect(() => {
-    if (!data || !assessmentId) return;
-    const missing = (data.judgments ?? []).some((j) => j.anchorLevel === null);
-    if (!missing) return;
-    const key = `ax-coverage-survey-${assessmentId}`;
-    if (sessionStorage.getItem(key)) return;
-    sessionStorage.setItem(key, "1");
-    setSurveyOpen(true);
-  }, [data, assessmentId]);
+  /* v7 — 결과 진입 시 설문을 자동으로 열지 않는다.
+     설문은 분석을 시작하기 직전(자료 분류 → '진단 결과 보기')에 받는다. 결과가 다 나온 뒤에 다시
+     물으면 답할 때마다 처음부터 재분석이 돌았다. 여기 남은 '설문으로 보완하기'는 결과를 보고
+     스스로 채우고 싶을 때 쓰는 수동 경로다. */
 
   useEffect(() => {
     if (!assessmentId) return;
@@ -950,18 +1002,30 @@ export default function ResultPage() {
   const news = statBySource.get("news");
   const procurement = statBySource.get("procurement");
   const procurementAmountWon = procurement?.amountWon ?? 0;
+  /* 칩마다 어느 공개데이터 출처에서 나온 값인지 — 클릭하면 그 출처의 수집 원본을 편다 (v7) */
   const companyStats = [
     // 연 매출·고용은 값이 없어도 '-'로 항상 표시한다 (v4 — DART 재무·직원 현황 수집이 채운다)
-    { label: "연 매출", value: co?.revenueMillion != null ? fmtRevenue(co.revenueMillion) : "-" },
+    {
+      label: "연 매출",
+      value: co?.revenueMillion != null ? fmtRevenue(co.revenueMillion) : "-",
+      sources: ["finance", "dart"],
+    },
     smartFactory
       ? {
           label: "스마트공장",
           value: (smartFactory.itemCount ?? 0) > 0 ? "수혜 기업" : "수혜 이력 없음",
+          sources: ["rnd"],
         }
       : null,
-    patent ? { label: "특허", value: `등록 ${patent.registeredCount ?? 0}건` } : null,
-    news ? { label: "최근 보도", value: `${news.itemCount ?? 0}건` } : null,
-    { label: "고용", value: co?.employees != null ? `${co.employees.toLocaleString("ko-KR")}명` : "-" },
+    patent
+      ? { label: "특허", value: `등록 ${patent.registeredCount ?? 0}건`, sources: ["patent"] }
+      : null,
+    news ? { label: "최근 보도", value: `${news.itemCount ?? 0}건`, sources: ["news"] } : null,
+    {
+      label: "고용",
+      value: co?.employees != null ? `${co.employees.toLocaleString("ko-KR")}명` : "-",
+      sources: ["employment"],
+    },
     procurement
       ? {
           label: "조달 실적",
@@ -970,12 +1034,17 @@ export default function ResultPage() {
               ? /* 원 단위 합계를 억 원 소수 1자리로 */
                 `${procurement.itemCount ?? 0}건 · ${Math.round(procurementAmountWon / 1e7) / 10}억 원`
               : `${procurement.itemCount ?? 0}건`,
+          sources: ["procurement"],
         }
       : null,
     hasCertSource
-      ? { label: "인증", value: certLabels.length > 0 ? certLabels.join(" · ") : "—" }
+      ? {
+          label: "인증",
+          value: certLabels.length > 0 ? certLabels.join(" · ") : "—",
+          sources: ["venture", "innobiz"],
+        }
       : null,
-  ].filter(Boolean) as { label: string; value: string }[];
+  ].filter(Boolean) as { label: string; value: string; sources: string[] }[];
 
   const sortedAreas = [...areas].sort(
     (a, b) => AREA_ORDER.indexOf(a.functionArea) - AREA_ORDER.indexOf(b.functionArea),
@@ -1003,6 +1072,12 @@ export default function ResultPage() {
 
   return (
     <div className="ax-step-enter" style={{ background: "var(--bg-base)" }}>
+      {/* 통계 칩 호버 — 누를 수 있다는 걸 손이 먼저 알게 (v7) */}
+      <style>{`
+        .axp-stat:hover { border-color: var(--line-brand); box-shadow: var(--shadow-2); transform: translateY(-2px); }
+        .axp-stat:hover .axp-stat-label { color: var(--fg-brand); }
+        .axp-stat:focus-visible { outline: 2px solid var(--line-brand); outline-offset: 2px; }
+      `}</style>
       {/* ================= 섹션 1 — 기업 개요 + 현재 단계 (통합 카드) ================= */}
       <section style={{ padding: "40px 0 12px" }}>
         <Inner>
@@ -1158,9 +1233,17 @@ export default function ResultPage() {
                     scrollBehavior: "smooth",
                   }}
                 >
+                  {/* v7 — 칩을 누르면 그 값이 어디서 나왔는지(수집 원본)를 팝업으로 편다 */}
                   {companyStats.map((stat) => (
-                    <div
+                    <button
                       key={stat.label}
+                      type="button"
+                      className="axp-stat"
+                      onClick={() => {
+                        setStatTab("summary");
+                        setStatOpen({ label: stat.label, sources: stat.sources });
+                      }}
+                      aria-label={`${stat.label} 수집 근거 보기`}
                       style={{
                         flex: "none",
                         display: "flex",
@@ -1174,9 +1257,20 @@ export default function ResultPage() {
                         border: "1px solid var(--line-default)",
                         background: "var(--bg-base)",
                         whiteSpace: "nowrap",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        transition:
+                          "border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease)",
                       }}
                     >
-                      <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                      <span
+                        className="axp-stat-label"
+                        style={{
+                          font: "var(--text-caption)",
+                          color: "var(--grey-500)",
+                          transition: "color var(--dur-fast) var(--ease)",
+                        }}
+                      >
                         {stat.label}
                       </span>
                       <span
@@ -1184,7 +1278,7 @@ export default function ResultPage() {
                       >
                         {stat.value}
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
                 {/* 양쪽 화살표 — 스크롤 가능한 방향에만 노출 (v5-4 UX) */}
@@ -1319,7 +1413,9 @@ export default function ResultPage() {
                             ...(a.finding ? clamp2 : {}),
                           }}
                         >
-                          {a.finding ?? `분석 ${a.answeredCount}/${a.totalCount}`}
+                          {a.finding
+                            ? renderRich(a.finding, axes)
+                            : `분석 ${a.answeredCount}/${a.totalCount}`}
                         </p>
                         <div style={{ marginTop: 10 }}>
                           <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.code)}>
@@ -1407,11 +1503,13 @@ export default function ResultPage() {
                               : "var(--fg-tertiary)",
                           }}
                         >
-                          {selectedScore.finding ??
-                            `분석 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
+                          {selectedScore.finding
+                            ? renderRich(selectedScore.finding, axes)
+                            : `분석 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
                         </p>
                         {/* 축별 상세 서술 — 소견 요약 아래 본문 (없으면 미렌더) */}
                         <DetailText
+                          axes={axes}
                           text={selectedScore.detail}
                           style={{ marginTop: 10, color: "var(--fg-tertiary)" }}
                         />
@@ -1422,6 +1520,7 @@ export default function ResultPage() {
                               업무영역 연계
                             </div>
                             <DetailText
+                              axes={axes}
                               text={selectedScore.functionLinks}
                               style={{ color: "var(--fg-tertiary)" }}
                             />
@@ -1480,7 +1579,7 @@ export default function ResultPage() {
                           </div>
                         )}
                         {/* 컨설턴트 분석 — 기업 AX 상태를 분석한 상세 서술 (v5-5, 서사 detail.overview) */}
-                        <DetailText text={narrativeDetail?.overview} />
+                        <DetailText axes={axes} text={narrativeDetail?.overview} />
                         {result?.narrative?.strategyLabel && (
                           <div>
                             <p
@@ -1490,7 +1589,7 @@ export default function ResultPage() {
                                 color: "var(--fg-tertiary)",
                               }}
                             >
-                              {result.narrative.strategy}
+                              {renderRich(result.narrative.strategy, axes)}
                             </p>
                           </div>
                         )}
@@ -1563,7 +1662,7 @@ export default function ResultPage() {
                       }}
                     >
                       {/* 마크다운 중 굵기만 적용 (v5-6) */}
-                      {body ? renderBold(body) : null}
+                      {body ? renderRich(body, axes) : null}
                     </p>
                     {area.grade === "critical" && (area.causeChain?.length ?? 0) > 0 && (
                       <div style={{ marginTop: "auto" }}>
@@ -1606,7 +1705,7 @@ export default function ResultPage() {
                     maxWidth: 820,
                   }}
                 >
-                  {result.narrative.report?.title ?? result.narrative.conclusion}
+                  {renderRich(result.narrative.report?.title ?? result.narrative.conclusion, axes)}
                 </p>
                 {/* v4 종합 분석 — 제목 → 본문(문단, 길이 제한 없음) → 아래 불릿 → 마지막 요약.
                     report가 없는 과거 저장분은 기존 형식(결론 + overview)으로 폴백 */}
@@ -1623,12 +1722,12 @@ export default function ResultPage() {
                           whiteSpace: "pre-wrap",
                         }}
                       >
-                        {renderBold(para)}
+                        {renderRich(para, axes)}
                       </p>
                     ))}
                   </div>
                 ) : (
-                  <DetailText text={narrativeDetail?.overview} style={{ marginTop: 14 }} />
+                  <DetailText axes={axes} text={narrativeDetail?.overview} style={{ marginTop: 14 }} />
                 )}
 
                 <div style={{ marginTop: 24, display: "grid", gap: 22 }}>
@@ -1698,7 +1797,7 @@ export default function ResultPage() {
                                     color: "var(--fg-primary)",
                                   }}
                                 >
-                                  {it.title}
+                                  {renderRich(it.title, axes)}
                                 </strong>
                               )}
                               <span
@@ -1709,7 +1808,7 @@ export default function ResultPage() {
                                   color: "var(--fg-secondary)",
                                 }}
                               >
-                                {it.body}
+                                {renderRich(it.body, axes)}
                               </span>
                             </span>
                           </li>
@@ -1717,6 +1816,7 @@ export default function ResultPage() {
                       </ul>
                       {/* 블록별 상세 서술 — 불릿 본문과 같은 들여쓰기(불릿 5 + 간격 10) */}
                       <DetailText
+                        axes={axes}
                         text={group.detail}
                         style={{ marginTop: 10, paddingLeft: 15, color: "var(--fg-tertiary)" }}
                       />
@@ -1739,7 +1839,7 @@ export default function ResultPage() {
                       요약
                     </div>
                     <p style={{ margin: 0, font: "var(--text-body3)", lineHeight: 1.7, color: "var(--fg-secondary)" }}>
-                      {result.narrative.report.summary}
+                      {renderRich(result.narrative.report.summary, axes)}
                     </p>
                   </div>
                 )}
@@ -1756,6 +1856,57 @@ export default function ResultPage() {
           </div>
         </Inner>
       </section>
+
+      {/* 통계 칩 상세 — 그 값이 어느 공개데이터에서 나왔는지 원본까지 보여준다 (v7) */}
+      <Modal
+        open={statOpen !== null}
+        onClose={() => setStatOpen(null)}
+        title={statOpen ? `${statOpen.label} · 수집 근거` : undefined}
+        wide
+      >
+        {(() => {
+          if (!statOpen) return null;
+          if (pubError)
+            return (
+              <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+                수집 내역을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.
+              </p>
+            );
+          if (pubCards === null)
+            return (
+              <div style={{ display: "flex", justifyContent: "center", padding: "24px 0" }}>
+                <Skeleton style={{ width: "100%", height: 120 }} />
+              </div>
+            );
+          const cards = pubCards.filter((c) => statOpen.sources.includes(c.source));
+          if (cards.length === 0)
+            return (
+              <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
+                이 항목은 공개 데이터 수집 대상이 아니거나 수집된 자료가 없어요.
+              </p>
+            );
+          return (
+            <div style={{ display: "grid", gap: 18 }}>
+              {cards.map((card) => (
+                <div key={card.source}>
+                  {cards.length > 1 && (
+                    <div
+                      style={{
+                        font: "var(--text-label-s)",
+                        color: "var(--fg-secondary)",
+                        marginBottom: 8,
+                      }}
+                    >
+                      {card.label} · {card.itemCount}건
+                    </div>
+                  )}
+                  <PublicSourceDetail card={card} tab={statTab} onTab={setStatTab} />
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+      </Modal>
 
       {/* 결측 보완 설문 — 에이전트가 생성한 컨설턴트 질문을 카드로 하나씩 (v5-3).
           응답을 저장하고 재분석까지 끝나면 결과를 다시 불러온다 */}
