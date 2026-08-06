@@ -18,7 +18,7 @@ export function LoginModal({
   onSuccess: () => void;
 }) {
   return (
-    <Modal open={open} onClose={onClose} title="시작하기 전에 로그인해 주세요">
+    <Modal open={open} onClose={onClose} title="결과를 보려면 로그인이 필요해요">
       <AuthForm mode="login" onSuccess={onSuccess} />
     </Modal>
   );
