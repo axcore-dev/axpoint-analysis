@@ -44,7 +44,9 @@ const formatBizNo = (v: string) =>
 
 export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [opened, setOpened] = useState<PublicSourceCard | null>(null);
+  /* 열어 둔 카드는 출처 키로만 들고 최신 스냅숏에서 찾아 쓴다.
+     카드 객체를 그대로 담아 두면 SSE가 스냅숏을 갈아끼운 뒤에도 팝업만 옛 건수를 들고 있다 */
+  const [openedKey, setOpenedKey] = useState<string | null>(null);
   const [tab, setTab] = useState<"summary" | "items">("items");
 
   useEffect(() => {
@@ -87,6 +89,7 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
   if (!snap) return null;
 
   const collected = snap.items.reduce((sum, s) => sum + s.itemCount, 0);
+  const opened = openedKey ? (snap.items.find((s) => s.source === openedKey) ?? null) : null;
 
   return (
     <section className="mt-10">
@@ -141,13 +144,13 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
               onClick={() => {
                 if (!clickable) return;
                 setTab(s.summary?.length ? "summary" : "items");
-                setOpened(s);
+                setOpenedKey(s.source);
               }}
               onKeyDown={(e) => {
                 if (!clickable || (e.key !== "Enter" && e.key !== " ")) return;
                 e.preventDefault();
                 setTab(s.summary?.length ? "summary" : "items");
-                setOpened(s);
+                setOpenedKey(s.source);
               }}
               style={{ cursor: clickable ? "pointer" : "default" }}
             >
@@ -183,7 +186,7 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
       </div>
 
       {/* 상세 팝업 — 요약 / 원본(제목에 출처 링크) */}
-      <Modal open={opened !== null} onClose={() => setOpened(null)} title={opened?.label} wide>
+      <Modal open={opened !== null} onClose={() => setOpenedKey(null)} title={opened?.label} wide>
         {opened && <PublicSourceDetail card={opened} tab={tab} onTab={setTab} />}
       </Modal>
     </section>
