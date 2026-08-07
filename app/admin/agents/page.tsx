@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AgentCanvas,
   type CanvasPrompt,
+  type FlowMain,
   type GraphDef,
-  type Stage,
   type ToolMeta,
 } from "@/components/admin/AgentCanvas";
 import { FieldHelp, HelpExample } from "@/components/admin/FieldHelp";
@@ -16,7 +16,8 @@ import { api } from "@/lib/api";
  * 멀티 에이전트 — 진단 파이프라인을 설정하는 화면 (어드민)
  *
  * 두 탭으로 나눈다.
- *  · 그래프 — 진단이 흐르는 순서대로 단계를 세우고, 그 안에 **편집 가능한 지시문을 전부** 노드로 놓는다.
+ *  · 그래프 — 메인 에이전트를 사용자 동선 순서로 잇고, 그 메인을 거드는 지시문(전처리·폴백·보조·
+ *    후처리·파일럿)을 서브로 매단 관계도. **편집 가능한 지시문이 전부** 노드로 올라가 있다.
  *    노드를 누르면 팝업에서 지시문·모델을 편집하고, 도구를 쓰는 에이전트면 도구·출력 규격도 함께 편집한다.
  *    에이전트 위에는 그 에이전트가 부르는 외부 API를, 아래에는 쓸 수 있는 도구를 매단다(작업요청 v6-1).
  *    키 등록은 '외부 연동' 화면이 원본이라 여기서 하지 않는다 — 어디에 붙어 있는지만 보여준다.
@@ -77,7 +78,7 @@ export default function AdminAgentsPage() {
   const [tab, setTab] = useState<"graph" | "logs">("graph");
   const [graphRes, setGraphRes] = useState<GraphRes | null>(null);
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
-  const [stages, setStages] = useState<Stage[]>([]);
+  const [flow, setFlow] = useState<FlowMain[]>([]);
   const [providers, setProviders] = useState<Providers>({});
   const [logs, setLogs] = useState<LogRow[] | null>(null);
   const [onlyFailed, setOnlyFailed] = useState(false);
@@ -99,11 +100,11 @@ export default function AdminAgentsPage() {
     api<GraphRes>("/api/admin/agent-graph")
       .then(setGraphRes)
       .catch((e) => setError(e instanceof Error ? e.message : "그래프를 불러오지 못했어요."));
-    api<{ items: PromptItem[]; providers: Providers; stages: Stage[] }>("/api/admin/prompts")
+    api<{ items: PromptItem[]; providers: Providers; flow: FlowMain[] }>("/api/admin/prompts")
       .then((res) => {
         setPrompts(res.items);
         setProviders(res.providers);
-        setStages(res.stages);
+        setFlow(res.flow);
       })
       .catch(() => {});
   }, []);
@@ -233,8 +234,8 @@ export default function AdminAgentsPage() {
         멀티 에이전트
       </h1>
       <p style={{ margin: "0 0 14px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-        진단 파이프라인 설정 — 진단이 흐르는 순서대로 단계를 세우고, 각 단계에서 실제로 도는 지시문을
-        모두 올려 두었어요. 노드를 누르면 지시문·모델을, 도구를 쓰는 에이전트면 도구·출력 규격까지
+        진단 파이프라인 설정 — 메인 에이전트를 진단이 흐르는 순서대로 잇고, 그 메인을 거드는 지시문을
+        아래에 매달아 두었어요. 노드를 누르면 지시문·모델을, 도구를 쓰는 에이전트면 도구·출력 규격까지
         편집할 수 있어요. 실행 오류는 실행 로그 탭에서 확인해요.
       </p>
 
@@ -377,9 +378,10 @@ export default function AdminAgentsPage() {
               <Badge tone="success">v{graphRes.active.version} 사용 중</Badge>
             )}
             <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-              지시문 {prompts.length} · 도구를 쓰는 에이전트 {graph.nodes.filter((n) => n.type === "agent").length} —
-              실선 화살표가 진단이 흐르는 방향이고, 점선으로 매달린 것은 위가 외부 API·아래가 그
-              에이전트의 도구예요. 노드를 누르면 편집 팝업이 열려요.
+              지시문 {prompts.length} · 메인 에이전트 {flow.length} · 도구를 쓰는 에이전트{" "}
+              {graph.nodes.filter((n) => n.type === "agent").length} — 실선 화살표가 진단이 흐르는
+              방향이고, 점선으로 매달린 것은 위가 외부 API·아래가 그 에이전트의 도구예요. 왼쪽 통로로
+              내려간 작은 카드는 그 메인을 거드는 서브 지시문이에요. 노드를 누르면 편집 팝업이 열려요.
             </span>
           </div>
 
@@ -388,7 +390,7 @@ export default function AdminAgentsPage() {
             <AgentCanvas
               graph={graph}
               prompts={prompts}
-              stages={stages}
+              flow={flow}
               toolMeta={toolMeta}
               selectedKey={selectedKey}
               onSelect={selectPrompt}
