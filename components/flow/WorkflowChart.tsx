@@ -77,8 +77,6 @@ type TaskData = {
   /** 화면에 못 담은 나머지 문서 수 */
   moreDocs: number;
   bottleneck: boolean;
-  grabbable: boolean;
-  dragging: boolean;
   /** 범례에서 다른 영역을 고른 상태 — 색을 빼고 흐리게 물러난다 (v7-1) */
   dimmed: boolean;
 };
@@ -98,23 +96,18 @@ function TaskNode({ data }: NodeProps) {
       : d.tone;
   return (
     <div
+      className="ax-wf-node"
       title={d.stageName}
       style={{
+        /* 모양(테두리·그림자·집힘 효과)은 globals.css가 맡는다 — 인라인 스타일은 규칙보다 세서
+           .dragging 규칙이 먹히지 않는다. 여기서는 값만 변수로 넘긴다 */
+        ["--wf-tone" as string]: d.tone,
+        ["--wf-border" as string]: border,
+        ["--wf-bg" as string]:
+          d.bottleneck && !d.dimmed ? "var(--bg-danger-weak)" : "var(--bg-elevated)",
         width: NODE_W,
-        boxSizing: "border-box",
-        borderRadius: 12,
-        padding: "10px 12px",
-        border: `1.5px solid ${border}`,
         opacity: d.dimmed ? 0.34 : 1,
         filter: d.dimmed ? "grayscale(1)" : undefined,
-        background: d.bottleneck && !d.dimmed ? "var(--bg-danger-weak)" : "var(--bg-elevated)",
-        boxShadow: d.dragging
-          ? `0 14px 30px rgba(16,24,40,0.18), 0 0 0 4px ${d.tone}2e`
-          : "var(--shadow-1)",
-        transform: d.dragging ? "scale(1.04)" : undefined,
-        transition:
-          "box-shadow 160ms var(--ease, ease), transform 160ms var(--ease, ease), opacity 180ms var(--ease, ease), border-color 180ms var(--ease, ease)",
-        cursor: d.grabbable ? (d.dragging ? "grabbing" : "grab") : "default",
       }}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
@@ -376,7 +369,6 @@ function buildChart({
   placed,
   back,
   editable,
-  draggingId,
   showLinks,
   focus,
 }: {
@@ -385,7 +377,6 @@ function buildChart({
   placed: Placed;
   back: Set<string>;
   editable: boolean;
-  draggingId: number | null;
   /** 표준 배치에서는 에이전트 연결선을 그리지 않는다 — 표준 순서만 보여 주는 그림이라 */
   showLinks: boolean;
   /** 범례에서 고른 영역 코드, 또는 BOTTLENECK. null이면 전부 그대로 (v7-1) */
@@ -419,8 +410,6 @@ function buildChart({
       docs: a.docs.slice(0, 2),
       moreDocs: Math.max(0, a.docs.length - 2),
       bottleneck: bottleneck.has(a.id),
-      grabbable: editable,
-      dragging: draggingId === a.id,
       dimmed: focus !== null && !focused.has(a.id),
     } satisfies TaskData as unknown as Record<string, unknown>,
   }));
@@ -582,8 +571,6 @@ export function WorkflowChart({
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [saving, setSaving] = useState(false);
   const [linking, setLinking] = useState(false);
-  /** 드래그 중인 업무 — 잡고 있다는 걸 카드가 커지고 그림자가 짙어지며 알린다 (v7) */
-  const [draggingId, setDraggingId] = useState<number | null>(null);
   /** 표준 워크플로우 비교 — 아래에 표준 배치를 함께 편다 (v7) */
   const [compare, setCompare] = useState(false);
   /** 범례에서 고른 영역 — 그 영역만 색을 남기고 나머지는 회색으로 물러난다 (v7-1) */
@@ -636,11 +623,10 @@ export function WorkflowChart({
         placed: graph,
         back: graph.back,
         editable,
-        draggingId,
         showLinks: true,
         focus,
       }),
-    [acts, connections, graph, editable, draggingId, focus],
+    [acts, connections, graph, editable, focus],
   );
   const standardPlaced = useMemo(() => (compare ? placeStandard(acts) : null), [compare, acts]);
   const standardFlow = useMemo(() => {
@@ -651,7 +637,6 @@ export function WorkflowChart({
       placed: standardPlaced,
       back: new Set<string>(),
       editable: false,
-      draggingId: null,
       showLinks: false,
       focus,
     });
@@ -679,7 +664,6 @@ export function WorkflowChart({
      저장은 드롭 순간이 아니라 손을 멈춘 뒤 한 번 — 정리하는 동안 요청이 줄줄이 나가지 않게 */
   const onDragStop = useCallback(
     (_e: unknown, node: Node) => {
-      setDraggingId(null);
       if (!editable || !node.id.startsWith("act:")) return;
       const actId = node.id.slice("act:".length);
       const at = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
@@ -803,7 +787,6 @@ export function WorkflowChart({
           nodes={flow.nodes}
           edges={flow.edges}
           nodeTypes={nodeTypes}
-          onNodeDragStart={(_e, node) => setDraggingId(Number(node.id.slice("act:".length)))}
           onNodeDragStop={onDragStop}
           /* fitView는 다 넣으려고 배율을 0.4까지 떨어뜨려 글자를 못 읽게 만든다.
              읽을 수 있는 배율로 왼쪽 위(흐름의 시작)에서 열고, 전체는 좌하단 버튼으로 본다 */
