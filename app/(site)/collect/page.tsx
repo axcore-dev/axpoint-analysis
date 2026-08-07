@@ -460,7 +460,14 @@ export default function CollectPage() {
   /* 진입 판별(assessment 조회)·초기 파일 조회가 끝날 때까지만 로딩 — 끝나면 즉시 전환 */
   if (stage === null)
     return <RouteLoading title={companyInput} messages={COLLECT_MESSAGES} />;
-  if (submitting) return <RouteLoading messages={CLASSIFY_MESSAGES} />;
+  if (submitting)
+    return (
+      <RouteLoading
+        messages={CLASSIFY_MESSAGES}
+        /* 47문항 판정 + 영역 판정 + 종합 서사가 이어 도는 구간이다. 실측 2~3분(자료 33건 기준) */
+        hint="보통 2~5분 정도 걸려요"
+      />
+    );
 
   /* ═══════════ 1단계 — 순차 스텝 위저드 (① 자료 확인 ② 사용 프로그램) ═══════════ */
   if (stage === "review") {

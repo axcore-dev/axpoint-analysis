@@ -42,14 +42,6 @@ type Snapshot = {
 const formatBizNo = (v: string) =>
   /^\d{10}$/.test(v) ? `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}` : v;
 
-const STATUS_TEXT: Record<PublicSourceCard["status"], string> = {
-  pending: "대기",
-  running: "수집 중",
-  done: "",
-  failed: "수집 실패",
-  skipped: "미수집",
-};
-
 export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [opened, setOpened] = useState<PublicSourceCard | null>(null);
@@ -135,7 +127,9 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
         {/* 자료 많은 순 정렬 — 동률은 카탈로그 순서 유지 (sort는 stable) */}
         {[...snap.items].sort((a, b) => b.itemCount - a.itemCount).map((s) => {
           const busy = s.status === "pending" || s.status === "running";
-          const clickable = s.itemCount > 0;
+          /* 0건도 눌러 볼 수 있게 (v7-2) — 왜 0건인지가 팝업에 들어 있다.
+             수집이 끝나기 전(pending·running)에만 잠근다 */
+          const clickable = !busy;
           return (
             <Card
               key={s.source}
@@ -244,16 +238,23 @@ export function PublicSourceDetail({
         </ul>
       ) : (
         <div>
-          {(card.note ?? card.error) && (
-            <p className="mt-0 mb-2 [font:var(--text-caption)] text-ink-3">
-              {card.note ?? card.error}
-            </p>
-          )}
+          {/* 0건이면 사유가 곧 내용이다 — 작게 흘리지 않고 본문으로 보여 준다 (v7-2) */}
           {card.items.length === 0 ? (
-            <p className="m-0 [font:var(--text-body3)] text-ink-3">
-              수집된 원본이 없어요.
-            </p>
+            <div className="rounded-[var(--radius-m)] bg-surface-3 px-4 py-3.5">
+              <p className="m-0 [font:var(--text-body3)] leading-relaxed text-ink-2">
+                {card.error ?? card.note ?? "조건에 맞는 자료가 없었어요. 그래서 0건이에요."}
+              </p>
+              <p className="mt-2 mb-0 [font:var(--text-caption)] text-ink-4">
+                수집이 0건이어도 진단은 그대로 진행돼요 — 올려주신 자료로 판정합니다.
+              </p>
+            </div>
           ) : (
+            <>
+              {(card.note ?? card.error) && (
+                <p className="mt-0 mb-2 [font:var(--text-caption)] text-ink-3">
+                  {card.note ?? card.error}
+                </p>
+              )}
             <ul className="ax-scrollbar-none m-0 flex max-h-[46vh] list-none flex-col gap-2 overflow-y-auto p-0">
               {card.items.map((it, i) => (
                 <li
@@ -284,7 +285,8 @@ export function PublicSourceDetail({
                   )}
                 </li>
               ))}
-            </ul>
+              </ul>
+            </>
           )}
         </div>
       )}
