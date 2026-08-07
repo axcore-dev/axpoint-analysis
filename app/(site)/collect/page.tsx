@@ -36,8 +36,7 @@ const REVIEW_STEP_LABELS = ["자료 확인", "사용 프로그램"];
 const COLLECT_MESSAGES = [
   "공개 데이터를 모으고 있어요",
   "올려주신 자료를 읽고 있어요",
-  "8대 영역으로 나누고 있어요",
-  "개인 정보를 가리고 있어요",
+  "업무 영역으로 나누고 있어요",
 ];
 
 /** 제출 후 판정 로딩 문구 (기존 문구 유지) */
@@ -45,17 +44,15 @@ const CLASSIFY_MESSAGES = ["자료를 분석하고 있어요", "분석된 점수
 
 /* v5 — 제조기업 대표 사내 프로그램 예시 확장 (2026-08-05 사용자 승인). '없음'은 항상 마지막(배타 토글) */
 const SYSTEM_OPTIONS = [
-  "ERP",
+  "ERP(그룹웨어)",
   "MES",
   "WMS",
   "회계SW",
-  "PLS",
-  "PLM",
+  "PLS/PLM",
   "POP",
   "CAD",
   "SCADA·PLC",
   "QMS",
-  "그룹웨어",
   "없음",
 ];
 
@@ -465,7 +462,7 @@ export default function CollectPage() {
       <RouteLoading
         messages={CLASSIFY_MESSAGES}
         /* 47문항 판정 + 영역 판정 + 종합 서사가 이어 도는 구간이다. 실측 2~3분(자료 33건 기준) */
-        hint="보통 2~5분 정도 걸려요"
+        hint="약 5분 정도 소요될 수 있어요."
       />
     );
 
