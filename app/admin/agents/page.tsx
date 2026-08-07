@@ -495,34 +495,43 @@ export default function AdminAgentsPage() {
                       </option>
                     ))}
                   </select>
-                  {selected.versions.length > 0 && (
-                    <select
-                      value=""
-                      disabled={busy}
-                      onChange={(e) => {
-                        const version = Number(e.target.value);
-                        if (!version) return;
+                  {/* 버전 — 코드 기본값이 v0이다. 지금 무엇이 도는지가 늘 보여야 해서
+                      선택값을 활성 버전에 맞춰 둔다(고를 것이 없어도 '사용 중'은 읽힌다) */}
+                  <select
+                    value={selected.usingDefault ? 0 : (selected.activeVersion ?? 0)}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const version = Number(e.target.value);
+                      // v0 = 코드 기본값 — 저장본을 모두 내리는 것이라 되돌리기가 아니라 삭제다
+                      if (version === 0) {
                         void run(
-                          () =>
-                            api(`/api/admin/prompts/${selected.key}/activate`, {
-                              method: "POST",
-                              body: JSON.stringify({ version }),
-                            }),
-                          `v${version}으로 되돌렸어요`,
+                          () => api(`/api/admin/prompts/${selected.key}`, { method: "DELETE" }),
+                          "v0(코드 기본값)으로 되돌렸어요",
                         );
-                      }}
-                      style={selectStyle}
-                      aria-label="이전 버전으로 되돌리기"
-                    >
-                      <option value="">이전 버전으로…</option>
-                      {selected.versions.map((v) => (
-                        <option key={v.version} value={v.version}>
-                          v{v.version} · {v.createdAt.slice(0, 10)}
-                          {v.isActive ? " (사용 중)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  )}
+                        return;
+                      }
+                      void run(
+                        () =>
+                          api(`/api/admin/prompts/${selected.key}/activate`, {
+                            method: "POST",
+                            body: JSON.stringify({ version }),
+                          }),
+                        `v${version}으로 되돌렸어요`,
+                      );
+                    }}
+                    style={selectStyle}
+                    aria-label="사용할 지시문 버전"
+                  >
+                    <option value={0}>
+                      v0 · 코드 기본값{selected.usingDefault ? " (사용 중)" : ""}
+                    </option>
+                    {selected.versions.map((v) => (
+                      <option key={v.version} value={v.version}>
+                        v{v.version} · {v.createdAt.slice(0, 10)}
+                        {v.isActive ? " (사용 중)" : ""}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* 자리표시자 — 지시문에 {이름} 그대로 쓰면 실행 시 값으로 치환된다 */}
@@ -575,21 +584,7 @@ export default function AdminAgentsPage() {
                   >
                     편집 취소
                   </Button>
-                  {!selected.usingDefault && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={busy}
-                      onClick={() =>
-                        void run(
-                          () => api(`/api/admin/prompts/${selected.key}`, { method: "DELETE" }),
-                          "코드 기본값으로 되돌렸어요",
-                        )
-                      }
-                    >
-                      기본값으로
-                    </Button>
-                  )}
+                  {/* '기본값으로' 버튼은 두지 않는다 — 위 버전 드롭다운의 v0이 같은 일을 한다 */}
                 </div>
 
                 {/* 도구·출력 규격 — 그래프 에이전트 노드에만 있다 */}

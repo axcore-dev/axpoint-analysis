@@ -53,13 +53,14 @@ export type CanvasPrompt = {
   usingDefault: boolean;
   activeVersion: number | null;
 };
-/** 서버 PROMPT_FLOW — 메인 하나와 그에 매달린 서브들 */
+/** 서버 PROMPT_FLOW — 메인 하나와 그에 매달린 서브들. uses는 코드가 넣어 주는 자료 */
 export type FlowMain = {
   key: string;
   mark: string;
   desc: string;
   after: string[];
-  subs: { key: string; role: string }[];
+  uses?: string[];
+  subs: { key: string; role: string; uses?: string[] }[];
 };
 
 /** 메인별 색 — 파이프라인 순서를 따라간다 */
@@ -73,29 +74,29 @@ const MAIN_TONE: Record<string, string> = {
 };
 const FALLBACK_TONE = "#6B7684";
 
-const COL_W = 372;
+const COL_W = 400;
 /** 같은 단계의 메인끼리 세로 간격 */
 const ROW_GAP = 56;
 const MAIN_W = 232;
 const MAIN_H = 92;
-/** 왼쪽 통로 — 서브로 내려가는 연결선이 도구 위를 지나지 않도록 비워 둔다 */
+/** 왼쪽 통로 — 서브로 내려가는 연결선이 도구·자료 위를 지나지 않도록 비워 둔다 */
 const LANE = 44;
-const SUB_W = MAIN_W - LANE;
-const SUB_H = 60;
-const SUB_GAP = 12;
-/** 메인 아래 첫 줄(도구 또는 서브)까지의 간격 */
-const BELOW_MAIN = 30;
-/** 도구 줄과 서브 줄 사이 */
-const TOOLS_TO_SUBS = 26;
+const SUB_W = MAIN_W;
+const SUB_H = 58;
+/** 서브 하나(카드+자료 줄) 다음까지의 간격 */
+const SUB_GAP = 18;
+/** 카드 아래 첫 자료 줄까지의 간격 */
+const BELOW_CARD = 26;
 
-/* 하위 노드는 2열로 깐다 — 한 줄로 세우면 도구 여덟 개짜리 노드가 세로로 400px을 먹어
+/* 자료·도구는 2열로 깐다 — 한 줄로 세우면 도구 여덟 개짜리 노드가 세로로 400px을 먹어
    전체 보기가 화면을 확 줄여 버린다(글자가 안 읽힌다) */
 const PILL_COLS = 2;
 const PILL_GAP_X = 8;
-const PILL_W = (MAIN_W - LANE - PILL_GAP_X) / 2;
+const PILL_W = (MAIN_W - PILL_GAP_X) / 2;
 const PILL_H = 30;
 const PILL_GAP_Y = 6;
 
+/** 알약은 통로 오른쪽부터 깐다 — 통로는 서브로 내려가는 연결선 몫이다 */
 const pillX = (i: number) => LANE + (i % PILL_COLS) * (PILL_W + PILL_GAP_X);
 const pillRow = (i: number) => Math.floor(i / PILL_COLS);
 const pillBlockH = (n: number) => (n === 0 ? 0 : Math.ceil(n / PILL_COLS) * (PILL_H + PILL_GAP_Y));
@@ -107,6 +108,8 @@ type MainData = {
   tone: string;
   desc: string;
   toolCount: number;
+  /** 아래 매단 알약 수 — 도구가 있으면 도구 수, 없으면 코드가 넣어 주는 자료 수 */
+  useCount: number;
   apiCount: number;
   model: string;
   version: string;
@@ -187,7 +190,7 @@ function MainNode({ data }: NodeProps) {
             {d.apiCount > 0 && <span>· 외부 API {d.apiCount}</span>}
           </>
         ) : (
-          <span>단일 호출</span>
+          <span>단일 호출 · 자료 {d.useCount}</span>
         )}
         <span style={{ marginLeft: "auto", font: "11px/1.4 var(--font-mono)", color: "var(--fg-quaternary)" }}>
           {d.version}
@@ -203,6 +206,7 @@ type SubData = {
   role: string;
   tone: string;
   toolCount: number;
+  useCount: number;
   version: string;
   selected: boolean;
 };
@@ -252,7 +256,7 @@ function SubNode({ data }: NodeProps) {
           {d.slug}
         </span>
         <span style={{ flex: "none", font: "10px/1.4 var(--font-sans)", color: "var(--fg-quaternary)" }}>
-          {d.toolCount > 0 ? `도구 ${d.toolCount}` : "단일 호출"} · {d.version}
+          {d.toolCount > 0 ? `도구 ${d.toolCount}` : `자료 ${d.useCount}`} · {d.version}
         </span>
       </div>
     </div>
@@ -358,36 +362,53 @@ export function AgentCanvas({
     const toolsOf = (key: string) => nodeByPrompt.get(key)?.tools ?? [];
     const versionOf = (p: CanvasPrompt) => (p.usingDefault ? "기본값" : `v${p.activeVersion}`);
 
+    /** 이 지시문이 읽는 것 — 에이전트는 도구 목록, 단일 호출은 코드가 넣어 주는 자료 */
+    const pillsOf = (key: string, uses?: string[]) => {
+      const tools = toolsOf(key);
+      if (tools.length)
+        return tools.map((t) => ({
+          slug: t,
+          title: toolMeta[t]?.label ?? t,
+          external: Boolean(toolMeta[t]?.external),
+        }));
+      return (uses ?? []).map((u) => ({ slug: "", title: u, external: false }));
+    };
+    /** 위에 매다는 외부 API — 도구 중 외부를 부르는 것들의 출처 이름 */
+    const apisOf = (key: string) => [
+      ...new Set(toolsOf(key).filter((t) => toolMeta[t]?.external).map((t) => toolMeta[t].source)),
+    ];
+
+    /* 카드 한 장이 차지하는 높이 — 위(외부 API)와 아래(도구·자료)를 따로 센다.
+       위쪽은 카드 y보다 앞이라 다음 무리를 밀어내지 않고, 앞 무리와 부딪히지 않게 미리 띄운다 */
+    const topH = (key: string) => {
+      const n = apisOf(key).length;
+      return n === 0 ? 0 : 46 + pillBlockH(n);
+    };
+    const bodyH = (key: string, uses: string[] | undefined, cardH: number) => {
+      const n = pillsOf(key, uses).length;
+      return cardH + (n ? BELOW_CARD + pillBlockH(n) : 0);
+    };
+
     const depth = depths(flow);
     const ordered = [...flow].sort(
       (a, b) => (depth.get(a.key) ?? 0) - (depth.get(b.key) ?? 0) || flow.indexOf(a) - flow.indexOf(b),
     );
 
     /* 열은 진단 순서(깊이), 같은 열의 메인은 자기 무리 높이만큼 세로로 쌓는다.
-       판정에서 갈라지는 서사·추천·검증이 한 열에 나란히 서야 '여기서 셋으로 갈라진다'가 보인다.
-       무리 높이 = 위 API 줄 + 메인 + 도구 줄 + 서브 줄 */
-    const clusterTop = (m: FlowMain) => {
-      const apis = new Set(
-        toolsOf(m.key).filter((t) => toolMeta[t]?.external).map((t) => toolMeta[t].source),
-      ).size;
-      return apis === 0 ? 0 : 46 + pillBlockH(apis);
-    };
-    const clusterBottom = (m: FlowMain) => {
-      const tools = toolsOf(m.key).length;
-      const subs = m.subs.filter((s) => byKey.has(s.key)).length;
-      return (
-        MAIN_H +
-        BELOW_MAIN +
-        pillBlockH(tools) +
-        (subs ? (tools ? TOOLS_TO_SUBS : 0) + subs * (SUB_H + SUB_GAP) - SUB_GAP : 0)
+       판정에서 갈라지는 서사·추천·검증이 한 열에 나란히 서야 '여기서 셋으로 갈라진다'가 보인다 */
+    const subsOf = (m: FlowMain) => m.subs.filter((s) => byKey.has(s.key));
+    const clusterBottom = (m: FlowMain) =>
+      bodyH(m.key, m.uses, MAIN_H) +
+      subsOf(m).reduce(
+        (h, s) => h + SUB_GAP + topH(s.key) + bodyH(s.key, s.uses, SUB_H),
+        subsOf(m).length ? SUB_GAP : 0,
       );
-    };
 
     const pos = new Map<string, { x: number; y: number }>();
     const colCursor = new Map<number, number>();
     for (const m of ordered) {
       const d = depth.get(m.key) ?? 0;
-      const y = (colCursor.get(d) ?? 0) + clusterTop(m);
+      const y = (colCursor.get(d) ?? 0) + topH(m.key);
       pos.set(m.key, { x: d * COL_W, y });
       colCursor.set(d, y + clusterBottom(m) + ROW_GAP);
     }
@@ -395,16 +416,64 @@ export function AgentCanvas({
     const out: Node[] = [];
     const links: Edge[] = [];
 
+    /** 카드에 매달리는 알약들 — 위=외부 API(점선·파랑), 아래=도구·자료(점선·회색) */
+    const attachPills = (key: string, uses: string[] | undefined, x: number, y: number, cardH: number) => {
+      const apis = apisOf(key);
+      const apiRows = Math.ceil(apis.length / PILL_COLS);
+      apis.forEach((src, i) => {
+        const id = `${key}::api::${src}`;
+        out.push({
+          id,
+          type: "pill",
+          draggable: false,
+          selectable: false,
+          position: { x: x + pillX(i), y: y - 46 - (apiRows - pillRow(i)) * (PILL_H + PILL_GAP_Y) },
+          data: { title: src, slug: "", role: "api" } satisfies PillData as unknown as Record<string, unknown>,
+        });
+        links.push({
+          id: `${id}->${key}`,
+          source: id,
+          target: `p::${key}`,
+          targetHandle: "api",
+          style: { stroke: "var(--line-brand)", strokeWidth: 1.2, strokeDasharray: "4 4" },
+        });
+      });
+
+      const pills = pillsOf(key, uses);
+      const top = y + cardH + BELOW_CARD;
+      pills.forEach((pill, i) => {
+        const id = `${key}::use::${pill.slug || pill.title}`;
+        out.push({
+          id,
+          type: "pill",
+          draggable: false,
+          selectable: false,
+          position: { x: x + pillX(i), y: top + pillRow(i) * (PILL_H + PILL_GAP_Y) },
+          data: {
+            title: pill.title,
+            slug: pill.slug,
+            role: pill.external ? "api" : "tool",
+          } satisfies PillData as unknown as Record<string, unknown>,
+        });
+        links.push({
+          id: `${key}->${id}`,
+          source: `p::${key}`,
+          sourceHandle: "tools",
+          target: id,
+          style: {
+            stroke: pill.external ? "var(--line-brand)" : "var(--grey-300)",
+            strokeWidth: 1.2,
+            strokeDasharray: "4 4",
+          },
+        });
+      });
+    };
+
     for (const m of ordered) {
       const p = byKey.get(m.key);
       if (!p) continue;
       const tone = MAIN_TONE[m.key] ?? FALLBACK_TONE;
       const { x, y } = pos.get(m.key)!;
-
-      const tools = toolsOf(m.key);
-      const apis = [
-        ...new Set(tools.filter((t) => toolMeta[t]?.external).map((t) => toolMeta[t].source)),
-      ];
 
       out.push({
         id: `p::${m.key}`,
@@ -416,65 +485,21 @@ export function AgentCanvas({
           mark: m.mark,
           tone,
           desc: m.desc,
-          toolCount: tools.length,
-          apiCount: apis.length,
+          toolCount: toolsOf(m.key).length,
+          useCount: pillsOf(m.key, m.uses).length,
+          apiCount: apisOf(m.key).length,
           model: p.model,
           version: versionOf(p),
           selected: selectedKey === m.key,
         } satisfies MainData as unknown as Record<string, unknown>,
       });
+      attachPills(m.key, m.uses, x, y, MAIN_H);
 
-      // 위 — 외부 API (에이전트에 가까운 줄이 첫 줄이 되도록 아래에서 위로 쌓는다)
-      const apiRows = Math.ceil(apis.length / PILL_COLS);
-      apis.forEach((src, i) => {
-        const id = `${m.key}::api::${src}`;
-        out.push({
-          id,
-          type: "pill",
-          draggable: false,
-          selectable: false,
-          position: { x: x + pillX(i), y: y - 46 - (apiRows - pillRow(i)) * (PILL_H + PILL_GAP_Y) },
-          data: { title: src, slug: "", role: "api" } satisfies PillData as unknown as Record<string, unknown>,
-        });
-        links.push({
-          id: `${id}->${m.key}`,
-          source: id,
-          target: `p::${m.key}`,
-          targetHandle: "api",
-          style: { stroke: "var(--line-brand)", strokeWidth: 1.2, strokeDasharray: "4 4" },
-        });
-      });
-
-      // 아래 — 도구
-      const toolTop = y + MAIN_H + BELOW_MAIN;
-      tools.forEach((t, i) => {
-        const id = `${m.key}::tool::${t}`;
-        out.push({
-          id,
-          type: "pill",
-          draggable: false,
-          selectable: false,
-          position: { x: x + pillX(i), y: toolTop + pillRow(i) * (PILL_H + PILL_GAP_Y) },
-          data: {
-            title: toolMeta[t]?.label ?? t,
-            slug: t,
-            role: "tool",
-          } satisfies PillData as unknown as Record<string, unknown>,
-        });
-        links.push({
-          id: `${m.key}->${id}`,
-          source: `p::${m.key}`,
-          sourceHandle: "tools",
-          target: id,
-          style: { stroke: "var(--grey-300)", strokeWidth: 1.2, strokeDasharray: "4 4" },
-        });
-      });
-
-      // 더 아래 — 서브 지시문. 왼쪽 통로를 타고 내려가 하나씩 갈라진다
-      let subY = toolTop + pillBlockH(tools.length) + (tools.length ? TOOLS_TO_SUBS : 0);
-      for (const s of m.subs) {
-        const sp = byKey.get(s.key);
-        if (!sp) continue;
+      // 아래 — 서브 지시문. 왼쪽 통로를 타고 내려가 하나씩 갈라진다
+      let subY = y + bodyH(m.key, m.uses, MAIN_H) + SUB_GAP;
+      for (const s of subsOf(m)) {
+        const sp = byKey.get(s.key)!;
+        subY += topH(s.key);
         out.push({
           id: `p::${s.key}`,
           type: "sub",
@@ -485,10 +510,13 @@ export function AgentCanvas({
             role: s.role,
             tone,
             toolCount: toolsOf(s.key).length,
+            useCount: pillsOf(s.key, s.uses).length,
             version: versionOf(sp),
             selected: selectedKey === s.key,
           } satisfies SubData as unknown as Record<string, unknown>,
         });
+        /* 알약은 통로 오른쪽부터 깔리므로 서브 카드(통로만큼 들여쓴)보다 왼쪽 기준이 같다 */
+        attachPills(s.key, s.uses, x, subY, SUB_H);
         links.push({
           id: `${m.key}~${s.key}`,
           source: `p::${m.key}`,
@@ -512,7 +540,7 @@ export function AgentCanvas({
             strokeDasharray: s.role === "파일럿" ? "5 4" : undefined,
           },
         });
-        subY += SUB_H + SUB_GAP;
+        subY += bodyH(s.key, s.uses, SUB_H) + SUB_GAP;
       }
 
       /* 메인 사이 흐름 — 진단이 실제로 지나가는 선이다.
