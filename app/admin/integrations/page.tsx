@@ -38,7 +38,7 @@ const ISSUE_URL: Record<string, string> = {
   procurement: "https://www.data.go.kr/tcs/dss/selectApiDataDetailView.do?publicDataPk=15129394",
   cert_innobiz: "https://portal.smes.go.kr/home/cs/opndata/UI_USR_L_210",
   cert_mainbiz: "https://portal.smes.go.kr/home/cs/opndata/UI_USR_L_210",
-  ntis: "https://www.ntis.go.kr/rndopen/openApi/public_data_list.do",
+  ntis: "https://www.ntis.go.kr/rndopen/api/mng/apiMain.do",
   tavily: "https://app.tavily.com/home",
   resend: "https://resend.com/api-keys",
   openai: "https://platform.openai.com/api-keys",
