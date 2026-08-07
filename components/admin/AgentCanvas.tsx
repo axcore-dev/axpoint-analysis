@@ -16,17 +16,16 @@ import {
 import "@xyflow/react/dist/style.css";
 
 /**
- * 멀티 에이전트 캔버스 — n8n처럼 '에이전트 하나'를 중심에 두고,
- * 그 에이전트가 붙어 있는 것들을 위아래 하위 노드로 매단다 (작업요청 v6-1 스케치).
+ * 멀티 에이전트 캔버스 — 진단이 실제로 흐르는 순서를 왼쪽에서 오른쪽으로 세운다.
  *
- *        [외부 API]        ← 위: 이 에이전트가 부르는 외부 서비스
- *            │
- *        [에이전트]  ──▶   ← 가운데: 좌→우로 데이터가 흐른다
- *            │
- *        [도구] [도구]     ← 아래: 이 에이전트가 쓸 수 있는 도구
+ *   [자료 읽기] ─▶ [공개데이터] ─▶ [판정] ─▶ [결과 서술]        [파일럿]
+ *      지시문          지시문        지시문      지시문           지시문
  *
- * 좌표는 그래프 JSON에 없다. 위상 깊이로 순서를 정하되 에이전트마다 열을 하나씩 주어
- * 하위 노드가 옆 열과 겹치지 않게 한다.
+ * 여기 놓인 노드 하나가 곧 편집 가능한 지시문 하나다 — 이 화면에 없는 지시문은 없다.
+ * 도구를 쓰는 에이전트는 아래에 도구를, 위에 그 도구가 부르는 외부 API를 매단다.
+ *
+ * 단계·순서의 원본은 서버(PROMPT_STAGES)다. 그래프 엣지는 파일럿 실행 순서라 운영 동선과
+ * 어긋나므로 여기서 그리지 않는다 — 화면이 '설계도'를 '실제'인 것처럼 보여 주면 안 된다.
  */
 
 export type GraphNode = {
@@ -42,131 +41,170 @@ export type GraphNode = {
 export type GraphDef = { nodes: GraphNode[]; edges: { from: string; to: string }[] };
 export type ToolMeta = Record<string, { label: string; source: string; external: boolean }>;
 
-const TYPE_LABEL: Record<GraphNode["type"], string> = {
-  agent: "에이전트",
-  code: "코드",
-  hitl: "사람 확인",
+/** 캔버스가 그리는 지시문 한 칸 — 어드민 프롬프트 목록 항목에서 필요한 것만 추린 모양 */
+export type CanvasPrompt = {
+  key: string;
+  label: string;
+  provider: string;
+  model: string;
+  usingDefault: boolean;
+  activeVersion: number | null;
 };
+export type Stage = { id: string; label: string; desc: string; keys: string[] };
 
-/** 노드 성격 배지 — 아이콘 의존 없이 글자로 (색은 파이프라인 순서를 따라간다) */
-const NODE_MARK: Record<string, { text: string; tone: string }> = {
-  collect: { text: "수집", tone: "#0A50FF" },
-  classify: { text: "분류", tone: "#7A5AF8" },
-  judge: { text: "판정", tone: "#0F9D58" },
-  narrative: { text: "서사", tone: "#F59E0B" },
-  tasks: { text: "추천", tone: "#EC4899" },
-  review: { text: "검증", tone: "#EF4444" },
+/** 단계별 색 — 파이프라인 순서를 따라간다. 파일럿은 실행에 안 쓰이므로 회색 */
+const STAGE_TONE: Record<string, string> = {
+  ingest: "#7A5AF8",
+  public: "#0A50FF",
+  judge: "#0F9D58",
+  narrate: "#F59E0B",
+  pilot: "#6B7684",
 };
 
 const COL_W = 330;
-const AGENT_W = 232;
-/* 하위 노드는 2열로 깐다 — 한 줄로 세우면 도구 8개짜리 노드가 세로로 400px을 먹어
-   fitView가 전체를 확 줄여 버린다(글자가 안 읽힌다) */
-const PILL_COLS = 2;
-const PILL_W = 148;
-const PILL_H = 34;
-const PILL_GAP_X = 10;
-const PILL_GAP_Y = 8;
-const AGENT_Y = 0;
-const AGENT_H = 92;
-/** 같은 깊이의 형제를 세로로 어긋내는 간격 */
-const ROW_H = 250;
+const CARD_W = 248;
+const CARD_H = 78;
+/** 카드 사이 세로 간격 — 도구가 달리면 그만큼 더 벌어진다 */
+const CARD_GAP = 22;
+const HEAD_Y = 0;
+const FIRST_CARD_Y = 96;
 
-/** 하위 노드 i번째의 상대 좌표 — 위(API)는 아래에서 위로 쌓는다 */
+/* 하위 노드는 2열로 깐다 — 한 줄로 세우면 도구 8개짜리 노드가 세로로 400px을 먹어
+   전체 보기가 화면을 확 줄여 버린다(글자가 안 읽힌다).
+   두 칸 폭이 카드 폭과 정확히 맞아떨어져야 카드 밖으로 삐져나오지 않는다 */
+const PILL_COLS = 2;
+const PILL_GAP_X = 8;
+const PILL_W = (CARD_W - PILL_GAP_X) / 2;
+const PILL_H = 30;
+const PILL_GAP_Y = 6;
+
 const pillX = (i: number) =>
-  (AGENT_W - (PILL_COLS * PILL_W + (PILL_COLS - 1) * PILL_GAP_X)) / 2 +
+  (CARD_W - (PILL_COLS * PILL_W + (PILL_COLS - 1) * PILL_GAP_X)) / 2 +
   (i % PILL_COLS) * (PILL_W + PILL_GAP_X);
 const pillRow = (i: number) => Math.floor(i / PILL_COLS);
+const pillBlockH = (n: number) =>
+  n === 0 ? 0 : Math.ceil(n / PILL_COLS) * (PILL_H + PILL_GAP_Y) + 14;
 
-type AgentData = {
+type StageHeadData = { label: string; desc: string; count: number; tone: string };
+
+function StageHeadNode({ data }: NodeProps) {
+  const d = data as unknown as StageHeadData;
+  return (
+    <div style={{ width: CARD_W, pointerEvents: "none" }}>
+      <Handle type="target" position={Position.Left} style={{ opacity: 0, top: 18 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0, top: 18 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span
+          aria-hidden
+          style={{ width: 8, height: 8, borderRadius: 999, background: d.tone, flex: "none" }}
+        />
+        <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>{d.label}</strong>
+        <span style={{ font: "var(--text-caption)", color: "var(--fg-quaternary)" }}>{d.count}</span>
+      </div>
+      <p
+        style={{
+          margin: "4px 0 0",
+          font: "var(--text-caption)",
+          color: "var(--fg-tertiary)",
+          lineHeight: 1.45,
+        }}
+      >
+        {d.desc}
+      </p>
+    </div>
+  );
+}
+
+type PromptCardData = {
   title: string;
-  /** 영문 식별자 — 로그·코드에서 쓰는 이름이라 함께 보여준다 (v6-1) */
   slug: string;
-  mark: { text: string; tone: string };
-  kind: GraphNode["type"];
+  tone: string;
+  /** 도구를 쓰는 에이전트인지, 코드가 부르는 단일 호출인지 */
+  kind: "agent" | "single";
   toolCount: number;
-  apiCount: number;
+  model: string;
+  version: string;
   selected: boolean;
 };
 
-function AgentNode({ data }: NodeProps) {
-  const d = data as unknown as AgentData;
+function PromptCardNode({ data }: NodeProps) {
+  const d = data as unknown as PromptCardData;
   return (
     <div
       style={{
-        width: AGENT_W,
-        borderRadius: 14,
-        padding: "12px 14px",
-        border: `1.5px solid ${d.selected ? d.mark.tone : "var(--line-default)"}`,
+        width: CARD_W,
+        minHeight: CARD_H,
+        boxSizing: "border-box",
+        borderRadius: 12,
+        padding: "10px 12px",
+        border: `1.5px solid ${d.selected ? d.tone : "var(--line-default)"}`,
         background: "var(--bg-elevated)",
-        boxShadow: d.selected ? `0 0 0 3px ${d.mark.tone}22` : "var(--shadow-1)",
+        boxShadow: d.selected ? `0 0 0 3px ${d.tone}22` : "var(--shadow-1)",
         cursor: "pointer",
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       <Handle type="target" id="api" position={Position.Top} style={{ opacity: 0 }} />
       <Handle type="source" id="tools" position={Position.Bottom} style={{ opacity: 0 }} />
 
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <span
-          aria-hidden
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+        <strong
           style={{
-            flex: "none",
-            width: 32,
-            height: 32,
-            borderRadius: 9,
-            background: `${d.mark.tone}14`,
-            color: d.mark.tone,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            font: "600 12px/1 var(--font-sans)",
+            minWidth: 0,
+            flex: 1,
+            font: "var(--text-label-s)",
+            color: "var(--fg-primary)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
-          {d.mark.text}
-        </span>
-        <span style={{ minWidth: 0, flex: 1 }}>
-          <strong
-            style={{
-              display: "block",
-              font: "var(--text-label-s)",
-              color: "var(--fg-primary)",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {d.title}
-          </strong>
-          <span
-            style={{
-              display: "block",
-              font: "11px/1.5 var(--font-mono)",
-              color: "var(--fg-quaternary)",
-            }}
-          >
-            {d.slug}
-          </span>
+          {d.title}
+        </strong>
+        <span
+          style={{
+            flex: "none",
+            font: "10px/1.4 var(--font-sans)",
+            color: d.kind === "agent" ? d.tone : "var(--fg-quaternary)",
+          }}
+        >
+          {d.kind === "agent" ? `도구 ${d.toolCount}` : "단일 호출"}
         </span>
       </div>
       <div
         style={{
-          marginTop: 8,
+          marginTop: 3,
+          font: "11px/1.5 var(--font-mono)",
+          color: "var(--fg-quaternary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {d.slug}
+      </div>
+      <div
+        style={{
+          marginTop: 6,
           display: "flex",
+          alignItems: "center",
           gap: 6,
           font: "var(--text-caption)",
           color: "var(--fg-tertiary)",
         }}
       >
-        {d.kind === "agent" ? (
-          <>
-            <span>도구 {d.toolCount}</span>
-            {d.apiCount > 0 && <span>· 외부 API {d.apiCount}</span>}
-          </>
-        ) : (
-          <span>{TYPE_LABEL[d.kind]}</span>
-        )}
+        <span
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+          }}
+        >
+          {d.model}
+        </span>
+        <span style={{ flex: "none", color: "var(--fg-quaternary)" }}>· {d.version}</span>
       </div>
     </div>
   );
@@ -184,9 +222,9 @@ function PillNode({ data }: NodeProps) {
         height: PILL_H,
         display: "flex",
         alignItems: "center",
-        gap: 6,
-        padding: "0 8px",
-        borderRadius: 9,
+        gap: 5,
+        padding: "0 7px",
+        borderRadius: 8,
         border: `1px dashed ${isApi ? "var(--line-brand)" : "var(--line-default)"}`,
         background: isApi ? "var(--bg-brand-weak)" : "var(--bg-secondary)",
       }}
@@ -200,192 +238,181 @@ function PillNode({ data }: NodeProps) {
         aria-hidden
         style={{
           flex: "none",
-          width: 18,
-          height: 18,
-          borderRadius: 5,
+          width: 16,
+          height: 16,
+          borderRadius: 4,
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          font: "600 9px/1 var(--font-sans)",
+          font: "600 8px/1 var(--font-sans)",
           background: isApi ? "var(--fg-brand)" : "var(--grey-300)",
           color: isApi ? "#fff" : "var(--fg-secondary)",
         }}
       >
         {isApi ? "API" : "T"}
       </span>
-      <span style={{ minWidth: 0 }}>
-        <span
-          style={{
-            display: "block",
-            font: "var(--text-caption)",
-            color: isApi ? "var(--fg-brand)" : "var(--fg-secondary)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {d.title}
-        </span>
-        {d.slug && (
-          <span
-            style={{
-              display: "block",
-              font: "10px/1.3 var(--font-mono)",
-              color: "var(--fg-quaternary)",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-          >
-            {d.slug}
-          </span>
-        )}
+      <span
+        style={{
+          minWidth: 0,
+          font: "var(--text-caption)",
+          color: isApi ? "var(--fg-brand)" : "var(--fg-secondary)",
+          whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        }}
+        title={d.slug || d.title}
+      >
+        {d.title}
       </span>
     </div>
   );
 }
 
-const nodeTypes = { agent: AgentNode, pill: PillNode };
-
-/** 위상 깊이(가장 긴 선행 경로) — 실행 순서대로 좌→우 배치하기 위한 값 */
-function depths(graph: GraphDef): Map<string, number> {
-  const depth = new Map<string, number>(graph.nodes.map((n) => [n.id, 0]));
-  for (let i = 0; i < graph.nodes.length; i += 1) {
-    for (const e of graph.edges) {
-      const d = (depth.get(e.from) ?? 0) + 1;
-      if (d > (depth.get(e.to) ?? 0)) depth.set(e.to, d);
-    }
-  }
-  return depth;
-}
+const nodeTypes = { stage: StageHeadNode, prompt: PromptCardNode, pill: PillNode };
 
 export function AgentCanvas({
   graph,
+  prompts,
+  stages,
   toolMeta,
-  selectedId,
+  selectedKey,
   onSelect,
-  height = 520,
+  height = 620,
 }: {
   graph: GraphDef;
+  prompts: CanvasPrompt[];
+  stages: Stage[];
   toolMeta: ToolMeta;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  /** 선택된 지시문 키 — 노드 강조에만 쓴다 */
+  selectedKey: string | null;
+  onSelect: (promptKey: string) => void;
   height?: number;
 }) {
+  /* 열 높이가 제각각이라 전체 보기를 하면 가장 긴 열에 맞춰 축소된다 —
+     캔버스를 그 열 높이에 맞춰 두면 남는 여백 없이 글자가 가장 크게 보인다 */
   const { nodes, edges } = useMemo(() => {
-    const depth = depths(graph);
-    /* 에이전트마다 열을 하나씩 준다 — 같은 깊이의 노드가 세로로 겹치면
-       그 아래 매단 도구 노드끼리 부딪힌다 */
-    const ordered = [...graph.nodes].sort(
-      (a, b) =>
-        (depth.get(a.id) ?? 0) - (depth.get(b.id) ?? 0) ||
-        graph.nodes.indexOf(a) - graph.nodes.indexOf(b),
+    const byKey = new Map(prompts.map((p) => [p.key, p]));
+    /* 지시문 → 그래프 노드. 도구·외부 API는 그래프가 원본이라 여기서 끌어온다 */
+    const nodeByPrompt = new Map(
+      graph.nodes.filter((n) => n.promptKey).map((n) => [n.promptKey as string, n]),
     );
-    const colOf = new Map(ordered.map((n, i) => [n.id, i]));
-    /* 같은 깊이의 형제는 세로로 어긋나게 둔다 — 한 줄로 세우면 판정에서 갈라지는
-       세 갈래(서사·추천·검증)가 일렬 체인처럼 보인다 */
-    const rank = new Map<string, number>();
-    const seen = new Map<number, number>();
-    for (const n of ordered) {
-      const d = depth.get(n.id) ?? 0;
-      const k = seen.get(d) ?? 0;
-      seen.set(d, k + 1);
-      rank.set(n.id, k);
-    }
-    const yOf = (id: string) => AGENT_Y + (rank.get(id) ?? 0) * ROW_H;
 
     const out: Node[] = [];
     const links: Edge[] = [];
 
-    for (const n of ordered) {
-      const col = colOf.get(n.id) ?? 0;
+    stages.forEach((stage, col) => {
+      const tone = STAGE_TONE[stage.id] ?? "#6B7684";
       const x = col * COL_W;
-      const tools = n.tools ?? [];
-      const apis = [
-        ...new Set(tools.filter((t) => toolMeta[t]?.external).map((t) => toolMeta[t].source)),
-      ];
+      const keys = stage.keys.filter((k) => byKey.has(k));
 
       out.push({
-        id: n.id,
-        type: "agent",
-        position: { x, y: yOf(n.id) },
+        id: `stage::${stage.id}`,
+        type: "stage",
+        position: { x, y: HEAD_Y },
+        draggable: false,
+        selectable: false,
         data: {
-          title: n.label ?? n.id,
-          slug: n.id,
-          mark: NODE_MARK[n.id] ?? { text: TYPE_LABEL[n.type].slice(0, 2), tone: "#6B7684" },
-          kind: n.type,
-          toolCount: tools.length,
-          apiCount: apis.length,
-          selected: selectedId === n.id,
-        } satisfies AgentData as unknown as Record<string, unknown>,
+          label: stage.label,
+          desc: stage.desc,
+          count: keys.length,
+          tone,
+        } satisfies StageHeadData as unknown as Record<string, unknown>,
       });
 
-      // 위 — 외부 API (아래에서 위로 쌓아 에이전트에 가까운 줄이 첫 줄이 되게 한다)
-      const apiRows = Math.ceil(apis.length / PILL_COLS);
-      apis.forEach((src, i) => {
-        const id = `${n.id}::api::${src}`;
-        out.push({
-          id,
-          type: "pill",
-          draggable: false,
-          selectable: false,
-          position: {
-            x: x + pillX(i),
-            y: yOf(n.id) - 56 - (apiRows - pillRow(i)) * (PILL_H + PILL_GAP_Y),
-          },
-          data: { title: src, slug: "", role: "api" } satisfies PillData as unknown as Record<string, unknown>,
-        });
+      /* 단계 사이 화살표 — 파일럿은 운영 흐름에 끼어 있지 않으므로 이어 붙이지 않는다 */
+      const prev = stages[col - 1];
+      if (prev && stage.id !== "pilot" && prev.id !== "pilot")
         links.push({
-          id: `${id}->${n.id}`,
-          source: id,
-          target: n.id,
-          targetHandle: "api",
-          style: { stroke: "var(--line-brand)", strokeWidth: 1.2, strokeDasharray: "4 4" },
+          id: `${prev.id}=>${stage.id}`,
+          source: `stage::${prev.id}`,
+          target: `stage::${stage.id}`,
+          animated: true,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: "var(--grey-500)" },
+          style: { stroke: "var(--grey-500)", strokeWidth: 1.6 },
         });
-      });
 
-      // 아래 — 도구
-      tools.forEach((t, i) => {
-        const id = `${n.id}::tool::${t}`;
+      let y = FIRST_CARD_Y;
+      for (const key of keys) {
+        const p = byKey.get(key)!;
+        const node = nodeByPrompt.get(key);
+        const tools = node?.tools ?? [];
+        const apis = [
+          ...new Set(tools.filter((t) => toolMeta[t]?.external).map((t) => toolMeta[t].source)),
+        ];
+
+        // 위 — 외부 API (에이전트에 가까운 줄이 첫 줄이 되도록 아래에서 위로 쌓는다)
+        const apiRows = Math.ceil(apis.length / PILL_COLS);
+        const apiH = pillBlockH(apis.length);
+        y += apiH;
+
+        apis.forEach((src, i) => {
+          const id = `${key}::api::${src}`;
+          out.push({
+            id,
+            type: "pill",
+            draggable: false,
+            selectable: false,
+            position: { x: x + pillX(i), y: y - 12 - (apiRows - pillRow(i)) * (PILL_H + PILL_GAP_Y) },
+            data: { title: src, slug: "", role: "api" } satisfies PillData as unknown as Record<string, unknown>,
+          });
+          links.push({
+            id: `${id}->${key}`,
+            source: id,
+            target: `prompt::${key}`,
+            targetHandle: "api",
+            style: { stroke: "var(--line-brand)", strokeWidth: 1.1, strokeDasharray: "4 4" },
+          });
+        });
+
         out.push({
-          id,
-          type: "pill",
-          draggable: false,
-          selectable: false,
-          position: {
-            x: x + pillX(i),
-            y: yOf(n.id) + AGENT_H + 34 + pillRow(i) * (PILL_H + PILL_GAP_Y),
-          },
+          id: `prompt::${key}`,
+          type: "prompt",
+          position: { x, y },
           data: {
-            title: toolMeta[t]?.label ?? t,
-            slug: t,
-            role: "tool",
-          } satisfies PillData as unknown as Record<string, unknown>,
+            title: p.label,
+            slug: p.key,
+            tone,
+            kind: node?.type === "agent" ? "agent" : "single",
+            toolCount: tools.length,
+            model: p.model,
+            version: p.usingDefault ? "기본값" : `v${p.activeVersion}`,
+            selected: selectedKey === key,
+          } satisfies PromptCardData as unknown as Record<string, unknown>,
         });
-        links.push({
-          id: `${n.id}->${id}`,
-          source: n.id,
-          sourceHandle: "tools",
-          target: id,
-          style: { stroke: "var(--grey-300)", strokeWidth: 1.2, strokeDasharray: "4 4" },
-        });
-      });
-    }
 
-    // 에이전트 사이 흐름 — 진짜 데이터가 지나가는 선이라 실선 + 화살표로 구분한다
-    for (const e of graph.edges) {
-      links.push({
-        id: `${e.from}=>${e.to}`,
-        source: e.from,
-        target: e.to,
-        animated: true,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "var(--grey-500)" },
-        style: { stroke: "var(--grey-500)", strokeWidth: 1.8 },
-      });
-    }
+        // 아래 — 도구
+        tools.forEach((t, i) => {
+          const id = `${key}::tool::${t}`;
+          out.push({
+            id,
+            type: "pill",
+            draggable: false,
+            selectable: false,
+            position: {
+              x: x + pillX(i),
+              y: y + CARD_H + 12 + pillRow(i) * (PILL_H + PILL_GAP_Y),
+            },
+            data: {
+              title: toolMeta[t]?.label ?? t,
+              slug: t,
+              role: "tool",
+            } satisfies PillData as unknown as Record<string, unknown>,
+          });
+          links.push({
+            id: `${key}->${id}`,
+            source: `prompt::${key}`,
+            sourceHandle: "tools",
+            target: id,
+            style: { stroke: "var(--grey-300)", strokeWidth: 1.1, strokeDasharray: "4 4" },
+          });
+        });
+
+        y += CARD_H + pillBlockH(tools.length) + CARD_GAP;
+      }
+    });
 
     return { nodes: out, edges: links };
-  }, [graph, toolMeta, selectedId]);
+  }, [graph, prompts, stages, toolMeta, selectedKey]);
 
   return (
     <div style={{ height, borderRadius: "var(--radius-xl)", overflow: "hidden" }}>
@@ -394,10 +421,10 @@ export function AgentCanvas({
         edges={edges}
         nodeTypes={nodeTypes}
         onNodeClick={(_e, node) => {
-          if (node.type === "agent") onSelect(node.id);
+          if (node.type === "prompt") onSelect(node.id.replace("prompt::", ""));
         }}
         fitView
-        minZoom={0.3}
+        minZoom={0.25}
         proOptions={{ hideAttribution: true }}
         nodesConnectable={false}
         deleteKeyCode={null}

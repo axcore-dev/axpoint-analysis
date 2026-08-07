@@ -7,7 +7,8 @@ import { useAuth } from "@/components/auth/AuthContext";
 import { Button, Icons, type IconName } from "@/components/ui";
 
 /** 어드민 내비게이션 — 대시보드 · 회원 관리 · 진단 이력 · 외부 연동 · 멀티 에이전트 · 환경 관리
-    (지시문 전체 편집(/admin/prompts)은 멀티 에이전트 화면에서 링크로 진입한다) */
+    어드민 화면은 전부 여기에 있다. 내비에 없이 링크로만 들어가는 화면은 두지 않는다
+    — 지시문 편집이 그래서 안 보였고, 2026-08-07에 멀티 에이전트로 합쳤다 */
 const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "/admin", label: "대시보드", icon: "gauge" },
   { path: "/admin/users", label: "회원 관리", icon: "user" },

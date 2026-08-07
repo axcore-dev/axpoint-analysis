@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AgentCanvas, type GraphDef, type ToolMeta } from "@/components/admin/AgentCanvas";
+import {
+  AgentCanvas,
+  type CanvasPrompt,
+  type GraphDef,
+  type Stage,
+  type ToolMeta,
+} from "@/components/admin/AgentCanvas";
 import { FieldHelp, HelpExample } from "@/components/admin/FieldHelp";
 import { Badge, Button, Card, Loader, Modal } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -10,13 +16,14 @@ import { api } from "@/lib/api";
  * 멀티 에이전트 — 진단 파이프라인을 설정하는 화면 (어드민)
  *
  * 두 탭으로 나눈다.
- *  · 그래프 — 캔버스에서 에이전트와 데이터 흐름을 보고, 에이전트를 누르면 팝업에서
- *    도구·출력 규격·지시문·모델을 편집한다. 에이전트 위에는 그 에이전트가 부르는 외부 API를,
- *    아래에는 쓸 수 있는 도구를 하위 노드로 매단다(작업요청 v6-1). 키 등록은 '외부 연동' 화면이
- *    원본이라 여기서 하지 않는다 — 어디에 붙어 있는지만 보여준다.
+ *  · 그래프 — 진단이 흐르는 순서대로 단계를 세우고, 그 안에 **편집 가능한 지시문을 전부** 노드로 놓는다.
+ *    노드를 누르면 팝업에서 지시문·모델을 편집하고, 도구를 쓰는 에이전트면 도구·출력 규격도 함께 편집한다.
+ *    에이전트 위에는 그 에이전트가 부르는 외부 API를, 아래에는 쓸 수 있는 도구를 매단다(작업요청 v6-1).
+ *    키 등록은 '외부 연동' 화면이 원본이라 여기서 하지 않는다 — 어디에 붙어 있는지만 보여준다.
  *  · 실행 로그 — 노드 실행 이력·실패를 진단과 무관하게 최근 순으로 본다. 오류 확인은 여기서 한다.
  *
- * 그래프 구조(노드·엣지)는 서버(agent_graph)가 원본이다. 엣지 편집은 아직 열지 않는다 — 설계.md §7.
+ * 지시문 편집 화면(/admin/prompts)은 2026-08-07에 이 화면으로 합쳤다 — 링크로만 들어갈 수 있어
+ * 공개데이터 수집·요약 지시문이 어디서 고치는지 보이지 않았다. 지시문은 전부 이 캔버스에 있다.
  */
 type GraphRes = {
   active: { version: number; graph: GraphDef };
@@ -48,22 +55,15 @@ type LogRow = {
   error: string | null;
   createdAt: string;
 };
-type PromptItem = {
-  key: string;
-  label: string;
+type PromptItem = CanvasPrompt & {
+  desc: string;
+  vars: { name: string; desc: string }[];
+  guard: boolean;
   system: string;
-  usingDefault: boolean;
-  activeVersion: number | null;
-  provider: string;
-  model: string;
+  versions: { version: number; isActive: boolean; createdAt: string }[];
 };
 type Providers = Record<string, { label: string; models: string[] }>;
 
-const TYPE_LABEL: Record<"agent" | "code" | "hitl", string> = {
-  agent: "에이전트",
-  code: "코드",
-  hitl: "사람 확인",
-};
 const RUN_TONE: Record<string, string> = {
   succeeded: "var(--fg-success)",
   failed: "var(--fg-danger)",
@@ -77,12 +77,14 @@ export default function AdminAgentsPage() {
   const [tab, setTab] = useState<"graph" | "logs">("graph");
   const [graphRes, setGraphRes] = useState<GraphRes | null>(null);
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
+  const [stages, setStages] = useState<Stage[]>([]);
   const [providers, setProviders] = useState<Providers>({});
   const [logs, setLogs] = useState<LogRow[] | null>(null);
   const [onlyFailed, setOnlyFailed] = useState(false);
   /** 로그에서 펼쳐 본 실행의 상세 트레이스 (진단×노드) */
   const [logDetail, setLogDetail] = useState<{ key: string; run: NodeRun | null } | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /** 편집 중인 지시문 키 — 그래프 노드가 아니라 지시문이 선택 단위다 */
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -97,10 +99,11 @@ export default function AdminAgentsPage() {
     api<GraphRes>("/api/admin/agent-graph")
       .then(setGraphRes)
       .catch((e) => setError(e instanceof Error ? e.message : "그래프를 불러오지 못했어요."));
-    api<{ items: PromptItem[]; providers: Providers }>("/api/admin/prompts")
+    api<{ items: PromptItem[]; providers: Providers; stages: Stage[] }>("/api/admin/prompts")
       .then((res) => {
         setPrompts(res.items);
         setProviders(res.providers);
+        setStages(res.stages);
       })
       .catch(() => {});
   }, []);
@@ -117,20 +120,21 @@ export default function AdminAgentsPage() {
 
   const graph = graphRes?.active.graph;
   const toolMeta = graphRes?.toolMeta ?? {};
-  const selected = graph?.nodes.find((n) => n.id === selectedId) ?? null;
-  const selectedPrompt = prompts.find((p) => p.key === selected?.promptKey) ?? null;
+  const selected = prompts.find((p) => p.key === selectedKey) ?? null;
+  /** 이 지시문을 쓰는 그래프 노드 — 없으면 코드가 직접 부르는 단일 호출이다 */
+  const selectedNode = graph?.nodes.find((n) => n.promptKey === selectedKey) ?? null;
+  const isAgent = selectedNode?.type === "agent";
 
-  /** 노드 선택 — 편집 팝업을 열고 초안을 현재 값으로 채운다 */
-  const selectNode = (id: string) => {
-    setSelectedId(id);
+  /** 지시문 선택 — 편집 팝업을 열고 초안을 현재 값으로 채운다 */
+  const selectPrompt = (key: string) => {
+    setSelectedKey(key);
     setMsg(null);
-    const node = graph?.nodes.find((n) => n.id === id);
-    if (!node) return;
-    setToolDraft(node.tools ?? []);
-    setStepDraft(node.maxSteps ?? 12);
-    setSchemaDraft(JSON.stringify(node.outputSchema ?? {}, null, 2));
-    const p = prompts.find((x) => x.key === node.promptKey);
+    const p = prompts.find((x) => x.key === key);
     setSystemDraft(p?.system ?? "");
+    const node = graph?.nodes.find((n) => n.promptKey === key);
+    setToolDraft(node?.tools ?? []);
+    setStepDraft(node?.maxSteps ?? 12);
+    setSchemaDraft(JSON.stringify(node?.outputSchema ?? {}, null, 2));
   };
 
   const run = async (fn: () => Promise<unknown>, done: string) => {
@@ -150,7 +154,7 @@ export default function AdminAgentsPage() {
 
   /** 노드 속성 저장 — 그래프 새 버전 저장 후 즉시 발행(검증 실패 시 발행 단계에서 막힌다) */
   const saveNode = () => {
-    if (!graph || !selected) return;
+    if (!graph || !selectedNode) return;
     let outputSchema: Record<string, unknown>;
     try {
       outputSchema = JSON.parse(schemaDraft) as Record<string, unknown>;
@@ -161,7 +165,7 @@ export default function AdminAgentsPage() {
     const next: GraphDef = {
       ...graph,
       nodes: graph.nodes.map((n) =>
-        n.id === selected.id ? { ...n, tools: toolDraft, maxSteps: stepDraft, outputSchema } : n,
+        n.id === selectedNode.id ? { ...n, tools: toolDraft, maxSteps: stepDraft, outputSchema } : n,
       ),
     };
     void run(async () => {
@@ -213,18 +217,25 @@ export default function AdminAgentsPage() {
     </button>
   );
 
+  const selectStyle: React.CSSProperties = {
+    height: 32,
+    padding: "0 8px",
+    borderRadius: "var(--radius-m)",
+    border: "1px solid var(--line-default)",
+    background: "transparent",
+    color: "var(--fg-secondary)",
+    font: "var(--text-caption)",
+  };
+
   return (
     <section style={{ maxWidth: 1440 }}>
       <h1 style={{ margin: "0 0 6px", font: "var(--text-h4)", letterSpacing: "var(--track-heading)", color: "var(--fg-primary)" }}>
         멀티 에이전트
       </h1>
       <p style={{ margin: "0 0 14px", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-        진단 파이프라인 설정 — 노드를 누르면 도구·출력 규격·지시문·모델을 편집할 수 있어요. 실행 오류는
-        실행 로그 탭에서 확인해요. 노드 외 지시문은{" "}
-        <a href="/admin/prompts" style={{ color: "var(--fg-brand)" }}>
-          지시문 전체 편집
-        </a>
-        에서 관리해요.
+        진단 파이프라인 설정 — 진단이 흐르는 순서대로 단계를 세우고, 각 단계에서 실제로 도는 지시문을
+        모두 올려 두었어요. 노드를 누르면 지시문·모델을, 도구를 쓰는 에이전트면 도구·출력 규격까지
+        편집할 수 있어요. 실행 오류는 실행 로그 탭에서 확인해요.
       </p>
 
       <div style={{ display: "inline-flex", gap: 4, padding: 4, borderRadius: "var(--radius-l)", background: "var(--bg-secondary)", marginBottom: 12 }}>
@@ -353,69 +364,237 @@ export default function AdminAgentsPage() {
             </div>
           )}
         </Card>
-      ) : !graphRes || !graph ? (
+      ) : !graphRes || !graph || prompts.length === 0 ? (
         <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}>
           <Loader />
         </div>
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
             {graphRes.usingDefault ? (
               <Badge tone="outline">코드 기본 그래프</Badge>
             ) : (
               <Badge tone="success">v{graphRes.active.version} 사용 중</Badge>
             )}
             <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-              노드 {graph.nodes.length} · 연결 {graph.edges.length} — 실선 화살표가 데이터가 흐르는
-              방향이고, 점선으로 매달린 것은 위가 외부 API·아래가 그 에이전트의 도구예요. 에이전트를
-              누르면 설정 팝업이 열려요.
+              지시문 {prompts.length} · 도구를 쓰는 에이전트 {graph.nodes.filter((n) => n.type === "agent").length} —
+              실선 화살표가 진단이 흐르는 방향이고, 점선으로 매달린 것은 위가 외부 API·아래가 그
+              에이전트의 도구예요. 노드를 누르면 편집 팝업이 열려요.
             </span>
           </div>
 
-          {/* 그래프 캔버스 — 위에 외부 API, 가운데 에이전트, 아래 도구 */}
+          {/* 캔버스 — 단계별 열, 각 열에 그 단계에서 도는 지시문 */}
           <Card radius="xl" padded={false} style={{ overflow: "hidden" }}>
             <AgentCanvas
               graph={graph}
+              prompts={prompts}
+              stages={stages}
               toolMeta={toolMeta}
-              selectedId={selectedId}
-              onSelect={selectNode}
+              selectedKey={selectedKey}
+              onSelect={selectPrompt}
             />
           </Card>
 
-          {/* 선택한 에이전트 편집 — 팝업 (v6-1) */}
+          {/* 선택한 지시문 편집 — 팝업 (v6-1, v7-3에서 프롬프트 화면 흡수) */}
           <Modal
             open={selected !== null}
-            onClose={() => setSelectedId(null)}
-            title={selected ? `${selected.label ?? selected.id} · ${selected.id}` : ""}
+            onClose={() => setSelectedKey(null)}
+            title={selected ? `${selected.label} · ${selected.key}` : ""}
             xl
           >
             {selected && (
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <Badge tone={selected.type === "agent" ? "accent" : "neutral"}>{TYPE_LABEL[selected.type]}</Badge>
-                  {selected.promptKey && (
-                    <code style={{ font: "12px/1.4 var(--font-mono)", color: "var(--fg-tertiary)" }}>
-                      {selected.promptKey}
-                    </code>
+                  <Badge tone={isAgent ? "accent" : "neutral"}>
+                    {isAgent ? "에이전트 (도구 사용)" : "단일 호출"}
+                  </Badge>
+                  {selected.usingDefault ? (
+                    <Badge tone="outline">코드 기본값</Badge>
+                  ) : (
+                    <Badge tone="success">v{selected.activeVersion} 사용 중</Badge>
+                  )}
+                  {selected.guard && <Badge tone="neutral">주입 방어 자동 유지</Badge>}
+                </div>
+                <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                  {selected.desc}
+                </p>
+
+                {selectedNode?.type === "code" && (
+                  <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                    코드 노드 — 점수 환산·달성 조건 같은 산식은 코드가 원본이라 여기서 편집하지 않아요 (impl:{" "}
+                    <code style={{ fontFamily: "var(--font-mono)" }}>{selectedNode.impl}</code>)
+                  </p>
+                )}
+
+                {/* 지시문·모델 — prompt 테이블 원본을 그대로 편집한다 */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18, flexWrap: "wrap" }}>
+                  <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+                    지시문
+                    <FieldHelp title="지시문 (시스템 프롬프트)">
+                      <p style={{ margin: 0 }}>
+                        AI에게 매 실행마다 먼저 주는 지침이에요. 역할·판단 기준·금지 사항· 어체를 여기서
+                        정합니다. 사용자 입력이나 문서 내용보다 위에 놓여서, 문서에 섞여 들어온 지시를
+                        무시하게 만드는 방어선이기도 해요.
+                      </p>
+                      <p style={{ margin: "10px 0 0" }}>
+                        저장하면 새 버전으로 쌓이고 바로 적용돼요. &lsquo;기본값으로&rsquo;를 누르면 코드에
+                        적힌 원래 지시문으로 돌아갑니다.
+                      </p>
+                      <HelpExample>{`너는 제조기업 AX 진단 판정자다.
+문항마다 앵커 하나를 고르고 근거를 인용한다.
+- 근거 문서를 읽지 않고는 앵커를 고르지 않는다
+- 근거가 없으면 anchorLevel을 null로 두고 사유를 쓴다
+- 같은 문서를 두 번 읽지 않는다`}</HelpExample>
+                    </FieldHelp>
+                  </span>
+                  <select
+                    value={selected.provider}
+                    disabled={busy}
+                    onChange={(e) => {
+                      const provider = e.target.value;
+                      const models = providers[provider]?.models ?? [];
+                      void run(
+                        () =>
+                          api(`/api/admin/prompts/${selected.key}/model`, {
+                            method: "PUT",
+                            body: JSON.stringify({ provider, model: models[0] ?? selected.model }),
+                          }),
+                        "모델을 저장했어요",
+                      );
+                    }}
+                    style={selectStyle}
+                    aria-label="공급자"
+                  >
+                    {Object.entries(providers).map(([id, prov]) => (
+                      <option key={id} value={id}>
+                        {prov.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={selected.model}
+                    disabled={busy}
+                    onChange={(e) =>
+                      void run(
+                        () =>
+                          api(`/api/admin/prompts/${selected.key}/model`, {
+                            method: "PUT",
+                            body: JSON.stringify({ provider: selected.provider, model: e.target.value }),
+                          }),
+                        "모델을 저장했어요",
+                      )
+                    }
+                    style={selectStyle}
+                    aria-label="모델"
+                  >
+                    {(providers[selected.provider]?.models ?? [selected.model]).map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                  {selected.versions.length > 0 && (
+                    <select
+                      value=""
+                      disabled={busy}
+                      onChange={(e) => {
+                        const version = Number(e.target.value);
+                        if (!version) return;
+                        void run(
+                          () =>
+                            api(`/api/admin/prompts/${selected.key}/activate`, {
+                              method: "POST",
+                              body: JSON.stringify({ version }),
+                            }),
+                          `v${version}으로 되돌렸어요`,
+                        );
+                      }}
+                      style={selectStyle}
+                      aria-label="이전 버전으로 되돌리기"
+                    >
+                      <option value="">이전 버전으로…</option>
+                      {selected.versions.map((v) => (
+                        <option key={v.version} value={v.version}>
+                          v{v.version} · {v.createdAt.slice(0, 10)}
+                          {v.isActive ? " (사용 중)" : ""}
+                        </option>
+                      ))}
+                    </select>
                   )}
                 </div>
 
-                {selected.type === "code" && (
+                {/* 자리표시자 — 지시문에 {이름} 그대로 쓰면 실행 시 값으로 치환된다 */}
+                {selected.vars.length > 0 && (
                   <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                    코드 노드 — 점수 환산·달성 조건 같은 산식은 코드가 원본이라 여기서 편집하지 않아요 (impl:{" "}
-                    <code style={{ fontFamily: "var(--font-mono)" }}>{selected.impl}</code>)
-                  </p>
-                )}
-                {selected.type === "hitl" && (
-                  <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-                    사람 확인 노드 — 담당자가 확인을 마치면 다음 노드로 이어져요
+                    자리표시자{" "}
+                    {selected.vars.map((v, i) => (
+                      <span key={v.name}>
+                        {i > 0 && " · "}
+                        <code style={{ fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>
+                          {`{${v.name}}`}
+                        </code>{" "}
+                        {v.desc}
+                      </span>
+                    ))}
                   </p>
                 )}
 
-                {selected.type === "agent" && (
+                <textarea
+                  value={systemDraft}
+                  onChange={(e) => setSystemDraft(e.target.value)}
+                  spellCheck={false}
+                  rows={Math.min(18, systemDraft.split("\n").length + 2)}
+                  style={{ width: "100%", marginTop: 8, padding: "10px 12px", borderRadius: "var(--radius-m)", border: "1px solid var(--line-default)", background: "var(--bg-surface, transparent)", color: "var(--fg-primary)", fontFamily: "var(--font-mono)", fontSize: 13, lineHeight: 1.6, resize: "vertical" }}
+                  aria-label="지시문"
+                />
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy || systemDraft === selected.system || systemDraft.trim().length < 10}
+                    onClick={() =>
+                      void run(
+                        () =>
+                          api(`/api/admin/prompts/${selected.key}`, {
+                            method: "PUT",
+                            body: JSON.stringify({ system: systemDraft }),
+                          }),
+                        "지시문을 새 버전으로 저장했어요",
+                      )
+                    }
+                  >
+                    지시문 저장
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy || systemDraft === selected.system}
+                    onClick={() => setSystemDraft(selected.system)}
+                  >
+                    편집 취소
+                  </Button>
+                  {!selected.usingDefault && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        void run(
+                          () => api(`/api/admin/prompts/${selected.key}`, { method: "DELETE" }),
+                          "코드 기본값으로 되돌렸어요",
+                        )
+                      }
+                    >
+                      기본값으로
+                    </Button>
+                  )}
+                </div>
+
+                {/* 도구·출력 규격 — 그래프 에이전트 노드에만 있다 */}
+                {isAgent && selectedNode && (
                   <>
                     {/* 연결 — 이 노드가 무엇을 보는지. 키 등록은 '외부 연동' 화면이 원본이라 여기서는 표시만 */}
-                    <p style={{ margin: "14px 0 6px", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+                    <p style={{ margin: "22px 0 6px", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
                       연결
                       <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", marginLeft: 8 }}>
                         키 등록은{" "}
@@ -444,9 +623,7 @@ export default function AdminAgentsPage() {
                             }}
                           >
                             {meta?.label ?? t}
-                            {meta && (
-                              <span style={{ color: "var(--fg-tertiary)" }}>· {meta.source}</span>
-                            )}
+                            {meta && <span style={{ color: "var(--fg-tertiary)" }}>· {meta.source}</span>}
                           </span>
                         );
                       })}
@@ -473,7 +650,7 @@ export default function AdminAgentsPage() {
                       </FieldHelp>
                     </p>
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {graphRes.tools.map((t) => {
+                      {(graphRes.tools ?? []).map((t) => {
                         const on = toolDraft.includes(t);
                         const meta = toolMeta[t];
                         return (
@@ -586,126 +763,6 @@ export default function AdminAgentsPage() {
                         노드 저장 · 발행
                       </Button>
                     </div>
-
-                    {/* 지시문·모델 — prompt 테이블 원본을 그대로 편집 (기존 프롬프트 API 재사용) */}
-                    {selectedPrompt && (
-                      <>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 20, flexWrap: "wrap" }}>
-                          <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
-                            지시문
-                            <FieldHelp title="지시문 (시스템 프롬프트)">
-                              <p style={{ margin: 0 }}>
-                                에이전트에게 매 실행마다 먼저 주는 지침이에요. 역할·판단 기준·금지 사항·
-                                어체를 여기서 정합니다. 사용자 입력이나 문서 내용보다 위에 놓여서, 문서에
-                                섞여 들어온 지시를 무시하게 만드는 방어선이기도 해요.
-                              </p>
-                              <p style={{ margin: "10px 0 0" }}>
-                                저장하면 새 버전으로 쌓이고 바로 적용돼요. &lsquo;기본값으로&rsquo;를 누르면 코드에
-                                적힌 원래 지시문으로 돌아갑니다.
-                              </p>
-                              <HelpExample>{`너는 제조기업 AX 진단 판정자다.
-문항마다 앵커 하나를 고르고 근거를 인용한다.
-- 근거 문서를 읽지 않고는 앵커를 고르지 않는다
-- 근거가 없으면 anchorLevel을 null로 두고 사유를 쓴다
-- 같은 문서를 두 번 읽지 않는다`}</HelpExample>
-                            </FieldHelp>
-                          </span>
-                          {selectedPrompt.usingDefault ? (
-                            <Badge tone="outline">코드 기본값</Badge>
-                          ) : (
-                            <Badge tone="success">v{selectedPrompt.activeVersion} 사용 중</Badge>
-                          )}
-                          <select
-                            value={selectedPrompt.provider}
-                            disabled={busy}
-                            onChange={(e) => {
-                              const provider = e.target.value;
-                              const models = providers[provider]?.models ?? [];
-                              void run(
-                                () =>
-                                  api(`/api/admin/prompts/${selectedPrompt.key}/model`, {
-                                    method: "PUT",
-                                    body: JSON.stringify({ provider, model: models[0] ?? selectedPrompt.model }),
-                                  }),
-                                "모델을 저장했어요",
-                              );
-                            }}
-                            style={{ height: 32, padding: "0 8px", borderRadius: "var(--radius-m)", border: "1px solid var(--line-default)", background: "transparent", color: "var(--fg-secondary)", font: "var(--text-caption)" }}
-                            aria-label="공급자"
-                          >
-                            {Object.entries(providers).map(([id, prov]) => (
-                              <option key={id} value={id}>
-                                {prov.label}
-                              </option>
-                            ))}
-                          </select>
-                          <select
-                            value={selectedPrompt.model}
-                            disabled={busy}
-                            onChange={(e) =>
-                              void run(
-                                () =>
-                                  api(`/api/admin/prompts/${selectedPrompt.key}/model`, {
-                                    method: "PUT",
-                                    body: JSON.stringify({ provider: selectedPrompt.provider, model: e.target.value }),
-                                  }),
-                                "모델을 저장했어요",
-                              )
-                            }
-                            style={{ height: 32, padding: "0 8px", borderRadius: "var(--radius-m)", border: "1px solid var(--line-default)", background: "transparent", color: "var(--fg-secondary)", font: "var(--text-caption)" }}
-                            aria-label="모델"
-                          >
-                            {(providers[selectedPrompt.provider]?.models ?? [selectedPrompt.model]).map((m) => (
-                              <option key={m} value={m}>
-                                {m}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <textarea
-                          value={systemDraft}
-                          onChange={(e) => setSystemDraft(e.target.value)}
-                          spellCheck={false}
-                          rows={Math.min(18, systemDraft.split("\n").length + 2)}
-                          style={{ width: "100%", marginTop: 8, padding: "10px 12px", borderRadius: "var(--radius-m)", border: "1px solid var(--line-default)", background: "var(--bg-surface, transparent)", color: "var(--fg-primary)", fontFamily: "var(--font-mono)", fontSize: 13, lineHeight: 1.6, resize: "vertical" }}
-                          aria-label="지시문"
-                        />
-                        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy || systemDraft === selectedPrompt.system || systemDraft.trim().length < 10}
-                            onClick={() =>
-                              void run(
-                                () =>
-                                  api(`/api/admin/prompts/${selectedPrompt.key}`, {
-                                    method: "PUT",
-                                    body: JSON.stringify({ system: systemDraft }),
-                                  }),
-                                "지시문을 새 버전으로 저장했어요",
-                              )
-                            }
-                          >
-                            지시문 저장
-                          </Button>
-                          {!selectedPrompt.usingDefault && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={busy}
-                              onClick={() =>
-                                void run(
-                                  () => api(`/api/admin/prompts/${selectedPrompt.key}`, { method: "DELETE" }),
-                                  "코드 기본값으로 되돌렸어요",
-                                )
-                              }
-                            >
-                              기본값으로
-                            </Button>
-                          )}
-                        </div>
-                      </>
-                    )}
                   </>
                 )}
               </div>

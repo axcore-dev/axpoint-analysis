@@ -52,18 +52,21 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
 │   └── mypage/     내 정보 / 내 정보 수정
 └── admin/          관리자 콘솔 — 대시보드·사용자(체험 계정 수동 정리 포함)·진단 이력·
                     외부 연동(API 키 등록·테스트)·환경 관리·
-                    멀티 에이전트(agents/ — 그래프 탭은 캔버스에서 위=외부 API·가운데=에이전트·아래=도구를
-                    보여주고, 에이전트를 누르면 팝업에서 도구·도구 호출 상한·출력 스키마·지시문·모델을 편집한다.
-                    실행 로그 탭은 노드 실행·실패를 진단과 무관하게 조회. 지시문 전체 목록은 prompts/ —
-                    내비에서는 빠지고 agents 화면에서 링크로 진입). role=admin 가드.
-                    admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
+                    멀티 에이전트(agents/ — 그래프 탭은 진단이 흐르는 순서(서버 PROMPT_STAGES)대로 단계를
+                    세우고, 편집 가능한 지시문 전부를 노드로 놓는다. 에이전트 노드에는 위=외부 API·아래=도구를
+                    매단다. 노드를 누르면 팝업에서 지시문·모델·버전을, 에이전트면 도구·도구 호출 상한·
+                    출력 스키마까지 편집한다. 실행 로그 탭은 노드 실행·실패를 진단과 무관하게 조회).
+                    role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
+                    ※ 어드민 화면은 전부 좌측 내비에 있다 — 링크로만 들어가는 화면을 두지 않는다.
+                      지시문 편집(prompts/)이 그래서 안 보였고 2026-08-07에 agents/로 합쳤다.
 
 proxy.ts            admin.* 호스트 → /admin 리라이트 (/auth는 제외 — 로그인 공용)
 
 components/
 ├── ui/             디자인 시스템 프리미티브 (Button, Card, Modal, Stepper, PasswordInput …)
 ├── admin/          어드민 공용 — SortableTable, 개별 관리 안내 팝업,
-│                   AgentCanvas(멀티 에이전트 캔버스 — API·에이전트·도구 3단),
+│                   AgentCanvas(멀티 에이전트 캔버스 — 단계별 열, 열마다 그 단계의 지시문 노드,
+│                   에이전트에는 위=외부 API·아래=도구를 매단다),
 │                   FieldHelp(라벨 옆 물음표 → 설명·예시 팝업)
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
