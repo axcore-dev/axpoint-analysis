@@ -39,6 +39,44 @@ import { type WorkflowStage } from "@/components/flow/WorkflowStandard";
 type ChartStage = WorkflowStage & { deviates?: boolean };
 type Connection = { from: number; to: number; reason: string };
 
+/* v9 A5 — 문서 도출 합성 그래프. 표준 업무 목록 없이 이 기업의 문서(소분류·레벨·식별자·업무
+   힌트)만으로 백엔드가 합성한 업무 노드·흐름이다. 이 값이 있으면 회사 워크플로우는 표준
+   activity 대신 이것을 그린다 — 과거 진단(합성 이전)은 종전 connections 렌더를 유지한다. */
+type SynthNode = {
+  id: string;
+  activity_name: string;
+  function_area: string;
+  source_documents: string[]; // 문서 ref — 이름은 documents 맵에서 찾는다
+  level_distribution?: { l1: number; l2: number; l3: number; l4: number };
+  confidence: number;
+};
+type SynthEdge = {
+  from: string;
+  to: string;
+  basis: "shared_identifier" | "document_reference" | "text_sequence";
+  evidence: string[];
+  confidence: number;
+  inferred: boolean; // 근거 약함 — 점선 + '추정' 라벨
+};
+type Synthesized = {
+  nodes: SynthNode[];
+  edges: SynthEdge[];
+  documents: { ref: string; fileId: string; docTypeName: string; level: number | null }[];
+};
+
+/* v9 A6 — 표준 대비 갭. missing=표준에 있는데 합성에 없음(기록 끊김 후보),
+   docGaps=매칭된 업무의 표준 요구 기록 미보유(해당 합성 노드에 기록 끊김 표시) */
+type WorkflowGaps = {
+  missing: { activityId: number; name: string; stageCode: string }[];
+  docGaps: {
+    activityId: number;
+    activityName: string;
+    stageCode: string;
+    nodeId: string;
+    missingDocs: string[];
+  }[];
+};
+
 const NODE_W = 196;
 const LAYER_X = 268; // 층 간격 (노드 폭 + 여백)
 const ROW_H = 104; // 같은 층 안 세로 간격
@@ -215,6 +253,8 @@ type Act = {
   docs: string[]; // 보유 산출 문서명
   /** 표준상 나와야 하는 산출 문서명 — 표준 패널은 이것만 그린다(보유 여부 무관) */
   standardDocNames: string[];
+  /** 좌표 저장 키 — 표준 업무는 숫자 id 그대로, 합성 노드는 "syn:" 접두로 구분 (v9) */
+  posKey: string;
 };
 
 function toActs(stages: ChartStage[]): Act[] {
@@ -228,8 +268,38 @@ function toActs(stages: ChartStage[]): Act[] {
       seq,
       docs: coveredDocs(act).map((d) => d.name),
       standardDocNames: act.outputDocs.map((d) => d.name),
+      posKey: String(act.id),
     })),
   );
+}
+
+/**
+ * 합성 노드 → 차트 Act 어댑터 (v9) — 노드가 곧 업무 상자다.
+ * 레인은 function_area로 배치하고(표준 8대 영역과 같은 이름), 어느 영역도 아니면 '기타' 레인.
+ * docs 칩은 근거 문서 소분류명 — 같은 소분류가 여러 건이면 ×N으로 근거 문서 수를 보인다.
+ */
+function synthToActs(synth: Synthesized, stages: ChartStage[]): Act[] {
+  const stageByName = new Map(stages.map((s, i) => [s.name, { code: s.code, idx: i }]));
+  const nameByRef = new Map(synth.documents.map((d) => [d.ref, d.docTypeName]));
+  return synth.nodes.map((n, i) => {
+    const at = stageByName.get(n.function_area) ?? { code: "etc", idx: stages.length };
+    const counts = new Map<string, number>();
+    for (const r of n.source_documents) {
+      const nm = nameByRef.get(r) ?? r;
+      counts.set(nm, (counts.get(nm) ?? 0) + 1);
+    }
+    return {
+      id: i, // 화면 내부 id — 저장에는 posKey(syn:노드id)만 쓴다
+      name: n.activity_name,
+      stageCode: at.code,
+      stageName: n.function_area,
+      stageIdx: at.idx,
+      seq: i,
+      docs: [...counts].map(([nm, c]) => (c > 1 ? `${nm} ×${c}` : nm)),
+      standardDocNames: [],
+      posKey: `syn:${n.id}`,
+    };
+  });
 }
 
 /** 영역 안 순서를 잇는 흐름 + 에이전트가 판단한 영역 횡단 흐름 */
@@ -319,10 +389,9 @@ const LANE_GAP = 10;
  */
 function placeLanes(
   acts: Act[],
-  connections: Connection[],
+  edges: { from: number; to: number; cross: boolean }[],
   saved: Record<string, { x: number; y: number }> = {},
 ): Placed & { back: Set<string> } {
-  const edges = allEdges(acts, connections);
   const back = findBackEdges(acts, edges);
   const forward = edges.filter((e) => !back.has(`${e.from}->${e.to}`));
   const layer = assignLayers(acts, forward);
@@ -372,7 +441,7 @@ function placeLanes(
   let maxX = (maxLayer + 1) * LAYER_X;
   let maxY = yCursor;
   for (const a of acts) {
-    const p = saved[String(a.id)];
+    const p = saved[a.posKey];
     if (!p) continue;
     pos.set(a.id, p);
     maxX = Math.max(maxX, p.x + LAYER_X);
@@ -401,21 +470,21 @@ function placeStandard(acts: Act[]): Placed {
 
 function buildChart({
   acts,
-  connections,
+  edgeList,
   placed,
   back,
   editable,
-  showLinks,
   focus,
   template = false,
+  bottleneckOverride,
+  inferredKeys,
 }: {
   acts: Act[];
-  connections: Connection[];
+  /** 그릴 연결 — 표준 기반은 allEdges() 산출, 합성 모드는 합성 엣지를 넘긴다 (v9) */
+  edgeList: { from: number; to: number; cross: boolean }[];
   placed: Placed;
   back: Set<string>;
   editable: boolean;
-  /** 표준 배치에서는 에이전트 연결선을 그리지 않는다 — 표준 순서만 보여 주는 그림이라 */
-  showLinks: boolean;
   /** 범례에서 고른 영역 코드, 또는 BOTTLENECK. null이면 전부 그대로 (v7-1) */
   focus: string | null;
   /**
@@ -424,14 +493,19 @@ function buildChart({
    * 진단 결과는 회사 워크플로우에만 나타나야 한다.
    */
   template?: boolean;
+  /** 합성 모드의 기록 끊김 (v9 A6) — 갭 계산 결과가 주면 내부 휴리스틱 대신 이것을 쓴다 */
+  bottleneckOverride?: Set<number>;
+  /** 합성 엣지 중 '추정'(inferred) — 점선 + 라벨로 구분한다 (v9 A5) */
+  inferredKeys?: Set<string>;
 }): { nodes: Node[]; edges: Edge[]; bottlenecks: number[] } {
-  const edgeList = allEdges(acts, showLinks ? connections : []);
   const hasIn = new Set(edgeList.map((e) => e.to));
   const hasOut = new Set(edgeList.map((e) => e.from));
-  /* 병목 — 표준상 산출 문서가 나와야 하는데 한 건도 없고, 흐름은 앞뒤로 이어지는 자리 */
+  /* 병목 — 표준상 산출 문서가 나와야 하는데 한 건도 없고, 흐름은 앞뒤로 이어지는 자리.
+     합성 모드는 표준 대비 갭(A6)이 이미 계산돼 오므로 그 결과를 그대로 쓴다 */
   const bottleneck = template
     ? new Set<number>()
-    : new Set(
+    : bottleneckOverride ??
+      new Set(
         acts
           .filter(
             (a) =>
@@ -489,6 +563,8 @@ function buildChart({
   const stageById = new Map(acts.map((a) => [a.id, a.stageCode]));
   const edges: Edge[] = edgeList.map((e) => {
     const isBack = back.has(`${e.from}->${e.to}`);
+    /* 추정 연결 (v9 A5) — 근거가 약해 코드가 inferred로 강제한 엣지. 점선 + '추정' 라벨 */
+    const isInferred = inferredKeys?.has(`${e.from}->${e.to}`) ?? false;
     /* 병목에서 나가는 선은 붉게 — 그 자리에서 기록이 끊긴 채 다음으로 넘어간다는 뜻 */
     const broken = bottleneck.has(e.from);
     /* 고른 영역에 한쪽이라도 닿는 선만 색을 남긴다 — 나머지는 회색으로 물러난다 */
@@ -508,10 +584,19 @@ function buildChart({
       target: `act:${e.to}`,
       type: crossLane ? "smoothstep" : "default",
       markerEnd: { ...ARROW, color },
+      ...(isInferred && near
+        ? {
+            label: "추정",
+            labelStyle: { fontSize: 10, fill: "var(--fg-tertiary)" },
+            /* bg-elevated — SVG rect의 fill이라 정의 안 된 변수면 검은 상자가 된다 */
+            labelBgStyle: { fill: "var(--bg-elevated)", fillOpacity: 0.85 },
+            labelBgPadding: [4, 2] as [number, number],
+          }
+        : {}),
       style: {
         stroke: color,
         strokeWidth: e.cross ? 1.6 : 1.3,
-        strokeDasharray: isBack ? "5 4" : undefined,
+        strokeDasharray: isBack || isInferred ? "5 4" : undefined,
         opacity: !near ? 0.18 : broken ? 0.85 : e.cross ? 0.7 : 0.5,
       },
     };
@@ -535,7 +620,8 @@ function Legend({
   focus,
   onFocus,
 }: {
-  stages: ChartStage[];
+  /** 범례 칩 목록 — 합성 모드에서는 노드가 실제로 있는 영역만 온다 (v9) */
+  stages: { code: string; name: string }[];
   bottlenecks: number;
   focus: string | null;
   onFocus: (next: string | null) => void;
@@ -645,6 +731,10 @@ export function WorkflowChart({
 }) {
   const [stages, setStages] = useState<ChartStage[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
+  /** v9 — 문서 도출 합성 그래프. 있으면 이것이 회사 워크플로우다 (과거 진단은 null 유지) */
+  const [synthesized, setSynthesized] = useState<Synthesized | null>(null);
+  /** v9 A6 — 표준 대비 갭. 합성 노드의 기록 끊김 표시와 미확인 업무 안내에 쓴다 */
+  const [gaps, setGaps] = useState<WorkflowGaps | null>(null);
   /** 사용자가 옮겨 둔 상자 좌표 — 옮긴 것만 담긴다. 나머지는 자동 배치 (v7-1) */
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [saving, setSaving] = useState(false);
@@ -663,57 +753,108 @@ export function WorkflowChart({
       stages: ChartStage[];
       connections: Connection[] | null;
       positions?: Record<string, { x: number; y: number }>;
+      synthesized?: Synthesized | null;
+      gaps?: WorkflowGaps | null;
     }>(`/api/assessments/${assessmentId}/workflow`)
-      .then(({ stages, connections, positions }) => {
+      .then(({ stages, connections, positions, synthesized, gaps }) => {
         setStages(stages ?? []);
         setConnections(connections);
+        setSynthesized(synthesized ?? null);
+        setGaps(gaps ?? null);
         setPositions(positions ?? {});
       })
       .catch(() => setStages([]));
   }, [assessmentId]);
   useEffect(load, [load]);
 
-  /* 에이전트 연결이 아직 없으면 생성 요청 — 한 번만 (있으면 저장분을 그대로 반환한다) */
+  /* 합성이 아직 없으면 생성 요청 — 한 번만 (있으면 저장분을 그대로 반환한다).
+     과거 진단은 connections가 이미 있어 요청하지 않고 종전 표준 기반 렌더를 유지한다 (v9) */
   useEffect(() => {
     if (stages === null || stages.length === 0) return;
-    if (connections !== null || linkRequested.current) return;
+    if (synthesized !== null || connections !== null || linkRequested.current) return;
     linkRequested.current = true;
     setLinking(true);
-    api<{ connections: Connection[] }>(
+    api<{ synthesized: Synthesized }>(
       `/api/assessments/${assessmentId}/workflow/connections`,
       { method: "POST" },
     )
-      .then(({ connections }) => setConnections(connections))
+      .then(({ synthesized }) => {
+        setSynthesized(synthesized);
+        /* 갭(A6)은 GET이 합성과 함께 계산한다 — 방금 만든 합성의 갭을 받으러 한 번 더 읽는다 */
+        load();
+      })
       .catch(() => setConnections([]))
       .finally(() => setLinking(false));
-  }, [stages, connections, assessmentId]);
+  }, [stages, connections, synthesized, assessmentId, load]);
 
+  /* 합성 모드(v9) — 합성 그래프가 있고 노드가 있으면 그것이 회사 워크플로우다 */
+  const synthMode = synthesized !== null && synthesized.nodes.length > 0;
+
+  /** 표준 정의 기반 Act — 종전(legacy) 회사 차트와 비교 패널(표준 템플릿)이 쓴다 */
   const acts = useMemo(() => toActs(stages ?? []), [stages]);
+  /** 회사 차트에 실제로 그릴 Act — 합성 모드면 합성 노드, 아니면 표준 기반 */
+  const companyActs = useMemo(
+    () => (synthMode && synthesized ? synthToActs(synthesized, stages ?? []) : acts),
+    [synthMode, synthesized, stages, acts],
+  );
+  /** 회사 차트의 연결선 — 합성 모드는 합성 엣지(노드 id → 화면 idx 변환), 아니면 종전 계산 */
+  const companyEdges = useMemo(() => {
+    if (!synthMode || !synthesized) {
+      return { list: allEdges(companyActs, connections ?? []), inferred: new Set<string>() };
+    }
+    const idxById = new Map(synthesized.nodes.map((n, i) => [n.id, i]));
+    const list: { from: number; to: number; cross: boolean }[] = [];
+    const inferred = new Set<string>();
+    const seen = new Set<string>();
+    for (const e of synthesized.edges) {
+      const from = idxById.get(e.from);
+      const to = idxById.get(e.to);
+      if (from === undefined || to === undefined || from === to) continue;
+      const key = `${from}->${to}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({ from, to, cross: true });
+      if (e.inferred) inferred.add(key);
+    }
+    return { list, inferred };
+  }, [synthMode, synthesized, companyActs, connections]);
+  /** 합성 노드의 기록 끊김 (v9 A6) — 표준 요구 기록이 비는 업무의 화면 idx */
+  const synthBottlenecks = useMemo(() => {
+    if (!synthMode || !synthesized || !gaps) return undefined;
+    const idxById = new Map(synthesized.nodes.map((n, i) => [n.id, i]));
+    return new Set(
+      gaps.docGaps
+        .map((g) => idxById.get(g.nodeId))
+        .filter((i): i is number => i !== undefined),
+    );
+  }, [synthMode, synthesized, gaps]);
+
   const graph = useMemo(
-    () => placeLanes(acts, connections ?? [], positions),
-    [acts, connections, positions],
+    () => placeLanes(companyActs, companyEdges.list, positions),
+    [companyActs, companyEdges, positions],
   );
   const flow = useMemo(
     () =>
       buildChart({
-        acts,
-        connections: connections ?? [],
+        acts: companyActs,
+        edgeList: companyEdges.list,
         placed: graph,
         back: graph.back,
         editable,
-        showLinks: true,
         focus,
+        bottleneckOverride: synthBottlenecks,
+        inferredKeys: companyEdges.inferred,
       }),
-    [acts, connections, graph, editable, focus],
+    [companyActs, companyEdges, graph, editable, focus, synthBottlenecks],
   );
 
   /* 기록 끊김 수 통지 — 문서가 한 건도 없으면 차트를 그리지 않으므로(아래 ownedDocCount 가드)
      그때는 0으로 알려 부모가 없는 수치를 문장에 쓰지 않게 한다 */
   useEffect(() => {
     if (!onBottlenecks) return;
-    const owned = acts.reduce((sum, a) => sum + a.docs.length, 0);
-    onBottlenecks(owned > 0 ? flow.bottlenecks.length : 0);
-  }, [acts, flow.bottlenecks.length, onBottlenecks]);
+    const owned = companyActs.reduce((sum, a) => sum + a.docs.length, 0);
+    onBottlenecks(synthMode || owned > 0 ? flow.bottlenecks.length : 0);
+  }, [companyActs, synthMode, flow.bottlenecks.length, onBottlenecks]);
 
   /* 드래그 중 상자가 커서를 따라오게 (v8 이슈③) — 노드를 상태로 들고 위치 변경을 실시간 반영한다.
      완전 제어형(useMemo 결과를 그대로 넘김)이면 React Flow가 중간 위치를 그릴 곳이 없어
@@ -735,14 +876,14 @@ export function WorkflowChart({
   const standardFlow = useMemo(() => {
     if (!compare || !standardPlaced) return null;
     /* 표준 패널은 정적 템플릿 (v8 이슈①) — 업무명 + 표준 요구 기록명만.
-       보유 문서 칩·기록 끊김 배지는 회사 워크플로우의 진단 결과라 여기 실리면 안 된다 */
+       보유 문서 칩·기록 끊김 배지는 회사 워크플로우의 진단 결과라 여기 실리면 안 된다.
+       합성 모드(v9)에서도 이 패널은 표준 activity 그대로다 — 비교 대상이 표준이므로 */
     return buildChart({
       acts,
-      connections: [],
+      edgeList: allEdges(acts, []),
       placed: standardPlaced,
       back: new Set<string>(),
       editable: false,
-      showLinks: false,
       focus,
       template: true,
     });
@@ -768,19 +909,27 @@ export function WorkflowChart({
      종전에는 영역 안 순서만 바꾸고 상자는 정해진 칸으로 되돌아갔는데, 옮겨 놓고 제자리로 튕기는
      느낌이 갇혀 보였다. 이제 놓은 곳에 남고, 그 좌표가 이 진단에 저장된다.
      저장은 드롭 순간이 아니라 손을 멈춘 뒤 한 번 — 정리하는 동안 요청이 줄줄이 나가지 않게 */
+  /* 저장 키 조회 — 화면 노드 id(act:내부번호) → 좌표 저장 키. 표준 업무는 숫자 id,
+     합성 노드는 syn:노드id (v9) — 표준 id 키와 절대 겹치지 않아 과거 좌표와 섞이지 않는다 */
+  const posKeyByNodeId = useMemo(
+    () => new Map(companyActs.map((a) => [`act:${a.id}`, a.posKey])),
+    [companyActs],
+  );
+
   const onDragStop = useCallback(
     (_e: unknown, node: Node) => {
-      if (!editable || !node.id.startsWith("act:")) return;
-      const actId = node.id.slice("act:".length);
+      if (!editable) return;
+      const posKey = posKeyByNodeId.get(node.id);
+      if (!posKey) return;
       const at = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
-      const before = positions[actId];
+      const before = positions[posKey];
       if (before && before.x === at.x && before.y === at.y) return; // 제자리 — 보낼 것 없다
-      setPositions((prev) => ({ ...prev, [actId]: at }));
-      pendingPos.current = { ...pendingPos.current, [actId]: at };
+      setPositions((prev) => ({ ...prev, [posKey]: at }));
+      pendingPos.current = { ...pendingPos.current, [posKey]: at };
       if (flushTimer.current) clearTimeout(flushTimer.current);
       flushTimer.current = setTimeout(flushPositions, 800);
     },
-    [editable, positions, flushPositions],
+    [editable, positions, flushPositions, posKeyByNodeId],
   );
 
   /* 화면을 떠날 때 아직 못 보낸 좌표가 있으면 그때 보낸다 */
@@ -792,9 +941,10 @@ export function WorkflowChart({
     [flushPositions],
   );
 
-  /* 불러오는 중·AI가 연결을 만드는 중 — 섹션 안에서 그대로 알린다 (v7).
-     종전엔 아무것도 그리지 않아 화면이 비어 있다가 갑자기 나타났다 */
-  if (stages === null || (stages.length > 0 && connections === null))
+  /* 불러오는 중·AI가 합성을 만드는 중 — 섹션 안에서 그대로 알린다 (v7).
+     종전엔 아무것도 그리지 않아 화면이 비어 있다가 갑자기 나타났다.
+     합성(synthesized)이나 종전 연결(connections) 어느 쪽이든 생기면 그린다 (v9) */
+  if (stages === null || (stages.length > 0 && synthesized === null && connections === null))
     return (
       <div style={{ ...canvasBox, height: 520 }}>
         <div
@@ -820,9 +970,10 @@ export function WorkflowChart({
   if (stages.length === 0) return null;
 
   /* 올라온 문서가 하나도 없으면 그리지 않는다 — 표준 흐름만 남아 이 기업의 워크플로우처럼 보인다.
-     (자료 없이 진행한 진단에서 워크플로우가 뜨던 문제, 2026-08-06) */
-  const ownedDocCount = acts.reduce((sum, a) => sum + a.docs.length, 0);
-  if (ownedDocCount === 0)
+     (자료 없이 진행한 진단에서 워크플로우가 뜨던 문제, 2026-08-06)
+     합성 모드에서는 노드가 0개일 때가 같은 상황이다 — 문서 근거 없는 노드는 만들지 않으므로 (v9) */
+  const ownedDocCount = companyActs.reduce((sum, a) => sum + a.docs.length, 0);
+  if (synthesized !== null ? synthesized.nodes.length === 0 : ownedDocCount === 0)
     return (
       <p
         style={{
@@ -915,11 +1066,42 @@ export function WorkflowChart({
       </div>
 
       <Legend
-        stages={stages}
+        stages={
+          /* 합성 모드 — 노드가 실제로 있는 영역만 (표준 8개를 다 그리면 빈 영역 칩이 남는다) */
+          synthMode
+            ? [
+                ...new Map(
+                  [...companyActs]
+                    .sort((x, y) => x.stageIdx - y.stageIdx)
+                    .map((a) => [a.stageCode, { code: a.stageCode, name: a.stageName }] as const),
+                ).values(),
+              ]
+            : stages
+        }
         bottlenecks={flow.bottlenecks.length}
         focus={focus}
         onFocus={setFocus}
       />
+
+      {/* v9 A6 — 표준에 있는데 문서 근거가 하나도 없는 업무(기록 끊김 후보) 안내 */}
+      {synthMode && (gaps?.missing.length ?? 0) > 0 && (
+        <p
+          style={{
+            margin: "8px 0 0",
+            textAlign: "center",
+            font: "var(--text-caption)",
+            color: "var(--fg-tertiary)",
+          }}
+        >
+          표준 대비 기록 미확인 업무 {gaps!.missing.length}건
+          {" — "}
+          {gaps!.missing
+            .slice(0, 6)
+            .map((m) => m.name)
+            .join(" · ")}
+          {gaps!.missing.length > 6 ? ` 외 ${gaps!.missing.length - 6}건` : ""}
+        </p>
+      )}
 
       {/* 표준 워크플로우 — 비교하기로 펼친다. ISO 절차서 기준 영역별 순서 그대로 */}
       {compare && standardFlow && (

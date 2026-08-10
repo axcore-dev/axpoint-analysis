@@ -76,8 +76,11 @@ components/
 │                   FieldHelp(라벨 옆 물음표 → 설명·예시 팝업)
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
-│                   WorkflowChart(React Flow 플로우차트 — 화살표·업로드 문서 칩·영역/업무 드래그 편집·
-│                   에이전트 업무 연결선. WorkflowSection=자료 정리 편집용, 결과 화면은 섹션 카드 안에
+│                   WorkflowChart(React Flow 플로우차트 — 응답에 synthesized(v9 문서 도출 합성)가
+│                   있으면 합성 노드를 function_area 레인으로 그린다: 근거 문서 칩·inferred 엣지는
+│                   점선+'추정' 라벨·기록 끊김은 A6 갭 결과, 좌표는 syn: 키로 저장. 과거 진단은
+│                   종전 표준 activity+connections 렌더 유지. 비교 패널(표준 템플릿)은 그대로.
+│                   WorkflowSection=자료 정리 편집용, 결과 화면은 섹션 카드 안에
 │                   직접 삽입. WorkflowStandard는 워크플로우 응답 타입만 남음),
 │                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
 │                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달 — v5)
