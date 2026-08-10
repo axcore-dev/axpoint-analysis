@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AgentCanvas,
   type CanvasPrompt,
@@ -9,6 +9,7 @@ import {
   type ToolMeta,
 } from "@/components/admin/AgentCanvas";
 import { FieldHelp, HelpExample } from "@/components/admin/FieldHelp";
+import { diffCounts, diffLines, PromptDiff } from "@/components/admin/PromptDiff";
 import { Badge, Button, Card, Loader, Modal } from "@/components/ui";
 import { api } from "@/lib/api";
 
@@ -60,10 +61,17 @@ type PromptItem = CanvasPrompt & {
   desc: string;
   vars: { name: string; desc: string }[];
   guard: boolean;
+  /** 코드 기본값(v0) 내용 — '수정됨' 판별과 v0 비교 diff의 기준 */
+  defaultSystem: string;
   system: string;
   versions: { version: number; isActive: boolean; createdAt: string }[];
 };
 type Providers = Record<string, { label: string; models: string[] }>;
+/** 모델별 스펙 — 백엔드 메타 응답에 실리는 계약. 배포 전이면 필드가 없으니 전부 옵셔널로 받는다 */
+type ModelMeta = Record<
+  string,
+  { contextK?: number; inPer1M?: number; outPer1M?: number; structured?: boolean; tier?: string }
+>;
 
 const RUN_TONE: Record<string, string> = {
   succeeded: "var(--fg-success)",
@@ -80,6 +88,9 @@ export default function AdminAgentsPage() {
   const [prompts, setPrompts] = useState<PromptItem[]>([]);
   const [flow, setFlow] = useState<FlowMain[]>([]);
   const [providers, setProviders] = useState<Providers>({});
+  const [modelMeta, setModelMeta] = useState<ModelMeta>({});
+  /** 프롬프트 키 → 권장(코드 기본) 모델 */
+  const [recommended, setRecommended] = useState<Record<string, string>>({});
   const [logs, setLogs] = useState<LogRow[] | null>(null);
   const [onlyFailed, setOnlyFailed] = useState(false);
   /** 로그에서 펼쳐 본 실행의 상세 트레이스 (진단×노드) */
@@ -95,16 +106,30 @@ export default function AdminAgentsPage() {
   const [stepDraft, setStepDraft] = useState(12);
   const [schemaDraft, setSchemaDraft] = useState("");
   const [systemDraft, setSystemDraft] = useState("");
+  /** 편집 중 텍스트를 v0(코드 기본값)과 줄 단위로 비교하는 패널 표시 여부 */
+  const [showDiff, setShowDiff] = useState(false);
+  /** 저장은 2단계 — 변경 요약(추가·삭제 줄 수)을 먼저 보여주고 확정을 받는다 */
+  const [confirmSave, setConfirmSave] = useState(false);
+  const sysRef = useRef<HTMLTextAreaElement | null>(null);
 
   const load = useCallback(() => {
     api<GraphRes>("/api/admin/agent-graph")
       .then(setGraphRes)
       .catch((e) => setError(e instanceof Error ? e.message : "그래프를 불러오지 못했어요."));
-    api<{ items: PromptItem[]; providers: Providers; flow: FlowMain[] }>("/api/admin/prompts")
+    api<{
+      items: PromptItem[];
+      providers: Providers;
+      flow: FlowMain[];
+      modelMeta?: ModelMeta;
+      recommended?: Record<string, string>;
+    }>("/api/admin/prompts")
       .then((res) => {
         setPrompts(res.items);
         setProviders(res.providers);
         setFlow(res.flow);
+        // 모델 스펙·권장 모델은 서버가 아직 안 실어 줄 수 있다 — 없으면 표시만 조용히 생략
+        setModelMeta(res.modelMeta ?? {});
+        setRecommended(res.recommended ?? {});
       })
       .catch(() => {});
   }, []);
@@ -126,16 +151,44 @@ export default function AdminAgentsPage() {
   const selectedNode = graph?.nodes.find((n) => n.promptKey === selectedKey) ?? null;
   const isAgent = selectedNode?.type === "agent";
 
+  /** 코드 기본값과 다른 내용으로 운영 중인가 — 저장 버전이 활성이어도 내용이 같으면 수정으로 안 친다 */
+  const isModified = (p: PromptItem) =>
+    !p.usingDefault && p.defaultSystem != null && p.system !== p.defaultSystem;
+  /** v0(코드 기본값) 내용 — 목록 응답에 이미 실려 온다(defaultSystem) */
+  const v0System = selected?.defaultSystem ?? "";
+  /** v0에는 있는데 편집본에서 빠진 자리표시자 — 실행 때 값이 채워지지 않으니 경고한다 */
+  const missingVars = selected
+    ? selected.vars
+        .map((v) => v.name)
+        .filter((n) => v0System.includes(`{${n}}`) && !systemDraft.includes(`{${n}}`))
+    : [];
+
   /** 지시문 선택 — 편집 팝업을 열고 초안을 현재 값으로 채운다 */
   const selectPrompt = (key: string) => {
     setSelectedKey(key);
     setMsg(null);
     const p = prompts.find((x) => x.key === key);
     setSystemDraft(p?.system ?? "");
+    setShowDiff(false);
+    setConfirmSave(false);
     const node = graph?.nodes.find((n) => n.promptKey === key);
     setToolDraft(node?.tools ?? []);
     setStepDraft(node?.maxSteps ?? 12);
     setSchemaDraft(JSON.stringify(node?.outputSchema ?? {}, null, 2));
+  };
+
+  /** 자리표시자 클릭 삽입 — 커서 위치에 {이름}을 넣고 커서를 그 뒤로 옮긴다 */
+  const insertVar = (name: string) => {
+    const token = `{${name}}`;
+    const el = sysRef.current;
+    const start = el?.selectionStart ?? systemDraft.length;
+    const end = el?.selectionEnd ?? start;
+    setSystemDraft(systemDraft.slice(0, start) + token + systemDraft.slice(end));
+    setConfirmSave(false);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + token.length, start + token.length);
+    });
   };
 
   const run = async (fn: () => Promise<unknown>, done: string) => {
@@ -385,6 +438,43 @@ export default function AdminAgentsPage() {
             </span>
           </div>
 
+          {/* 코드 기본값과 다른 지시문으로 도는 것들 — 노드를 일일이 열지 않아도 한눈에 보인다 */}
+          {(() => {
+            const modified = prompts.filter(isModified);
+            if (modified.length === 0) return null;
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                <Badge tone="warning">수정됨 {modified.length}</Badge>
+                {modified.map((p) => (
+                  <button
+                    key={p.key}
+                    type="button"
+                    onClick={() => selectPrompt(p.key)}
+                    title="코드 기본값(v0)과 다른 지시문으로 운영 중 — 누르면 편집 팝업이 열려요"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      height: 24,
+                      padding: "0 9px",
+                      borderRadius: "var(--radius-m)",
+                      border: "1px solid var(--line-default)",
+                      background: "transparent",
+                      font: "var(--text-caption)",
+                      color: "var(--fg-secondary)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {p.label}
+                    <span style={{ fontFamily: "var(--font-mono)", color: "var(--fg-quaternary)" }}>
+                      v{p.activeVersion}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+
           {/* 캔버스 — 단계별 열, 각 열에 그 단계에서 도는 지시문 */}
           <Card radius="xl" padded={false} style={{ overflow: "hidden" }}>
             <AgentCanvas
@@ -414,6 +504,11 @@ export default function AdminAgentsPage() {
                     <Badge tone="outline">코드 기본값</Badge>
                   ) : (
                     <Badge tone="success">v{selected.activeVersion} 사용 중</Badge>
+                  )}
+                  {isModified(selected) && (
+                    <Badge tone="warning" title="코드 기본값(v0)과 다른 지시문으로 운영 중">
+                      수정됨
+                    </Badge>
                   )}
                   {selected.guard && <Badge tone="neutral">주입 방어 자동 유지</Badge>}
                 </div>
@@ -489,11 +584,19 @@ export default function AdminAgentsPage() {
                     style={selectStyle}
                     aria-label="모델"
                   >
-                    {(providers[selected.provider]?.models ?? [selected.model]).map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
+                    {/* 모델 옆에 스펙(컨텍스트·입력 단가)과 권장 표시 — 메타가 없으면 이름만 */}
+                    {(providers[selected.provider]?.models ?? [selected.model]).map((m) => {
+                      const meta = modelMeta[m];
+                      const parts = [m];
+                      if (meta?.contextK != null) parts.push(`${meta.contextK}K`);
+                      if (meta?.inPer1M != null) parts.push(`$${meta.inPer1M.toFixed(2)}/1M`);
+                      if (recommended[selected.key] === m) parts.push("권장");
+                      return (
+                        <option key={m} value={m}>
+                          {parts.join(" · ")}
+                        </option>
+                      );
+                    })}
                   </select>
                   {/* 버전 — 코드 기본값이 v0이다. 지금 무엇이 도는지가 늘 보여야 해서
                       선택값을 활성 버전에 맞춰 둔다(고를 것이 없어도 '사용 중'은 읽힌다) */}
@@ -532,59 +635,193 @@ export default function AdminAgentsPage() {
                       </option>
                     ))}
                   </select>
+                  {/* 편집 중 텍스트가 코드 기본값에서 무엇이 달라졌는지 줄 단위로 본다 */}
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginLeft: "auto",
+                      font: "var(--text-caption)",
+                      color: "var(--fg-secondary)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showDiff}
+                      onChange={(e) => setShowDiff(e.target.checked)}
+                      style={{ accentColor: "var(--blue-500)" }}
+                    />
+                    v0과 비교
+                  </label>
                 </div>
 
-                {/* 자리표시자 — 지시문에 {이름} 그대로 쓰면 실행 시 값으로 치환된다 */}
+                {/* 고른 모델의 스펙·권장 여부 — 서버 메타가 아직 없으면 아무것도 안 그린다 */}
+                {(() => {
+                  const meta = modelMeta[selected.model];
+                  const rec = recommended[selected.key];
+                  if (!meta && !rec) return null;
+                  const specs = meta
+                    ? [
+                        meta.contextK != null ? `컨텍스트 ${meta.contextK}K` : null,
+                        meta.inPer1M != null ? `입력 $${meta.inPer1M.toFixed(2)}/1M` : null,
+                        meta.outPer1M != null ? `출력 $${meta.outPer1M.toFixed(2)}/1M` : null,
+                        meta.structured != null
+                          ? `구조화 출력 ${meta.structured ? "지원" : "미지원"}`
+                          : null,
+                      ].filter(Boolean)
+                    : [];
+                  return (
+                    <p
+                      style={{
+                        margin: "6px 0 0",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        font: "var(--text-caption)",
+                        color: "var(--fg-tertiary)",
+                      }}
+                    >
+                      {rec === selected.model && (
+                        <Badge tone="accent" title="코드 기본 모델">
+                          권장
+                        </Badge>
+                      )}
+                      {specs.length > 0 && <span>{specs.join(" · ")}</span>}
+                      {rec != null && rec !== selected.model && <span>권장(코드 기본) {rec}</span>}
+                    </p>
+                  );
+                })()}
+
+                {/* 자리표시자 — 지시문에 {이름} 그대로 쓰면 실행 시 값으로 치환된다. 누르면 커서 위치에 삽입 */}
                 {selected.vars.length > 0 && (
                   <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
                     자리표시자{" "}
                     {selected.vars.map((v, i) => (
                       <span key={v.name}>
                         {i > 0 && " · "}
-                        <code style={{ fontFamily: "var(--font-mono)", color: "var(--fg-secondary)" }}>
+                        <button
+                          type="button"
+                          onClick={() => insertVar(v.name)}
+                          title="누르면 커서 위치에 들어가요"
+                          style={{
+                            padding: 0,
+                            border: "none",
+                            borderBottom: "1px dashed var(--line-default)",
+                            background: "transparent",
+                            font: "inherit",
+                            fontFamily: "var(--font-mono)",
+                            color: "var(--fg-secondary)",
+                            cursor: "pointer",
+                          }}
+                        >
                           {`{${v.name}}`}
-                        </code>{" "}
+                        </button>{" "}
                         {v.desc}
                       </span>
                     ))}
                   </p>
                 )}
 
+                {/* v0에 있는 자리표시자가 빠지면 알린다 — 저장은 막지 않는다 */}
+                {missingVars.length > 0 && (
+                  <p
+                    role="alert"
+                    style={{
+                      margin: "8px 0 0",
+                      padding: "8px 10px",
+                      borderRadius: "var(--radius-m)",
+                      background: "var(--bg-warning-weak)",
+                      font: "var(--text-caption)",
+                      color: "var(--fg-warning)",
+                    }}
+                  >
+                    자리표시자 누락 — {missingVars.map((n) => `{${n}}`).join(" · ")} · v0에는 있는데
+                    편집본에 없어요. 실행 때 그 값이 지시문에 들어가지 않아요 (저장은 가능).
+                  </p>
+                )}
+
+                {showDiff && <PromptDiff base={v0System} draft={systemDraft} />}
+
                 <textarea
+                  ref={sysRef}
                   value={systemDraft}
-                  onChange={(e) => setSystemDraft(e.target.value)}
+                  onChange={(e) => {
+                    setSystemDraft(e.target.value);
+                    setConfirmSave(false);
+                  }}
                   spellCheck={false}
                   rows={Math.min(18, systemDraft.split("\n").length + 2)}
                   style={{ width: "100%", marginTop: 8, padding: "10px 12px", borderRadius: "var(--radius-m)", border: "1px solid var(--line-default)", background: "var(--bg-surface, transparent)", color: "var(--fg-primary)", fontFamily: "var(--font-mono)", fontSize: 13, lineHeight: 1.6, resize: "vertical" }}
                   aria-label="지시문"
                 />
-                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={busy || systemDraft === selected.system || systemDraft.trim().length < 10}
-                    onClick={() =>
-                      void run(
-                        () =>
-                          api(`/api/admin/prompts/${selected.key}`, {
-                            method: "PUT",
-                            body: JSON.stringify({ system: systemDraft }),
-                          }),
-                        "지시문을 새 버전으로 저장했어요",
-                      )
-                    }
-                  >
-                    지시문 저장
-                  </Button>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                  {/* 저장은 2단계 — 먼저 무엇이 바뀌는지(추가·삭제 줄 수)를 보여주고 확정을 받는다 */}
+                  {confirmSave ? (
+                    (() => {
+                      const { added, removed } = diffCounts(diffLines(selected.system, systemDraft));
+                      return (
+                        <>
+                          <span style={{ font: "var(--text-caption)", color: "var(--fg-secondary)" }}>
+                            추가 {added}줄 · 삭제 {removed}줄
+                          </span>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            disabled={busy}
+                            onClick={() => {
+                              setConfirmSave(false);
+                              void run(
+                                () =>
+                                  api(`/api/admin/prompts/${selected.key}`, {
+                                    method: "PUT",
+                                    body: JSON.stringify({ system: systemDraft }),
+                                  }),
+                                "지시문을 새 버전으로 저장했어요",
+                              );
+                            }}
+                          >
+                            저장 확정
+                          </Button>
+                        </>
+                      );
+                    })()
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy || systemDraft === selected.system || systemDraft.trim().length < 10}
+                      onClick={() => setConfirmSave(true)}
+                    >
+                      지시문 저장
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
                     disabled={busy || systemDraft === selected.system}
-                    onClick={() => setSystemDraft(selected.system)}
+                    onClick={() => {
+                      setSystemDraft(selected.system);
+                      setConfirmSave(false);
+                    }}
                   >
                     편집 취소
                   </Button>
                   {/* '기본값으로' 버튼은 두지 않는다 — 위 버전 드롭다운의 v0이 같은 일을 한다 */}
+                  <span
+                    title="한글 위주 근사치 — 글자 수 ÷ 2.5라 실제 토큰 수와 달라요"
+                    style={{
+                      marginLeft: "auto",
+                      font: "var(--text-caption)",
+                      color: "var(--fg-quaternary)",
+                      fontFamily: "var(--font-mono)",
+                    }}
+                  >
+                    {systemDraft.length.toLocaleString("ko-KR")}자 · 약{" "}
+                    {Math.round(systemDraft.length / 2.5).toLocaleString("ko-KR")}토큰
+                  </span>
                 </div>
 
                 {/* 도구·출력 규격 — 그래프 에이전트 노드에만 있다 */}
