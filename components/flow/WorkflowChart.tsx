@@ -707,8 +707,14 @@ export function WorkflowChart({
   /* 드래그 중 상자가 커서를 따라오게 (v8 이슈③) — 노드를 상태로 들고 위치 변경을 실시간 반영한다.
      완전 제어형(useMemo 결과를 그대로 넘김)이면 React Flow가 중간 위치를 그릴 곳이 없어
      놓는 순간에만 이동한 것처럼 보였다 */
-  const [liveNodes, setLiveNodes] = useState<Node[]>([]);
-  useEffect(() => setLiveNodes(flow.nodes), [flow.nodes]);
+  const [liveNodes, setLiveNodes] = useState<Node[]>(flow.nodes);
+  /* 배치가 다시 계산되면 렌더 중에 맞춘다(react.dev의 '렌더 중 상태 조정' 패턴) —
+     이펙트로 미루면 한 프레임 옛 배치가 비친다 */
+  const [prevFlowNodes, setPrevFlowNodes] = useState(flow.nodes);
+  if (prevFlowNodes !== flow.nodes) {
+    setPrevFlowNodes(flow.nodes);
+    setLiveNodes(flow.nodes);
+  }
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setLiveNodes((nds) => applyNodeChanges(changes, nds)),
     [],
