@@ -36,6 +36,14 @@ import { getGlossary } from "@/data/glossary";
    ============================================================ */
 
 const mono: CSSProperties = { fontFamily: "var(--font-mono)" };
+
+/** 두 줄 말줄임 — '모두 보기' 컴팩트 카드의 소견 한 줄 요약용 */
+const clamp2: CSSProperties = {
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
 /** 점수 표기 — 소수 1자리까지 (정수는 정수로) */
 function fmtScore(n: number | null): string {
   if (n === null) return "—";
@@ -72,6 +80,9 @@ type AreaView = {
   asIs: string | null;
   /** 업무 처리 방식 근거의 DX/AX 수준 서술 (v4 — 과거 저장분에는 없음) */
   detail: string | null;
+  /** 컨설팅 4단 구조 ②·③ — 핵심 문제와 해결 방향 (v10, 과거 진단은 null → 줄 생략) */
+  problem: string | null;
+  direction: string | null;
   holdReason: string | null;
   causeChain: string[] | null;
   evidence: EvidenceItem[];
@@ -207,12 +218,56 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const boldStyle: CSSProperties = { fontWeight: 700, color: "var(--fg-primary)" };
 
+/** 문항 언급 칩 — 본문에 끼어든 문항 내용을 옅은 배경 인라인 칩으로 구분한다 (v10 #2) */
+const qChipStyle: CSSProperties = {
+  background: "var(--bg-secondary)",
+  border: "1px solid var(--line-subtle)",
+  borderRadius: 6,
+  padding: "1px 6px",
+  color: "var(--fg-secondary)",
+  fontSize: "0.93em",
+  /* 줄바꿈으로 칩이 갈라져도 양끝 모서리·배경이 유지되게 */
+  WebkitBoxDecorationBreak: "clone",
+  boxDecorationBreak: "clone",
+};
+
+/**
+ * 의문문 → 명사형 (v10 #2) — 문항 원문("…하고 있는가?")을 서술 본문에 끼울 때
+ * "…하고 있는지"로 다듬는다. 확실한 어미 규칙만 바꾸고, 안 걸리면 원문 그대로 둔다.
+ */
+const NOUNIFY_RULES: [RegExp, string][] = [
+  [/합니까\?$/, "하는지"],
+  [/습니까\?$/, "는지"], // 있습니까 → 있는지, 였습니까 → 였는지
+  [/됩니까\?$/, "되는지"],
+  [/입니까\?$/, "인지"],
+  [/하는가\?$/, "하는지"],
+  [/되는가\?$/, "되는지"],
+  [/는가\?$/, "는지"], // 있는가 → 있는지, 없는가 → 없는지
+  [/한가\?$/, "한지"],
+  [/은가\?$/, "은지"],
+  [/인가\?$/, "인지"],
+  [/나요\?$/, "는지"], // 있나요 → 있는지, 하나요 → 하는지
+];
+function nounifyQuestion(q: string): string {
+  const t = q.trim().replace(/？$/, "?");
+  if (!t.endsWith("?")) return t;
+  for (const [re, to] of NOUNIFY_RULES) if (re.test(t)) return t.replace(re, to);
+  return t; // 변환이 불확실하면 원문 유지
+}
+
+/* 문항 치환 자리 표시 — 사설 영역 문자로 감싸 두고 렌더 단계에서 칩으로 바꾼다.
+   문자열 치환만으로는 칩(스타일 요소)을 끼울 수 없어서다 */
+const Q_OPEN = "\uE000";
+const Q_CLOSE = "\uE001";
+const qSplitRe = new RegExp(`${Q_OPEN}([^${Q_CLOSE}]*)${Q_CLOSE}`, "g");
+
 /**
  * AI 서술 렌더 (v7) — 굵기(**…**)를 적용하면서 축 표기를 사용자 말로 바꾼다.
  *  ① "IT 축" 같은 축 코드 약어를 축 이름("AI인프라 및 기술")으로 편다 — 약어는 읽는 사람 것이 아니다
  *  ② 축 이름은 굵게 표시한다 (이미 **…**로 감싼 것은 건드리지 않는다)
  *  ③ "ST-02" 같은 문항 코드는 문항 내용으로 바꾼다 — 코드는 진단 설계자만 아는 정보라
- *     본문에 그대로 노출하지 않는다. 원문 코드는 축 카드의 '근거' 팝업에서만 보인다.
+ *     본문에 그대로 노출하지 않는다. 원문 코드는 축 카드의 '상세 분석 근거' 팝업에서만 보인다.
+ *     치환한 문항 내용은 인라인 칩으로 감싸고 의문문 어미는 명사형으로 다듬는다 (v10 #2).
  * 나머지 마크다운 문법은 그대로 텍스트로 남긴다 (v5-6 정책 유지).
  */
 function renderRich(
@@ -225,8 +280,11 @@ function renderRich(
     s = s
       // 괄호로 덧붙인 문항 코드 나열은 삽입구라 통째로 걷어낸다 — "(ST-02·ST-08)" 등
       .replace(/\s*\((?:[A-Z]{2}-\d{2})(?:\s*[·,/]\s*(?:[A-Z]{2}-\d{2}))*\)/g, "")
-      // 본문에 남은 문항 코드는 문항 내용으로 바꾼다. 목록에 없는 코드는 그대로 둔다
-      .replace(/\b[A-Z]{2}-\d{2}\b/g, (code) => qLabels.get(code) ?? code);
+      // 본문에 남은 문항 코드는 문항 내용(명사형)으로 바꾼다. 목록에 없는 코드는 그대로 둔다
+      .replace(/\b[A-Z]{2}-\d{2}\b/g, (code) => {
+        const label = qLabels.get(code);
+        return label ? `${Q_OPEN}${nounifyQuestion(label)}${Q_CLOSE}` : code;
+      });
   }
   for (const a of axes) {
     if (!a.code || !a.name) continue;
@@ -243,24 +301,99 @@ function renderRich(
     .sort((x, y) => y.length - x.length); // 긴 이름부터 — 짧은 이름이 먼저 먹지 않게
   const namePattern = names.length ? new RegExp(`(${names.map(escapeRe).join("|")})`, "g") : null;
 
-  return s.split(/\*\*(.+?)\*\*/g).map((part, i) => {
-    if (i % 2 === 1)
-      return (
-        <strong key={i} style={boldStyle}>
-          {part}
-        </strong>
-      );
+  /** 축 이름 굵게 — 문항 칩을 뺀 순수 텍스트 조각에만 적용한다 */
+  const renderNames = (part: string, key: string): ReactNode => {
     if (!namePattern) return part;
     return part.split(namePattern).map((sub, j) =>
       names.includes(sub) ? (
-        <strong key={`${i}-${j}`} style={boldStyle}>
+        <strong key={`${key}-${j}`} style={boldStyle}>
           {sub}
         </strong>
       ) : (
         sub
       ),
     );
-  });
+  };
+  /** 문항 자리 표시를 인라인 칩으로 — 홀수 조각이 문항 내용이다 */
+  const renderChips = (part: string, key: string): ReactNode => {
+    const pieces = part.split(qSplitRe);
+    if (pieces.length === 1) return renderNames(part, key);
+    return pieces.map((piece, j) =>
+      j % 2 === 1 ? (
+        <span key={`${key}-q${j}`} style={qChipStyle}>
+          {piece}
+        </span>
+      ) : (
+        <span key={`${key}-t${j}`}>{renderNames(piece, `${key}-t${j}`)}</span>
+      ),
+    );
+  };
+
+  return s.split(/\*\*(.+?)\*\*/g).map((part, i) =>
+    i % 2 === 1 ? (
+      <strong key={i} style={boldStyle}>
+        {renderChips(part, `b${i}`)}
+      </strong>
+    ) : (
+      <span key={i}>{renderChips(part, `p${i}`)}</span>
+    ),
+  );
+}
+
+/* 감점·문제 줄과 행동 제안 줄 판별 (v10 #2) — 서사에 구조 필드가 없어 문장 키워드로만
+   조심스럽게 고른다. 문제 줄은 좌측 붉은 액센트, 행동 줄은 화살표 액센트 */
+const PROBLEM_RE = /감점|문제|병목|끊(기|겨|김)|부재|미비|부족|누락|리스크/;
+const ACTION_RE = /하면|도입|구축|권장|필요|우선|추천|시작/;
+
+/**
+ * 축 상세 서술 — 문단을 유지하되 긴 문단은 문장 단위 줄로 분리해 가독성을 확보하고,
+ * 줄 성격(문제 지적 / 행동 제안)에 따라 액센트를 붙인다. 데이터에 없는 내용은 만들지 않는다.
+ */
+function AxisDetailLines({
+  text,
+  axes,
+  qLabels,
+  style,
+}: {
+  text?: string | null;
+  axes: AxisLabel[];
+  qLabels?: Map<string, string>;
+  style?: CSSProperties;
+}) {
+  if (!text) return null;
+  const lines = text
+    .split(/\n+/)
+    .flatMap((para) => (para.length > 140 ? para.split(/(?<=다\.)\s+/) : [para]))
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return (
+    <div style={{ display: "grid", gap: 7, maxWidth: 860, ...style }}>
+      {lines.map((line, i) => {
+        const problem = PROBLEM_RE.test(line);
+        const action = !problem && ACTION_RE.test(line);
+        return (
+          <p
+            key={i}
+            style={{
+              margin: 0,
+              font: "var(--text-body3)",
+              lineHeight: 1.7,
+              textAlign: "left",
+              color: problem ? "var(--fg-secondary)" : "var(--fg-tertiary)",
+              ...(problem ? { borderLeft: "3px solid var(--fg-danger)", paddingLeft: 10 } : {}),
+            }}
+          >
+            {action && (
+              <span aria-hidden style={{ color: "var(--fg-brand)", fontWeight: 600, marginRight: 6 }}>
+                →
+              </span>
+            )}
+            {renderRich(line, axes, qLabels)}
+          </p>
+        );
+      })}
+    </div>
+  );
 }
 
 /** 종합 분석 상세 서술 — 추론 AI 작성 본문. 왼쪽 정렬·문단 유지, 없으면 아무것도 렌더하지 않는다 */
@@ -775,6 +908,8 @@ export default function ResultPage() {
 
   /* ---- 화면 상태 ---- */
   const [selectedAxis, setSelectedAxis] = useState<string | null>(null);
+  /* 카테고리 분석 — 5축 카드를 한 번에 펼치는 '모두 보기' 토글 (v10 #2 선택형 UI 복원) */
+  const [showAllAxes, setShowAllAxes] = useState(false);
   /* 점수 근거 팝업 대상 축 (null이면 닫힘) */
   const [basisAxis, setBasisAxis] = useState<string | null>(null);
   /* 업무영역 카드에 잇는 추천 과제 — 과제 화면과 같은 카탈로그 API를 읽기 전용으로 쓴다 */
@@ -1051,6 +1186,7 @@ export default function ResultPage() {
   const companyName = companyInput.trim();
   const totalScore = result ? Number(result.totalScore) : null;
   const basisScore = basisAxis ? axisByCode.get(basisAxis) : undefined;
+  const selectedScore = selectedAxis ? axisByCode.get(selectedAxis) : undefined;
   const basisQuestions = basisAxis
     ? data.judgments.filter((j) => j.axisCode === basisAxis)
     : [];
@@ -1162,12 +1298,10 @@ export default function ResultPage() {
     result?.narrative ? { id: "sec-summary", label: "종합분석" } : null,
   ].filter(Boolean) as { id: string; label: string }[];
 
-  /** 축 선택 — 같은 축 재클릭 시 해제. 선택하면 해당 축 카드로 스크롤해 강조한다 */
+  /** 축 선택 — 같은 축 재클릭 시 해제. 선택하면 우측 카드가 그 축 상세로 바뀐다 (v10 #2) */
   const selectAxis = (code: string) => {
     setSelectedAxis((prev) => (prev === code ? null : code));
-    document
-      .getElementById(`axis-card-${code}`)
-      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setShowAllAxes(false);
   };
 
   const goTasks = () => {
@@ -1191,11 +1325,17 @@ export default function ResultPage() {
         .axp-stat:hover { border-color: var(--line-brand); box-shadow: var(--shadow-2); transform: translateY(-2px); }
         .axp-stat:hover .axp-stat-label { color: var(--fg-brand); }
         .axp-stat:focus-visible { outline: 2px solid var(--line-brand); outline-offset: 2px; }
-        /* 우측 TOC 레일 — lg(1024px) 이상에서만 본문 오른쪽에 붙는다. 좁은 화면은 본문만 남긴다 */
+        /* 우측 TOC 레일 — lg(1024px) 이상에서만 본문 오른쪽에 붙는다. 좁은 화면은 본문만 남긴다.
+           셸 최대 폭을 본문(1080) + 레일(208)로 잡아 TOC가 화면 끝이 아니라 본문 옆에 붙는다 (v10 #6) */
         .axr-shell { display: block; }
         .axr-toc { display: none; }
         @media (min-width: 1024px) {
-          .axr-shell { display: grid; grid-template-columns: minmax(0, 1fr) 216px; }
+          .axr-shell {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 208px;
+            max-width: 1288px;
+            margin: 0 auto;
+          }
           .axr-toc { display: block; }
         }
         .axr-toc-link:hover { color: var(--fg-primary); }
@@ -1516,22 +1656,200 @@ export default function ResultPage() {
                 <RadarChart axes={axes} selected={selectedAxis} onSelect={selectAxis} />
               )}
 
-              {/* 우 — 종합 점수 카드. 축별 상세는 아래 5축 카드가 맡는다 (v8 이슈②) */}
+              {/* 우 — 선택형 상세 (v10 #2 복원): 축을 고르면 그 축 상세, 아니면 종합 요약.
+                  '모두 보기'는 5축 카드를 한 번에 편다. 카드 내용(문항 코드 치환·상세 서술·
+                  업무영역 연계)은 v8 개선분을 유지한다 */}
               <div>
+                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setShowAllAxes((v) => !v);
+                      setSelectedAxis(null);
+                    }}
+                  >
+                    {showAllAxes ? "접기" : "모두 보기"}
+                  </Button>
+                </div>
+                {showAllAxes ? (
+                  /* 전체 보기 — 축 카드 1열 구성 (병목 순) */
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+                    {axesByBottleneck.map((a) => (
+                      <Card key={a.code} radius="l" style={{ padding: "16px 18px" }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "baseline",
+                            justifyContent: "space-between",
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
+                            {a.name}
+                          </span>
+                          <span
+                            style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}
+                          >
+                            {fmtScore(a.score)}
+                            <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>
+                              점
+                            </span>
+                          </span>
+                        </div>
+                        <ScoreBar score={a.score} avg={a.industryAvg} />
+                        <p
+                          style={{
+                            margin: 0,
+                            font: a.finding ? "var(--text-body3)" : "var(--text-caption)",
+                            color: "var(--fg-tertiary)",
+                            ...(a.finding ? clamp2 : {}),
+                          }}
+                        >
+                          {a.finding
+                            ? renderRich(a.finding, axes, qLabelByCode)
+                            : `분석 ${a.answeredCount}/${a.totalCount}`}
+                        </p>
+                        <div style={{ marginTop: 10 }}>
+                          <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.code)}>
+                            상세 분석 근거
+                          </Button>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                ) : (
                   <Card radius="2xl" style={{ padding: 26 }}>
-                    <strong
+                    <div
                       style={{
-                        display: "block",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
                         marginBottom: 16,
-                        font: "var(--text-title1)",
-                        letterSpacing: "var(--track-heading)",
-                        color: "var(--fg-primary)",
                       }}
                     >
-                      AX 진단 결과 상세
-                    </strong>
+                      {selectedAxis && (
+                        <button
+                          type="button"
+                          aria-label="요약으로 돌아가기"
+                          onClick={() => setSelectedAxis(null)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 28,
+                            height: 28,
+                            margin: "-2px 0 -2px -6px",
+                            border: "none",
+                            borderRadius: "var(--radius-s)",
+                            background: "transparent",
+                            color: "var(--fg-tertiary)",
+                            cursor: "pointer",
+                            transition: "background-color var(--dur-fast) var(--ease)",
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = "var(--hover-overlay)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = "transparent";
+                          }}
+                        >
+                          <span
+                            aria-hidden
+                            style={{ display: "inline-flex", transform: "rotate(180deg)" }}
+                          >
+                            <Icons.chevronRight size={16} />
+                          </span>
+                        </button>
+                      )}
+                      <strong
+                        style={{
+                          font: "var(--text-title1)",
+                          letterSpacing: "var(--track-heading)",
+                          color: "var(--fg-primary)",
+                        }}
+                      >
+                        {selectedAxis && selectedScore ? selectedScore.name : "AX 진단 결과 상세"}
+                      </strong>
+                    </div>
 
-                    {/* 종합 점수 요약 (v5-5: '유형' 표기 제거 — 플랫폼에 유형 개념 없음) */}
+                    {selectedAxis && selectedScore ? (
+                      /* 카테고리 선택 상태 — 점수·소견·상세 서술·업무영역 연계 (v8 내용 유지) */
+                      <div>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                          <span
+                            style={{ ...mono, fontSize: 32, fontWeight: 700, color: "var(--fg-primary)" }}
+                          >
+                            {fmtScore(selectedScore.score)}
+                          </span>
+                          <span style={{ font: "var(--text-body3)", color: "var(--grey-400)" }}>
+                            / 100점
+                          </span>
+                        </div>
+                        <ScoreBar score={selectedScore.score} avg={selectedScore.industryAvg} />
+                        {/* 한 줄 소견 — 감점·문제를 말하는 줄이면 좌측 붉은 액센트 (v10 #2) */}
+                        <p
+                          style={{
+                            margin: 0,
+                            font: selectedScore.finding ? "var(--text-body2)" : "var(--text-body3)",
+                            color: selectedScore.finding
+                              ? "var(--fg-secondary)"
+                              : "var(--fg-tertiary)",
+                            ...(selectedScore.finding && PROBLEM_RE.test(selectedScore.finding)
+                              ? { borderLeft: "3px solid var(--fg-danger)", paddingLeft: 10 }
+                              : {}),
+                          }}
+                        >
+                          {selectedScore.finding
+                            ? renderRich(selectedScore.finding, axes, qLabelByCode)
+                            : `분석 ${selectedScore.answeredCount}/${selectedScore.totalCount}`}
+                        </p>
+                        {/* 점수 근거·감점 사유·개선 효과 — 문제 줄은 붉은 액센트, 행동 줄은 화살표 */}
+                        <AxisDetailLines
+                          axes={axes}
+                          qLabels={qLabelByCode}
+                          text={selectedScore.detail}
+                          style={{ marginTop: 10 }}
+                        />
+                        {/* 8대 기능 연계 — 이 축과 맞닿은 업무영역의 일하는 방식 설명 (v4) */}
+                        {selectedScore.functionLinks && (
+                          <div style={{ marginTop: 10 }}>
+                            <div
+                              style={{
+                                font: "var(--text-label-s)",
+                                color: "var(--fg-secondary)",
+                                marginBottom: 4,
+                              }}
+                            >
+                              업무영역 연계
+                            </div>
+                            <DetailText
+                              axes={axes}
+                              qLabels={qLabelByCode}
+                              text={selectedScore.functionLinks}
+                              style={{ color: "var(--fg-tertiary)" }}
+                            />
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            marginTop: 18,
+                          }}
+                        >
+                          <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
+                            분석 {selectedScore.answeredCount}/{selectedScore.totalCount}
+                          </span>
+                          <Button variant="secondary" size="sm" onClick={() => setBasisAxis(selectedAxis)}>
+                            상세 분석 근거
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* 기본 상태 — 종합 점수 요약 (v5-5: '유형' 표기 제거 — 플랫폼에 유형 개념 없음) */
                       <div style={{ display: "grid", gap: 14 }}>
                         {result && totalScore !== null && (
                           <p style={{ margin: 0, font: "var(--text-body2)", color: "var(--fg-secondary)" }}>
@@ -1612,99 +1930,10 @@ export default function ResultPage() {
                           </div>
                         )}
                       </div>
+                    )}
                   </Card>
+                )}
               </div>
-            </div>
-
-            {/* 5축 상세 카드 (v8 이슈②) — 축마다 점수·한 줄 해석·상세 서술·업무영역 연계를
-                항상 펼쳐 둔다. 점수가 낮은 축부터(병목 순) 쌓고, 문항 코드가 남는 원문 판정은
-                '근거' 팝업으로 내린다. 서버에 없는 서술은 그 줄 자체를 생략한다 */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 24 }}>
-              {axesByBottleneck.map((a) => (
-                <Card
-                  key={a.code}
-                  id={`axis-card-${a.code}`}
-                  radius="l"
-                  style={{
-                    padding: "18px 20px",
-                    scrollMarginTop: 80,
-                    ...(selectedAxis === a.code
-                      ? { border: "1px solid var(--line-brand)", boxShadow: "var(--shadow-1)" }
-                      : {}),
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "baseline",
-                      justifyContent: "space-between",
-                      gap: 8,
-                    }}
-                  >
-                    <span style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
-                      {a.name}
-                    </span>
-                    <span
-                      style={{ ...mono, fontSize: 17, fontWeight: 600, color: "var(--fg-primary)" }}
-                    >
-                      {fmtScore(a.score)}
-                      <span style={{ fontSize: 11, fontWeight: 400, color: "var(--grey-400)" }}>
-                        점
-                      </span>
-                    </span>
-                  </div>
-                  <ScoreBar score={a.score} avg={a.industryAvg} />
-                  {/* 한 줄 해석 — 축별 소견. 서사가 없으면 분석 문항 수만 남는다 */}
-                  {a.finding && (
-                    <p style={{ margin: 0, font: "var(--text-body3)", color: "var(--fg-secondary)" }}>
-                      {renderRich(a.finding, axes, qLabelByCode)}
-                    </p>
-                  )}
-                  {/* 점수 근거·감점 사유·개선 효과 서술 — 서사 axis_details 본문 */}
-                  <DetailText
-                    axes={axes}
-                    qLabels={qLabelByCode}
-                    text={a.detail}
-                    style={{ marginTop: a.finding ? 8 : 0, color: "var(--fg-tertiary)" }}
-                  />
-                  {/* 8대 기능 연계 — 이 축과 맞닿은 업무영역의 일하는 방식 설명 (v4) */}
-                  {a.functionLinks && (
-                    <div style={{ marginTop: 8 }}>
-                      <div
-                        style={{
-                          font: "var(--text-label-s)",
-                          color: "var(--fg-secondary)",
-                          marginBottom: 4,
-                        }}
-                      >
-                        업무영역 연계
-                      </div>
-                      <DetailText
-                        axes={axes}
-                        qLabels={qLabelByCode}
-                        text={a.functionLinks}
-                        style={{ color: "var(--fg-tertiary)" }}
-                      />
-                    </div>
-                  )}
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 8,
-                      marginTop: 10,
-                    }}
-                  >
-                    <span style={{ font: "var(--text-caption)", color: "var(--grey-500)" }}>
-                      분석 {a.answeredCount}/{a.totalCount}
-                    </span>
-                    <Button variant="secondary" size="sm" onClick={() => setBasisAxis(a.code)}>
-                      근거
-                    </Button>
-                  </div>
-                </Card>
-              ))}
             </div>
           </Inner>
         </section>
@@ -1766,7 +1995,7 @@ export default function ResultPage() {
           <Inner>
             <SectionHead
               label="업무영역 분석"
-              title="업무영역별 현재 상태"
+              title="업무영역별 상태 분석"
               sub="점수 대신 등급으로 표기해요."
             />
             {/* v5-6 — 8×1 구조: 한 줄에 영역 하나씩 세로로 쌓는다 */}
@@ -1799,6 +2028,7 @@ export default function ResultPage() {
                     <strong style={{ font: "var(--text-label-m)", color: "var(--fg-primary)" }}>
                       {area.functionArea}
                     </strong>
+                    {/* ① 현재 상태 — 업무 처리 방식 수준 서술 (컨설팅 4단 구조, v10 #7) */}
                     <p
                       style={{
                         margin: 0,
@@ -1810,7 +2040,57 @@ export default function ResultPage() {
                       {/* 마크다운 중 굵기만 적용 (v5-6) */}
                       {body ? renderRich(body, axes, qLabelByCode) : null}
                     </p>
-                    {/* 다음 행동 (v8 이슈③-3) — 현재 상태 서술로 끝나지 않게, 이 영역의
+                    {/* ② 문제점 — 핵심 문제와 손실. 과거 진단(problem 없음)은 줄 생략 */}
+                    {area.problem && (
+                      <div
+                        style={{
+                          borderLeft: "3px solid var(--fg-danger)",
+                          paddingLeft: 12,
+                          display: "grid",
+                          gap: 3,
+                        }}
+                      >
+                        <span style={{ font: "var(--text-label-s)", color: "var(--fg-danger)" }}>
+                          문제
+                        </span>
+                        <p
+                          style={{
+                            margin: 0,
+                            font: "var(--text-body3)",
+                            lineHeight: 1.65,
+                            color: "var(--fg-secondary)",
+                          }}
+                        >
+                          {renderRich(area.problem, axes, qLabelByCode)}
+                        </p>
+                      </div>
+                    )}
+                    {/* ③ 해결 방향 — 어디부터 어떻게 바꾸면 되는지 */}
+                    {area.direction && (
+                      <div
+                        style={{
+                          borderLeft: "3px solid var(--line-brand)",
+                          paddingLeft: 12,
+                          display: "grid",
+                          gap: 3,
+                        }}
+                      >
+                        <span style={{ font: "var(--text-label-s)", color: "var(--fg-brand)" }}>
+                          방향
+                        </span>
+                        <p
+                          style={{
+                            margin: 0,
+                            font: "var(--text-body3)",
+                            lineHeight: 1.65,
+                            color: "var(--fg-secondary)",
+                          }}
+                        >
+                          {renderRich(area.direction, axes, qLabelByCode)}
+                        </p>
+                      </div>
+                    )}
+                    {/* ④ 다음 행동 (v8 이슈③-3) — 현재 상태 서술로 끝나지 않게, 이 영역의
                         개선 과제와 활용 가능한 AI를 붙이고 과제 선택 화면으로 잇는다 */}
                     {areaTasks.length > 0 && (
                       <div
@@ -2133,9 +2413,21 @@ export default function ResultPage() {
       </div>
 
       {/* 우측 TOC (v8 이슈⑤) — 섹션 5개 고정 목차. 스크롤 위치의 섹션을 강조하고
-          맨 위 막대가 읽기 진행률을 보여 준다. 좁은 화면(lg 미만)은 CSS로 숨긴다 */}
+          맨 위 막대가 읽기 진행률을 보여 준다. 좁은 화면(lg 미만)은 CSS로 숨긴다.
+          카드 배경 + 그림자로 본문 옆에 떠 있는 플로팅 카드 (v10 #6) */}
       <aside className="axr-toc" aria-label="목차">
-        <nav style={{ position: "sticky", top: 76, padding: "40px 24px 0 0" }}>
+        <nav
+          style={{
+            position: "sticky",
+            top: 76,
+            margin: "40px 0 0",
+            padding: "16px 14px",
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--line-default)",
+            borderRadius: "var(--radius-l)",
+            boxShadow: "var(--shadow-2)",
+          }}
+        >
           <div
             role="progressbar"
             aria-label="읽기 진행률"
