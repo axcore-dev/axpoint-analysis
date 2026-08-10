@@ -1,12 +1,11 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
-  Background,
-  BackgroundVariant,
   Controls,
   Handle,
   MarkerType,
+  Panel,
   Position,
   ReactFlow,
   type Edge,
@@ -14,6 +13,7 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import { Icons } from "@/components/ui";
 
 /**
  * 멀티 에이전트 캔버스 — 메인 에이전트를 사용자 동선 순서로 잇고, 그 메인을 거드는 지시문을
@@ -78,22 +78,37 @@ const COL_W = 400;
 /** 같은 단계의 메인끼리 세로 간격 */
 const ROW_GAP = 56;
 const MAIN_W = 232;
-const MAIN_H = 92;
+/* 카드 높이는 고정 — 배치 계산이 상수를 쓰므로 제목이 2행으로 늘어도 자리가 밀리지 않게
+   2행 제목까지 들어가는 높이로 잡는다 (제목은 2행에서 잘라 낸다) */
+const MAIN_H = 114;
 /** 왼쪽 통로 — 서브로 내려가는 연결선이 도구·자료 위를 지나지 않도록 비워 둔다 */
 const LANE = 44;
 const SUB_W = MAIN_W;
-const SUB_H = 58;
+const SUB_H = 80;
 /** 서브 하나(카드+자료 줄) 다음까지의 간격 */
 const SUB_GAP = 18;
 /** 카드 아래 첫 자료 줄까지의 간격 */
 const BELOW_CARD = 26;
+
+/** 캔버스 기본 높이 — 화면을 채우되 위 챠트 밖 요소(제목·캡션·탭·안내 줄·페이지 여백,
+    합쳐서 약 300px)를 빼고, 너무 작거나 큰 화면에서는 480~1200px 사이로 잡는다 */
+const DEFAULT_HEIGHT = "clamp(480px, calc(100vh - 300px), 1200px)";
+
+/** 제목·라벨은 말줄임 대신 2행까지 편다 — 잘리면 툴팁이 전체를 보여 준다 */
+const CLAMP_2: CSSProperties = {
+  display: "-webkit-box",
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: "vertical",
+  overflow: "hidden",
+};
 
 /* 자료·도구는 2열로 깐다 — 한 줄로 세우면 도구 여덟 개짜리 노드가 세로로 400px을 먹어
    전체 보기가 화면을 확 줄여 버린다(글자가 안 읽힌다) */
 const PILL_COLS = 2;
 const PILL_GAP_X = 8;
 const PILL_W = (MAIN_W - PILL_GAP_X) / 2;
-const PILL_H = 30;
+/* 라벨이 2행까지 펴지므로 두 줄 + 여백이 들어가는 높이 */
+const PILL_H = 38;
 const PILL_GAP_Y = 6;
 
 /** 알약은 통로 오른쪽부터 깐다 — 통로는 서브로 내려가는 연결선 몫이다 */
@@ -122,14 +137,19 @@ function MainNode({ data }: NodeProps) {
     <div
       style={{
         width: MAIN_W,
-        borderRadius: 14,
+        height: MAIN_H,
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        /* 워크플로우 차트와 같은 문법 — 모서리 12px, 테두리 색이 곧 구분 색이다 */
+        borderRadius: 12,
         padding: "12px 14px",
-        border: `1.5px solid ${d.selected ? d.tone : "var(--line-default)"}`,
+        border: `1.5px solid ${d.tone}`,
         background: "var(--bg-elevated)",
-        boxShadow: d.selected ? `0 0 0 3px ${d.tone}22` : "var(--shadow-1)",
+        boxShadow: d.selected ? `var(--shadow-1), 0 0 0 3px ${d.tone}22` : "var(--shadow-1)",
         cursor: "pointer",
       }}
-      title={d.desc}
+      title={`${d.title} — ${d.desc}`}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
@@ -159,24 +179,32 @@ function MainNode({ data }: NodeProps) {
         <span style={{ minWidth: 0, flex: 1 }}>
           <strong
             style={{
-              display: "block",
+              ...CLAMP_2,
               font: "var(--text-label-s)",
+              lineHeight: 1.25,
               color: "var(--fg-primary)",
+            }}
+          >
+            {d.title}
+          </strong>
+          <span
+            style={{
+              display: "block",
+              font: "11px/1.5 var(--font-mono)",
+              color: "var(--fg-quaternary)",
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
           >
-            {d.title}
-          </strong>
-          <span style={{ display: "block", font: "11px/1.5 var(--font-mono)", color: "var(--fg-quaternary)" }}>
             {d.slug}
           </span>
         </span>
       </div>
       <div
         style={{
-          marginTop: 8,
+          /* 카드 높이가 고정이라 제목이 1행이면 아래가 남는다 — 요약 줄을 바닥에 붙인다 */
+          marginTop: "auto",
           display: "flex",
           gap: 6,
           alignItems: "baseline",
@@ -221,29 +249,30 @@ function SubNode({ data }: NodeProps) {
         width: SUB_W,
         height: SUB_H,
         boxSizing: "border-box",
-        borderRadius: 11,
+        display: "flex",
+        flexDirection: "column",
+        borderRadius: 12,
         padding: "8px 11px",
         border: `1px solid ${d.selected ? d.tone : "var(--line-default)"}`,
         background: "var(--bg-elevated)",
         boxShadow: d.selected ? `0 0 0 3px ${d.tone}22` : "none",
         cursor: "pointer",
       }}
+      title={d.title}
     >
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       {/* 관계 이름(전처리·폴백·…)은 연결선 위에 있다 — 카드에 또 쓰지 않는다 */}
       <strong
         style={{
-          display: "block",
+          ...CLAMP_2,
           font: "var(--text-label-s)",
+          lineHeight: 1.25,
           color: d.role === "파일럿" ? "var(--fg-tertiary)" : "var(--fg-primary)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
         }}
       >
         {d.title}
       </strong>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 3 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: "auto" }}>
         <span
           title={d.slug}
           style={{
@@ -258,7 +287,7 @@ function SubNode({ data }: NodeProps) {
         >
           {d.model}
         </span>
-        <span style={{ flex: "none", font: "10px/1.4 var(--font-sans)", color: "var(--fg-quaternary)" }}>
+        <span style={{ flex: "none", font: "11px/1.4 var(--font-sans)", color: "var(--fg-quaternary)" }}>
           {d.toolCount > 0 ? `도구 ${d.toolCount}` : `자료 ${d.useCount}`} · {d.version}
         </span>
       </div>
@@ -284,7 +313,7 @@ function PillNode({ data }: NodeProps) {
         border: `1px dashed ${isApi ? "var(--line-brand)" : "var(--line-default)"}`,
         background: isApi ? "var(--bg-brand-weak)" : "var(--bg-secondary)",
       }}
-      title={d.slug || d.title}
+      title={d.slug ? `${d.title} · ${d.slug}` : d.title}
     >
       {isApi ? (
         <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
@@ -310,12 +339,12 @@ function PillNode({ data }: NodeProps) {
       </span>
       <span
         style={{
+          ...CLAMP_2,
           minWidth: 0,
-          font: "var(--text-caption)",
+          /* 알약은 폭이 좁아 캡션 토큰(15px)이면 두 줄로도 몇 자 못 담는다 — 최소선 11px */
+          font: "500 11px/1.35 var(--font-sans)",
+          overflowWrap: "anywhere",
           color: isApi ? "var(--fg-brand)" : "var(--fg-secondary)",
-          whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
         }}
       >
         {d.title}
@@ -325,6 +354,131 @@ function PillNode({ data }: NodeProps) {
 }
 
 const nodeTypes = { main: MainNode, sub: SubNode, pill: PillNode };
+
+/* ── 캔버스 안 고정 범례 ─────────────────────────────────────────────
+   선 종류가 곧 이 그림의 문법이라, 문장 대신 실제 선과 같은 색·모양의 샘플로 보여 준다.
+   Controls가 좌하단에 있으므로 우하단에 둔다. 접을 수 있고 기본은 펼침. */
+
+function LegendLine({
+  color,
+  width = 1.3,
+  dash,
+  arrow,
+  svgWidth = 34,
+}: {
+  color: string;
+  width?: number;
+  dash?: string;
+  arrow?: boolean;
+  svgWidth?: number;
+}) {
+  const lineEnd = arrow ? svgWidth - 8 : svgWidth - 1;
+  return (
+    <svg width={svgWidth} height={12} aria-hidden style={{ flex: "none", display: "block" }}>
+      <line x1={1} y1={6} x2={lineEnd} y2={6} stroke={color} strokeWidth={width} strokeDasharray={dash} />
+      {arrow && <polygon points={`${lineEnd},2 ${svgWidth - 1},6 ${lineEnd},10`} fill={color} />}
+    </svg>
+  );
+}
+
+/** 연결선 위 역할 라벨의 축소판 — 실제 엣지 라벨과 같은 스타일 */
+function LegendRoleChip({ text, muted }: { text: string; muted?: boolean }) {
+  return (
+    <span
+      style={{
+        flex: "none",
+        padding: "0 5px",
+        borderRadius: 5,
+        border: "1px solid var(--line-subtle)",
+        background: "var(--bg-elevated)",
+        font: `500 11px/1.5 var(--font-sans)`,
+        color: muted ? "var(--fg-quaternary)" : "var(--fg-tertiary)",
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
+function CanvasLegend() {
+  const [open, setOpen] = useState(true);
+  const row = (sample: ReactNode, name: string) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <span
+        style={{ flex: "none", width: 72, display: "inline-flex", alignItems: "center", gap: 3 }}
+      >
+        {sample}
+      </span>
+      <span style={{ font: "var(--text-caption)", color: "var(--fg-secondary)", whiteSpace: "nowrap" }}>
+        {name}
+      </span>
+    </div>
+  );
+  return (
+    <Panel position="bottom-right">
+      <div
+        style={{
+          borderRadius: "var(--radius-m)",
+          border: "1px solid var(--line-default)",
+          background: "var(--bg-elevated)",
+          boxShadow: "var(--shadow-2)",
+          overflow: "hidden",
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            width: "100%",
+            padding: "7px 10px",
+            border: "none",
+            background: "transparent",
+            font: "var(--text-caption)",
+            fontWeight: 600,
+            fontFamily: "var(--font-sans)",
+            color: "var(--fg-secondary)",
+            cursor: "pointer",
+          }}
+        >
+          범례
+          <Icons.chevronDown
+            size={13}
+            style={{
+              marginLeft: "auto",
+              transform: open ? "rotate(180deg)" : undefined,
+              transition: "transform var(--dur-fast) var(--ease)",
+            }}
+          />
+        </button>
+        {open && (
+          <div style={{ display: "grid", gap: 6, padding: "2px 12px 10px" }}>
+            {row(<LegendLine color="var(--grey-500)" width={2} arrow svgWidth={72} />, "실행 순서")}
+            {row(
+              <>
+                <LegendLine color="var(--grey-400)" svgWidth={16} />
+                <LegendRoleChip text="전처리" />
+              </>,
+              "서브 역할 — 폴백·보조·후처리",
+            )}
+            {row(
+              <>
+                <LegendLine color="var(--grey-300)" dash="5 4" svgWidth={16} />
+                <LegendRoleChip text="파일럿" muted />
+              </>,
+              "파일럿",
+            )}
+            {row(<LegendLine color="var(--line-brand)" dash="4 4" svgWidth={72} />, "외부 API")}
+            {row(<LegendLine color="var(--grey-300)" dash="4 4" svgWidth={72} />, "도구·자료")}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
 
 /** 메인끼리의 위상 깊이 — 진단 순서대로 좌→우로 세우기 위한 값 */
 function depths(flow: FlowMain[]): Map<string, number> {
@@ -345,7 +499,7 @@ export function AgentCanvas({
   toolMeta,
   selectedKey,
   onSelect,
-  height = 640,
+  height = DEFAULT_HEIGHT,
 }: {
   graph: GraphDef;
   prompts: CanvasPrompt[];
@@ -354,7 +508,8 @@ export function AgentCanvas({
   /** 선택된 지시문 키 — 노드 강조에만 쓴다 */
   selectedKey: string | null;
   onSelect: (promptKey: string) => void;
-  height?: number;
+  /** 기본값은 뷰포트 기준(clamp) — 고정 px가 필요하면 숫자로 넘긴다 */
+  height?: number | string;
 }) {
   const { nodes, edges } = useMemo(() => {
     const byKey = new Map(prompts.map((p) => [p.key, p]));
@@ -535,7 +690,7 @@ export function AgentCanvas({
           labelBgStyle: { fill: "var(--bg-elevated)", stroke: "var(--line-subtle)" },
           labelStyle: {
             fill: s.role === "파일럿" ? "var(--fg-quaternary)" : "var(--fg-tertiary)",
-            fontSize: 10,
+            fontSize: 11,
             fontFamily: "var(--font-sans)",
           },
           style: {
@@ -577,8 +732,9 @@ export function AgentCanvas({
         nodesConnectable={false}
         deleteKeyCode={null}
       >
-        <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+        {/* 점 격자 배경은 깔지 않는다 — 워크플로우 차트(v8)와 같은 톤을 쓴다 */}
         <Controls showInteractive={false} />
+        <CanvasLegend />
         {/* 미니맵은 붙이지 않는다 — 커스텀 노드가 그려지지 않아 빈 상자만 남는다.
             확대·축소와 '전체 보기'(Controls)로 충분하다 */}
       </ReactFlow>
