@@ -636,9 +636,12 @@ const FIT = { padding: 0.1, minZoom: 0.45, maxZoom: 0.95 } as const;
 export function WorkflowChart({
   assessmentId,
   editable = false,
+  onBottlenecks,
 }: {
   assessmentId: string;
   editable?: boolean;
+  /** 기록 끊김(병목) 수가 계산되면 부모에 알린다 — 결과 화면의 여정 요약이 이 수치를 쓴다 */
+  onBottlenecks?: (count: number) => void;
 }) {
   const [stages, setStages] = useState<ChartStage[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
@@ -703,6 +706,14 @@ export function WorkflowChart({
       }),
     [acts, connections, graph, editable, focus],
   );
+
+  /* 기록 끊김 수 통지 — 문서가 한 건도 없으면 차트를 그리지 않으므로(아래 ownedDocCount 가드)
+     그때는 0으로 알려 부모가 없는 수치를 문장에 쓰지 않게 한다 */
+  useEffect(() => {
+    if (!onBottlenecks) return;
+    const owned = acts.reduce((sum, a) => sum + a.docs.length, 0);
+    onBottlenecks(owned > 0 ? flow.bottlenecks.length : 0);
+  }, [acts, flow.bottlenecks.length, onBottlenecks]);
 
   /* 드래그 중 상자가 커서를 따라오게 (v8 이슈③) — 노드를 상태로 들고 위치 변경을 실시간 반영한다.
      완전 제어형(useMemo 결과를 그대로 넘김)이면 React Flow가 중간 위치를 그릴 곳이 없어
