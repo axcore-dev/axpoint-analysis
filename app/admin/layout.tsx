@@ -2,9 +2,12 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useAuth } from "@/components/auth/AuthContext";
 import { Button, Icons, type IconName } from "@/components/ui";
+
+/** 내비 접힘 상태 저장 키 — 캔버스 같은 넓은 화면을 볼 때 접어 둔 채로 다니게 기억한다 */
+const NAV_COLLAPSED_KEY = "admin.navCollapsed";
 
 /** 어드민 내비게이션 — 대시보드 · 회원 관리 · 진단 이력 · 외부 연동 · 멀티 에이전트 · 환경 관리
     어드민 화면은 전부 여기에 있다. 내비에 없이 링크로만 들어가는 화면은 두지 않는다
@@ -29,6 +32,21 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const isLoginPage = pathname === "/admin/login";
   const allowed = user?.role === "admin";
+  /* 접힘 상태 — 셸은 hydrated 뒤에만 그려지므로 초기값을 localStorage에서 바로 읽어도
+     서버 HTML(null)과 어긋나지 않는다 */
+  const [collapsed, setCollapsed] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem(NAV_COLLAPSED_KEY) === "1",
+  );
+  const toggleNav = () =>
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(NAV_COLLAPSED_KEY, next ? "1" : "0");
+      } catch {
+        /* 저장 실패(시크릿 모드 등)여도 이번 세션의 접힘은 동작한다 */
+      }
+      return next;
+    });
 
   useEffect(() => {
     if (hydrated && !allowed && !isLoginPage) router.replace("/admin/login");
@@ -42,7 +60,9 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
       {/* 좌측 내비 */}
       <aside
         style={{
-          width: 220,
+          /* 접으면 아이콘만 남는 최소 폭 — 캔버스 같은 넓은 화면에 자리를 내준다 */
+          width: collapsed ? 64 : 220,
+          transition: "width var(--dur-base) var(--ease)",
           flex: "none",
           borderRight: "1px solid var(--line-default)",
           padding: "20px 12px",
@@ -61,11 +81,40 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             display: "flex",
             alignItems: "baseline",
             gap: 6,
-            padding: "4px 12px 16px",
+            padding: collapsed ? "4px 0 16px" : "4px 4px 16px 12px",
+            justifyContent: collapsed ? "center" : undefined,
           }}
         >
-          <span style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>AXCORE</span>
-          <span style={{ font: "var(--text-caption)", color: "var(--fg-brand)" }}>관리자</span>
+          {!collapsed && (
+            <>
+              <span style={{ font: "var(--text-title2)", color: "var(--fg-primary)" }}>AXCORE</span>
+              <span style={{ font: "var(--text-caption)", color: "var(--fg-brand)" }}>관리자</span>
+            </>
+          )}
+          <button
+            type="button"
+            onClick={toggleNav}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
+            title={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
+            style={{
+              marginLeft: collapsed ? 0 : "auto",
+              alignSelf: "center",
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 28,
+              height: 28,
+              padding: 0,
+              border: "none",
+              borderRadius: "var(--radius-s)",
+              background: "transparent",
+              color: "var(--fg-tertiary)",
+              cursor: "pointer",
+            }}
+          >
+            <Icons.menu size={17} aria-hidden />
+          </button>
         </div>
 
         {NAV.map(({ path, label, icon }) => {
@@ -75,11 +124,13 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <Link
               key={path}
               href={path}
+              title={collapsed ? label : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",
+                justifyContent: collapsed ? "center" : undefined,
                 gap: 10,
-                padding: "10px 12px",
+                padding: collapsed ? "10px 0" : "10px 12px",
                 borderRadius: "var(--radius-m)",
                 textDecoration: "none",
                 font: "var(--text-label-s)",
@@ -88,24 +139,26 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
               }}
             >
               <Icon size={17} aria-hidden />
-              {label}
+              {!collapsed && label}
             </Link>
           );
         })}
 
-        <div style={{ marginTop: "auto", padding: "12px 12px 0", borderTop: "1px solid var(--line-default)" }}>
-          <div style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", marginBottom: 8 }}>
-            {user.name} · {user.email}
+        {!collapsed && (
+          <div style={{ marginTop: "auto", padding: "12px 12px 0", borderTop: "1px solid var(--line-default)" }}>
+            <div style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", marginBottom: 8 }}>
+              {user.name} · {user.email}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button variant="utility" size="sm" href="/">
+                사이트로
+              </Button>
+              <Button variant="utility" size="sm" onClick={() => logout()}>
+                로그아웃
+              </Button>
+            </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="utility" size="sm" href="/">
-              사이트로
-            </Button>
-            <Button variant="utility" size="sm" onClick={() => logout()}>
-              로그아웃
-            </Button>
-          </div>
-        </div>
+        )}
       </aside>
 
       {/* 콘텐츠 */}
