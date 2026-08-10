@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Background,
-  BackgroundVariant,
+  applyNodeChanges,
   Controls,
   Handle,
   MarkerType,
@@ -11,6 +10,7 @@ import {
   ReactFlow,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
@@ -44,8 +44,6 @@ const LAYER_X = 268; // 층 간격 (노드 폭 + 여백)
 const ROW_H = 104; // 같은 층 안 세로 간격
 /** 캔버스 높이 — 층 안 줄 수에 맞춘다. 고정 높이는 위아래로 빈 띠만 남겼다 (v7) */
 const canvasHeight = (rows: number) => Math.max(420, Math.min(760, rows * ROW_H + 110));
-/** 첫 화면 배율 — 40개 업무는 어차피 한 화면에 안 들어온다. 줄여서 못 읽게 하느니 왼쪽부터 읽게 둔다 */
-const START_ZOOM = 0.62;
 
 /** 8대 기능 영역 색 — 자리로 구분하지 않으니 색이 영역을 알려 준다 */
 const STAGE_TONE: Record<string, string> = {
@@ -171,7 +169,39 @@ function TaskNode({ data }: NodeProps) {
   );
 }
 
-const nodeTypes = { task: TaskNode };
+/** 레인 배경 띠 — 영역 이름과 옅은 바탕으로 가로 레인을 알려 준다. 상자 뒤에 깔린다 */
+type LaneData = { name: string; tone: string; width: number; height: number };
+
+function LaneNode({ data }: NodeProps) {
+  const d = data as unknown as LaneData;
+  return (
+    <div
+      style={{
+        width: d.width,
+        height: d.height,
+        borderRadius: 12,
+        background: `${d.tone}07`,
+        border: `1px dashed ${d.tone}2E`,
+        pointerEvents: "none",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 6,
+          left: 10,
+          font: "600 11px/1.4 var(--font-sans)",
+          color: d.tone,
+          opacity: 0.85,
+        }}
+      >
+        {d.name}
+      </span>
+    </div>
+  );
+}
+
+const nodeTypes = { task: TaskNode, lane: LaneNode };
 
 /* ── 배치 계산 ─────────────────────────────────────────────────────── */
 
@@ -183,7 +213,8 @@ type Act = {
   stageIdx: number;
   seq: number; // 영역 안 표시 순서
   docs: string[]; // 보유 산출 문서명
-  standardDocs: number; // 표준상 나와야 하는 산출 문서 수
+  /** 표준상 나와야 하는 산출 문서명 — 표준 패널은 이것만 그린다(보유 여부 무관) */
+  standardDocNames: string[];
 };
 
 function toActs(stages: ChartStage[]): Act[] {
@@ -196,7 +227,7 @@ function toActs(stages: ChartStage[]): Act[] {
       stageIdx,
       seq,
       docs: coveredDocs(act).map((d) => d.name),
-      standardDocs: act.outputDocs.length,
+      standardDocNames: act.outputDocs.map((d) => d.name),
     })),
   );
 }
@@ -261,48 +292,7 @@ function assignLayers(acts: Act[], edges: { from: number; to: number }[]) {
   return layer;
 }
 
-/**
- * 층 안 세로 순서 — 이어진 업무의 평균 자리로 옮기는 계산(무게중심)을 위·아래로 반복한다.
- * 이어진 것끼리 같은 높이로 모이면서 선이 덜 엇갈린다.
- */
-function orderLayers(
-  acts: Act[],
-  edges: { from: number; to: number }[],
-  layer: Map<number, number>,
-) {
-  const maxLayer = Math.max(0, ...acts.map((a) => layer.get(a.id) ?? 0));
-  const rows: number[][] = Array.from({ length: maxLayer + 1 }, () => []);
-  // 첫 순서는 표준 순서 — 무게중심이 결정하지 못하는 자리는 이 순서가 남는다
-  for (const a of [...acts].sort((x, y) => x.stageIdx - y.stageIdx || x.seq - y.seq))
-    rows[layer.get(a.id) ?? 0].push(a.id);
-
-  const preds = new Map<number, number[]>();
-  const succs = new Map<number, number[]>();
-  for (const e of edges) {
-    preds.set(e.to, [...(preds.get(e.to) ?? []), e.from]);
-    succs.set(e.from, [...(succs.get(e.from) ?? []), e.to]);
-  }
-
-  const sweep = (down: boolean) => {
-    const idx = new Map<number, number>();
-    rows.forEach((row) => row.forEach((id, i) => idx.set(id, i)));
-    const order = down
-      ? Array.from(rows.keys()).slice(1)
-      : Array.from(rows.keys()).slice(0, -1).reverse();
-    for (const l of order) {
-      const near = down ? preds : succs;
-      const bary = new Map<number, number>();
-      rows[l].forEach((id, i) => {
-        const linked = (near.get(id) ?? []).filter((o) => idx.has(o));
-        bary.set(id, linked.length ? linked.reduce((s, o) => s + idx.get(o)!, 0) / linked.length : i);
-      });
-      rows[l] = [...rows[l]].sort((a, b) => (bary.get(a) ?? 0) - (bary.get(b) ?? 0));
-      rows[l].forEach((id, i) => idx.set(id, i));
-    }
-  };
-  for (let pass = 0; pass < 4; pass += 1) sweep(pass % 2 === 0);
-  return rows;
-}
+type Lane = { code: string; name: string; tone: string; y: number; height: number };
 
 type Placed = {
   pos: Map<number, { x: number; y: number }>;
@@ -310,13 +300,24 @@ type Placed = {
   height: number;
   /** 가장 붐비는 층의 줄 수 — 캔버스 높이를 여기에 맞춘다 */
   rows: number;
+  lanes?: Lane[];
 };
 
+/** 레인 안 여백 — 상자가 레인 경계선에 붙지 않게 */
+const LANE_PAD = 14;
+const LANE_GAP = 10;
+
 /**
- * 계층 배치 — 층은 좌→우, 층 안 순서는 세로. 각 층은 세로 가운데로 모은다.
+ * 스임레인 배치 (v8) — 기능 영역이 가로 레인, 업무 순서는 좌→우 단일 방향.
+ *
+ * v7의 순수 계층 배치는 이어진 것끼리는 모였지만 같은 영역 업무가 캔버스 곳곳에 흩어졌다.
+ * 이제 세로 자리는 영역 레인이 정하고, 가로 자리만 흐름(위상 층)이 정한다 —
+ * "어느 영역의 일인가"와 "언제 하는 일인가"를 축 두 개가 나눠 맡는다.
+ * 같은 레인·같은 층에 두 업무가 겹치면 레인 안에서 아래로 쌓고 레인 높이를 늘린다.
+ *
  * 사용자가 옮겨 둔 상자(saved)는 그 자리를 그대로 쓴다 — 자동 배치는 아직 안 옮긴 상자만 맡는다.
  */
-function placeGraph(
+function placeLanes(
   acts: Act[],
   connections: Connection[],
   saved: Record<string, { x: number; y: number }> = {},
@@ -325,16 +326,51 @@ function placeGraph(
   const back = findBackEdges(acts, edges);
   const forward = edges.filter((e) => !back.has(`${e.from}->${e.to}`));
   const layer = assignLayers(acts, forward);
-  const rows = orderLayers(acts, forward, layer);
-  const tallest = Math.max(1, ...rows.map((r) => r.length));
+
+  /* 레인 = 업무가 있는 영역, 표준 영역 순서대로. 레인 안에서 (층)이 겹치는 업무 수만큼 높이를 준다 */
+  const stageOrder = [...new Map(acts.map((a) => [a.stageCode, a])).values()].sort(
+    (x, y) => x.stageIdx - y.stageIdx,
+  );
+  const slot = new Map<number, number>(); // act → 레인 안 줄 번호
+  const laneRows = new Map<string, number>(); // 레인 → 필요한 줄 수
+  for (const s of stageOrder) {
+    const mine = acts
+      .filter((a) => a.stageCode === s.stageCode)
+      .sort((x, y) => (layer.get(x.id) ?? 0) - (layer.get(y.id) ?? 0) || x.seq - y.seq);
+    const used = new Map<number, number>(); // 층 → 이미 쓴 줄 수
+    let rows = 1;
+    for (const a of mine) {
+      const l = layer.get(a.id) ?? 0;
+      const k = used.get(l) ?? 0;
+      used.set(l, k + 1);
+      slot.set(a.id, k);
+      rows = Math.max(rows, k + 1);
+    }
+    laneRows.set(s.stageCode, rows);
+  }
+
+  const lanes: Lane[] = [];
+  let yCursor = 0;
+  for (const s of stageOrder) {
+    const height = (laneRows.get(s.stageCode) ?? 1) * ROW_H + LANE_PAD;
+    lanes.push({ code: s.stageCode, name: s.stageName, tone: toneOf(s.stageCode), y: yCursor, height });
+    yCursor += height + LANE_GAP;
+  }
+  const laneOf = new Map(lanes.map((l) => [l.code, l]));
+
   const pos = new Map<number, { x: number; y: number }>();
-  rows.forEach((row, l) => {
-    const offset = ((tallest - row.length) * ROW_H) / 2;
-    row.forEach((id, i) => pos.set(id, { x: l * LAYER_X, y: offset + i * ROW_H }));
-  });
+  const maxLayer = Math.max(0, ...acts.map((a) => layer.get(a.id) ?? 0));
+  for (const a of acts) {
+    const lane = laneOf.get(a.stageCode)!;
+    pos.set(a.id, {
+      x: (layer.get(a.id) ?? 0) * LAYER_X,
+      y: lane.y + LANE_PAD / 2 + (slot.get(a.id) ?? 0) * ROW_H,
+    });
+  }
+
   /* 옮겨 둔 자리로 덮어쓴다. 캔버스 크기는 그 자리까지 담도록 넓힌다 */
-  let maxX = rows.length * LAYER_X;
-  let maxY = tallest * ROW_H;
+  let maxX = (maxLayer + 1) * LAYER_X;
+  let maxY = yCursor;
   for (const a of acts) {
     const p = saved[String(a.id)];
     if (!p) continue;
@@ -342,7 +378,7 @@ function placeGraph(
     maxX = Math.max(maxX, p.x + LAYER_X);
     maxY = Math.max(maxY, p.y + ROW_H);
   }
-  return { pos, back, width: maxX, height: maxY, rows: Math.ceil(maxY / ROW_H) };
+  return { pos, back, width: maxX, height: maxY, rows: Math.ceil(maxY / ROW_H), lanes };
 }
 
 /** 표준 배치 — 비교용. 영역이 열, 영역 안 표준 순서가 행 (v5까지 쓰던 그림) */
@@ -371,6 +407,7 @@ function buildChart({
   editable,
   showLinks,
   focus,
+  template = false,
 }: {
   acts: Act[];
   connections: Connection[];
@@ -381,16 +418,30 @@ function buildChart({
   showLinks: boolean;
   /** 범례에서 고른 영역 코드, 또는 BOTTLENECK. null이면 전부 그대로 (v7-1) */
   focus: string | null;
+  /**
+   * 표준 템플릿 모드 (v8 이슈①) — 회사 데이터와 완전히 분리한다.
+   * 칩은 표준 요구 기록명, 보유 여부·기록 끊김 판정은 하지 않는다.
+   * 진단 결과는 회사 워크플로우에만 나타나야 한다.
+   */
+  template?: boolean;
 }): { nodes: Node[]; edges: Edge[]; bottlenecks: number[] } {
   const edgeList = allEdges(acts, showLinks ? connections : []);
   const hasIn = new Set(edgeList.map((e) => e.to));
   const hasOut = new Set(edgeList.map((e) => e.from));
   /* 병목 — 표준상 산출 문서가 나와야 하는데 한 건도 없고, 흐름은 앞뒤로 이어지는 자리 */
-  const bottleneck = new Set(
-    acts
-      .filter((a) => a.standardDocs > 0 && a.docs.length === 0 && hasIn.has(a.id) && hasOut.has(a.id))
-      .map((a) => a.id),
-  );
+  const bottleneck = template
+    ? new Set<number>()
+    : new Set(
+        acts
+          .filter(
+            (a) =>
+              a.standardDocNames.length > 0 &&
+              a.docs.length === 0 &&
+              hasIn.has(a.id) &&
+              hasOut.has(a.id),
+          )
+          .map((a) => a.id),
+      );
 
   /** 고른 영역(또는 기록 끊김)에 드는 업무만 두각을 나타낸다 */
   const inFocus = (a: Act) =>
@@ -398,23 +449,44 @@ function buildChart({
     (focus === BOTTLENECK ? bottleneck.has(a.id) : a.stageCode === focus);
   const focused = new Set(acts.filter(inFocus).map((a) => a.id));
 
-  const nodes: Node[] = acts.map((a) => ({
-    id: `act:${a.id}`,
-    type: "task",
-    position: placed.pos.get(a.id) ?? { x: 0, y: 0 },
-    draggable: editable,
+  /* 레인 배경 띠 — 상자보다 먼저 넣어 뒤에 깔리게 한다 */
+  const nodes: Node[] = (placed.lanes ?? []).map((lane) => ({
+    id: `lane:${lane.code}`,
+    type: "lane",
+    position: { x: -28, y: lane.y - LANE_PAD / 2 },
+    draggable: false,
+    selectable: false,
+    focusable: false,
+    zIndex: -1,
     data: {
-      name: a.name,
-      stageName: a.stageName,
-      tone: toneOf(a.stageCode),
-      docs: a.docs.slice(0, 2),
-      moreDocs: Math.max(0, a.docs.length - 2),
-      bottleneck: bottleneck.has(a.id),
-      dimmed: focus !== null && !focused.has(a.id),
-    } satisfies TaskData as unknown as Record<string, unknown>,
+      name: lane.name,
+      tone: lane.tone,
+      width: placed.width + 40,
+      height: lane.height + LANE_PAD / 2,
+    } satisfies LaneData as unknown as Record<string, unknown>,
   }));
 
+  for (const a of acts) {
+    const chips = template ? a.standardDocNames : a.docs;
+    nodes.push({
+      id: `act:${a.id}`,
+      type: "task",
+      position: placed.pos.get(a.id) ?? { x: 0, y: 0 },
+      draggable: editable,
+      data: {
+        name: a.name,
+        stageName: a.stageName,
+        tone: toneOf(a.stageCode),
+        docs: chips.slice(0, 2),
+        moreDocs: Math.max(0, chips.length - 2),
+        bottleneck: bottleneck.has(a.id),
+        dimmed: focus !== null && !focused.has(a.id),
+      } satisfies TaskData as unknown as Record<string, unknown>,
+    });
+  }
+
   const toneById = new Map(acts.map((a) => [a.id, toneOf(a.stageCode)]));
+  const stageById = new Map(acts.map((a) => [a.id, a.stageCode]));
   const edges: Edge[] = edgeList.map((e) => {
     const isBack = back.has(`${e.from}->${e.to}`);
     /* 병목에서 나가는 선은 붉게 — 그 자리에서 기록이 끊긴 채 다음으로 넘어간다는 뜻 */
@@ -428,10 +500,13 @@ function buildChart({
         : e.cross
           ? "var(--blue-500)"
           : (toneById.get(e.from) ?? "var(--grey-400)");
+    /* 레인을 건너는 선은 직교로 꺾는다 (v8 이슈②) — 사선이 여러 레인을 관통하며 엉키지 않게 */
+    const crossLane = stageById.get(e.from) !== stageById.get(e.to);
     return {
       id: `e:${e.from}-${e.to}`,
       source: `act:${e.from}`,
       target: `act:${e.to}`,
+      type: crossLane ? "smoothstep" : "default",
       markerEnd: { ...ARROW, color },
       style: {
         stroke: color,
@@ -612,7 +687,7 @@ export function WorkflowChart({
 
   const acts = useMemo(() => toActs(stages ?? []), [stages]);
   const graph = useMemo(
-    () => placeGraph(acts, connections ?? [], positions),
+    () => placeLanes(acts, connections ?? [], positions),
     [acts, connections, positions],
   );
   const flow = useMemo(
@@ -628,9 +703,22 @@ export function WorkflowChart({
       }),
     [acts, connections, graph, editable, focus],
   );
+
+  /* 드래그 중 상자가 커서를 따라오게 (v8 이슈③) — 노드를 상태로 들고 위치 변경을 실시간 반영한다.
+     완전 제어형(useMemo 결과를 그대로 넘김)이면 React Flow가 중간 위치를 그릴 곳이 없어
+     놓는 순간에만 이동한 것처럼 보였다 */
+  const [liveNodes, setLiveNodes] = useState<Node[]>([]);
+  useEffect(() => setLiveNodes(flow.nodes), [flow.nodes]);
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => setLiveNodes((nds) => applyNodeChanges(changes, nds)),
+    [],
+  );
+
   const standardPlaced = useMemo(() => (compare ? placeStandard(acts) : null), [compare, acts]);
   const standardFlow = useMemo(() => {
     if (!compare || !standardPlaced) return null;
+    /* 표준 패널은 정적 템플릿 (v8 이슈①) — 업무명 + 표준 요구 기록명만.
+       보유 문서 칩·기록 끊김 배지는 회사 워크플로우의 진단 결과라 여기 실리면 안 된다 */
     return buildChart({
       acts,
       connections: [],
@@ -639,6 +727,7 @@ export function WorkflowChart({
       editable: false,
       showLinks: false,
       focus,
+      template: true,
     });
   }, [compare, acts, standardPlaced, focus]);
 
@@ -757,47 +846,53 @@ export function WorkflowChart({
         >
           {editable
             ? "업무 상자를 드래그해 우리 회사의 실제 흐름대로 놓을 수 있어요"
-            : "화살표가 업무 흐름의 방향이에요 — 파란 선은 AI가 문서 흐름으로 판단한 연결이에요"}
+            : "분석 결과예요 — 화살표가 흐름 방향, 붉은 상자가 기록이 끊기는 지점이에요"}
           {saving ? " · 저장 중…" : linking ? " · AI가 업무 연결을 분석하고 있어요…" : ""}
         </p>
-        <button
-          type="button"
-          onClick={() => setCompare((v) => !v)}
-          aria-expanded={compare}
-          style={{
-            position: "absolute",
-            right: 0,
-            padding: "5px 12px",
-            borderRadius: "var(--radius-full)",
-            border: `1px solid ${compare ? "var(--line-brand)" : "var(--line-default)"}`,
-            background: compare ? "var(--bg-brand-weak)" : "var(--bg-elevated)",
-            color: compare ? "var(--fg-brand)" : "var(--fg-secondary)",
-            font: "var(--text-label-s)",
-            fontFamily: "var(--font-sans)",
-            cursor: "pointer",
-            transition: "border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease)",
-          }}
-        >
-          {compare ? "비교 닫기" : "비교하기"}
-        </button>
+        {/* 비교하기는 자료 정리(도출·확인) 단계에만 — 결과 화면은 분석 결과를 보는 자리라
+            표준 대비 비교가 목적이 아니다 (v8 이슈 3-1) */}
+        {editable && (
+          <button
+            type="button"
+            onClick={() => setCompare((v) => !v)}
+            aria-expanded={compare}
+            style={{
+              position: "absolute",
+              right: 0,
+              padding: "5px 12px",
+              borderRadius: "var(--radius-full)",
+              border: `1px solid ${compare ? "var(--line-brand)" : "var(--line-default)"}`,
+              background: compare ? "var(--bg-brand-weak)" : "var(--bg-elevated)",
+              color: compare ? "var(--fg-brand)" : "var(--fg-secondary)",
+              font: "var(--text-label-s)",
+              fontFamily: "var(--font-sans)",
+              cursor: "pointer",
+              transition: "border-color var(--dur-fast) var(--ease), background-color var(--dur-fast) var(--ease)",
+            }}
+          >
+            {compare ? "비교 닫기" : "비교하기"}
+          </button>
+        )}
       </div>
 
       <div style={{ ...canvasBox, height: canvasHeight(graph.rows) }}>
         <ReactFlow
-          nodes={flow.nodes}
+          nodes={liveNodes}
           edges={flow.edges}
           nodeTypes={nodeTypes}
+          onNodesChange={onNodesChange}
           onNodeDragStop={onDragStop}
-          /* fitView는 다 넣으려고 배율을 0.4까지 떨어뜨려 글자를 못 읽게 만든다.
-             읽을 수 있는 배율로 왼쪽 위(흐름의 시작)에서 열고, 전체는 좌하단 버튼으로 본다 */
-          defaultViewport={{ x: 24, y: 16, zoom: START_ZOOM }}
+          /* 초기 로드에 전체가 한 화면에 들어온다 (v8 이슈②) — 스임레인이 세로로 정돈되어
+             fitView를 걸어도 읽을 수 있는 배율이 나온다 */
+          fitView
+          fitViewOptions={{ padding: 0.06, minZoom: 0.4, maxZoom: 1 }}
           minZoom={0.25}
           maxZoom={1.6}
           proOptions={{ hideAttribution: true }}
           nodesConnectable={false}
           deleteKeyCode={null}
         >
-          <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+          {/* 점 격자 배경은 뺐다 (v8 이슈⑥) — 페이지의 다른 섹션과 톤을 맞춘다 */}
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
@@ -842,7 +937,6 @@ export function WorkflowChart({
               nodesConnectable={false}
               deleteKeyCode={null}
             >
-              <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
               <Controls showInteractive={false} />
             </ReactFlow>
           </div>
