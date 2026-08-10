@@ -8,6 +8,7 @@ import { ClassifyProgress } from "@/components/flow/ClassifyProgress";
 import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
 import { FileEditBoard } from "@/components/flow/FileEditBoard";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
+import { DigitalLevelSection } from "@/components/flow/DigitalLevelSection";
 import { PublicDataSection } from "@/components/flow/PublicDataSection";
 import { WorkflowSection } from "@/components/flow/WorkflowSection";
 import { RouteLoading } from "@/components/flow/RouteLoading";
@@ -897,6 +898,9 @@ export default function CollectPage() {
 
       {/* ── 공개 데이터 수집 — 진입 시 수집 시작, 진행률은 SSE (수정요청v9·v10) ── */}
       {assessmentId && <PublicDataSection assessmentId={assessmentId} />}
+
+      {/* ── 디지털화 수준 — 도넛 + 문서 목록, 워크플로우 위 (작업 요청 v8 이슈④) ── */}
+      {files && <DigitalLevelSection files={files} />}
 
       {/* ── 워크플로우 — 8대 영역 표준 워크플로우 + 이 기업 문서 보유 현황 (실데이터) ── */}
       <WorkflowSection companyName={companyInput.trim()} assessmentId={assessmentId} />
