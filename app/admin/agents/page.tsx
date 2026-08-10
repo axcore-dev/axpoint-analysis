@@ -83,6 +83,8 @@ type PromptItem = CanvasPrompt & {
   desc: string;
   vars: { name: string; desc: string }[];
   guard: boolean;
+  /** 저장 때마다 자동으로 다시 붙는 주입 방어 문구 전문 — 백엔드 배포 전 응답에는 없다 */
+  guardText?: string | null;
   /** 코드 기본값(v0) 내용 — '수정됨' 판별과 v0 비교 diff의 기준 */
   defaultSystem: string;
   system: string;
@@ -729,6 +731,38 @@ export default function AdminAgentsPage() {
                   )}
                   {selected.guard && <Badge tone="neutral">주입 방어 자동 유지</Badge>}
                 </div>
+                {/* 방어 문구 전문 (v9 A13·B8) — 지시문을 어떻게 고쳐도 저장 시 서버가 이 문구를
+                    자동으로 다시 붙인다. 읽기 전용 확인용 — 원문은 서버 응답(guardText)이 원본이라
+                    아직 안 실려 오면 토글 자체를 숨긴다 */}
+                {selected.guard && selected.guardText && (
+                  <details style={{ marginTop: 8 }}>
+                    <summary
+                      style={{
+                        font: "var(--text-caption)",
+                        color: "var(--fg-secondary)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      방어 문구 보기
+                    </summary>
+                    <pre
+                      style={{
+                        margin: "6px 0 0",
+                        padding: "10px 12px",
+                        borderRadius: "var(--radius-m)",
+                        background: "var(--bg-secondary)",
+                        font: "12px/1.6 var(--font-mono)",
+                        color: "var(--fg-secondary)",
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        maxHeight: 220,
+                        overflowY: "auto",
+                      }}
+                    >
+                      {selected.guardText}
+                    </pre>
+                  </details>
+                )}
                 <p style={{ margin: "8px 0 0", font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
                   {selected.desc}
                 </p>
