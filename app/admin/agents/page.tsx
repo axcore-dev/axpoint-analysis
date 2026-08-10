@@ -56,6 +56,28 @@ type LogRow = {
   tokensOut: number;
   error: string | null;
   createdAt: string;
+  /** 현재 배정 모델 단가 기준 추정 비용 — 단가를 모르는 모델·코드 단계는 null */
+  estCostUsd: number | null;
+};
+/** 로그 필터 — 바뀌면 목록을 처음부터 다시 받는다 */
+type LogFilterState = {
+  status: string;
+  node: string;
+  q: string;
+  range: "today" | "7d" | "30d" | "all";
+};
+/** 드라이런 응답 — 실행 실패도 200으로 오고, 그때는 output 대신 error가 실린다 */
+type DryRunRes = {
+  assessmentId: string;
+  input: string;
+  durationMs: number;
+  model: string;
+  output?: unknown;
+  valid?: boolean;
+  schemaErrors?: string[];
+  tokensIn?: number;
+  tokensOut?: number;
+  error?: string;
 };
 type PromptItem = CanvasPrompt & {
   desc: string;
@@ -81,6 +103,10 @@ const RUN_TONE: Record<string, string> = {
   queued: "var(--grey-400)",
   skipped: "var(--grey-400)",
 };
+/** 상태 셀렉트 선택지 — RUN_TONE과 같은 집합 */
+const RUN_STATUSES = Object.keys(RUN_TONE);
+/** 로그 한 번에 받는 양 — '더 보기'가 이 단위로 이어 붙인다 */
+const LOG_PAGE = 100;
 
 export default function AdminAgentsPage() {
   const [tab, setTab] = useState<"graph" | "logs">("graph");
@@ -92,9 +118,18 @@ export default function AdminAgentsPage() {
   /** 프롬프트 키 → 권장(코드 기본) 모델 */
   const [recommended, setRecommended] = useState<Record<string, string>>({});
   const [logs, setLogs] = useState<LogRow[] | null>(null);
-  const [onlyFailed, setOnlyFailed] = useState(false);
+  const [logTotal, setLogTotal] = useState(0);
+  const [logFilter, setLogFilter] = useState<LogFilterState>({ status: "", node: "", q: "", range: "all" });
+  /** 기업명 검색 입력 원본 — 디바운스를 거쳐 logFilter.q가 된다 */
+  const [qInput, setQInput] = useState("");
+  /** 로그에 한 번이라도 등장한 노드 — 필터를 좁혀도 셀렉트 선택지가 줄지 않게 누적한다 */
+  const [nodeOptions, setNodeOptions] = useState<string[]>([]);
+  /** 한 진단만 보기 — 행의 기업명을 눌러 건다. 서버 재조회 없는 클라이언트 필터 */
+  const [assessOnly, setAssessOnly] = useState<{ id: string; name: string } | null>(null);
   /** 로그에서 펼쳐 본 실행의 상세 트레이스 (진단×노드) */
   const [logDetail, setLogDetail] = useState<{ key: string; run: NodeRun | null } | null>(null);
+  /** 드라이런 — 확인 → 실행 중 → 결과. DB에 아무것도 남지 않는 시험 실행 */
+  const [dryRun, setDryRun] = useState<{ phase: "confirm" | "running" | "done"; res?: DryRunRes; failMsg?: string } | null>(null);
   /** 편집 중인 지시문 키 — 그래프 노드가 아니라 지시문이 선택 단위다 */
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -135,14 +170,39 @@ export default function AdminAgentsPage() {
   }, []);
   useEffect(load, [load]);
 
-  const loadLogs = useCallback((failedOnly: boolean) => {
-    api<{ items: LogRow[] }>(`/api/admin/agent-logs${failedOnly ? "?status=failed" : ""}`)
-      .then((res) => setLogs(res.items))
+  /** offset 0이면 새 목록, 그 이상이면 '더 보기'로 이어 붙인다 */
+  const loadLogs = useCallback((filter: LogFilterState, offset = 0) => {
+    const qs = new URLSearchParams();
+    if (filter.status) qs.set("status", filter.status);
+    if (filter.node) qs.set("node", filter.node);
+    if (filter.q) qs.set("q", filter.q);
+    if (filter.range !== "all") {
+      const from = new Date();
+      if (filter.range === "today") from.setHours(0, 0, 0, 0);
+      else from.setDate(from.getDate() - (filter.range === "7d" ? 7 : 30));
+      qs.set("from", from.toISOString());
+    }
+    qs.set("limit", String(LOG_PAGE));
+    if (offset > 0) qs.set("offset", String(offset));
+    api<{ items: LogRow[]; total: number }>(`/api/admin/agent-logs?${qs.toString()}`)
+      .then((res) => {
+        setLogs((prev) => (offset > 0 && prev ? [...prev, ...res.items] : res.items));
+        setLogTotal(res.total);
+        setNodeOptions((prev) => [...new Set([...prev, ...res.items.map((r) => r.nodeId)])].sort());
+      })
       .catch((e) => setError(e instanceof Error ? e.message : "로그를 불러오지 못했어요."));
   }, []);
   useEffect(() => {
-    if (tab === "logs") loadLogs(onlyFailed);
-  }, [tab, onlyFailed, loadLogs]);
+    if (tab === "logs") loadLogs(logFilter, 0);
+  }, [tab, logFilter, loadLogs]);
+  // 기업명 검색 디바운스 — 타이핑이 멎고 나서 한 번만 조회한다
+  useEffect(() => {
+    const t = setTimeout(
+      () => setLogFilter((f) => (f.q === qInput.trim() ? f : { ...f, q: qInput.trim() })),
+      350,
+    );
+    return () => clearTimeout(t);
+  }, [qInput]);
 
   const graph = graphRes?.active.graph;
   const toolMeta = graphRes?.toolMeta ?? {};
@@ -162,6 +222,8 @@ export default function AdminAgentsPage() {
         .map((v) => v.name)
         .filter((n) => v0System.includes(`{${n}}`) && !systemDraft.includes(`{${n}}`))
     : [];
+  /** 화면에 그리는 로그 — '이 진단만' 필터는 받아 둔 목록에서 거른다 */
+  const shownLogs = (logs ?? []).filter((l) => !assessOnly || l.assessmentId === assessOnly.id);
 
   /** 지시문 선택 — 편집 팝업을 열고 초안을 현재 값으로 채운다 */
   const selectPrompt = (key: string) => {
@@ -171,10 +233,28 @@ export default function AdminAgentsPage() {
     setSystemDraft(p?.system ?? "");
     setShowDiff(false);
     setConfirmSave(false);
+    setDryRun(null);
     const node = graph?.nodes.find((n) => n.promptKey === key);
     setToolDraft(node?.tools ?? []);
     setStepDraft(node?.maxSteps ?? 12);
     setSchemaDraft(JSON.stringify(node?.outputSchema ?? {}, null, 2));
+  };
+
+  /** 드라이런 실행 — 노드 id 그대로 보낸다(judge:ST 같은 접미 포함). 응답이 올 때까지 재클릭 불가 */
+  const runDryRun = () => {
+    if (!selectedNode) return;
+    setDryRun({ phase: "running" });
+    api<DryRunRes>("/api/admin/agent-dry-run", {
+      method: "POST",
+      body: JSON.stringify({ node: selectedNode.id }),
+    })
+      .then((res) => setDryRun({ phase: "done", res }))
+      .catch((e) =>
+        setDryRun({
+          phase: "done",
+          failMsg: e instanceof Error ? e.message : "실행하지 못했어요.",
+        }),
+      );
   };
 
   /** 자리표시자 클릭 삽입 — 커서 위치에 {이름}을 넣고 커서를 그 뒤로 옮긴다 */
@@ -306,51 +386,120 @@ export default function AdminAgentsPage() {
 
       {tab === "logs" ? (
         <Card radius="xl" padded={false}>
-          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--line-subtle)" }}>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, font: "var(--text-caption)", color: "var(--fg-secondary)", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={onlyFailed}
-                onChange={(e) => setOnlyFailed(e.target.checked)}
-                style={{ accentColor: "var(--blue-500)" }}
-              />
-              실패만 보기
-            </label>
-            <Button variant="ghost" size="sm" onClick={() => loadLogs(onlyFailed)}>
+          {/* 필터 — 상태·노드·기업명·기간. 진단 단위 필터(assessOnly)는 클라이언트에서 거른다 */}
+          <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", borderBottom: "1px solid var(--line-subtle)" }}>
+            <select
+              value={logFilter.status}
+              onChange={(e) => setLogFilter((f) => ({ ...f, status: e.target.value }))}
+              style={selectStyle}
+              aria-label="상태"
+            >
+              <option value="">전체 상태</option>
+              {RUN_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <select
+              value={logFilter.node}
+              onChange={(e) => setLogFilter((f) => ({ ...f, node: e.target.value }))}
+              style={selectStyle}
+              aria-label="노드"
+            >
+              <option value="">전체 노드</option>
+              {nodeOptions.some((n) => !n.startsWith("code:")) && (
+                <optgroup label="에이전트">
+                  {nodeOptions
+                    .filter((n) => !n.startsWith("code:"))
+                    .map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+              {nodeOptions.some((n) => n.startsWith("code:")) && (
+                <optgroup label="코드 단계">
+                  {nodeOptions
+                    .filter((n) => n.startsWith("code:"))
+                    .map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                </optgroup>
+              )}
+            </select>
+            <input
+              value={qInput}
+              onChange={(e) => setQInput(e.target.value)}
+              placeholder="기업명 검색"
+              aria-label="기업명 검색"
+              style={{ ...selectStyle, width: 150 }}
+            />
+            <select
+              value={logFilter.range}
+              onChange={(e) => setLogFilter((f) => ({ ...f, range: e.target.value as LogFilterState["range"] }))}
+              style={selectStyle}
+              aria-label="기간"
+            >
+              <option value="today">오늘</option>
+              <option value="7d">7일</option>
+              <option value="30d">30일</option>
+              <option value="all">전체</option>
+            </select>
+            <Button variant="ghost" size="sm" onClick={() => loadLogs(logFilter, 0)}>
               새로고침
             </Button>
             {logs && (
               <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", marginLeft: "auto" }}>
-                {logs.length}건 · 실패 {logs.filter((l) => l.status === "failed").length}건
+                {shownLogs.length}건 · 실패 {shownLogs.filter((l) => l.status === "failed").length}건
               </span>
             )}
           </div>
+          {/* 한 진단만 보는 중 — 행의 기업명을 누르면 걸리고, 해제하면 전체로 돌아간다 */}
+          {assessOnly && (
+            <div style={{ padding: "8px 16px", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--line-subtle)" }}>
+              <Badge tone="accent">{assessOnly.name} · 이 진단만</Badge>
+              <Button variant="ghost" size="sm" onClick={() => setAssessOnly(null)}>
+                해제
+              </Button>
+            </div>
+          )}
           {logs === null ? (
             <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}>
               <Loader />
             </div>
-          ) : logs.length === 0 ? (
+          ) : shownLogs.length === 0 ? (
             <p style={{ margin: 0, padding: "24px 16px", font: "var(--text-body3)", color: "var(--fg-tertiary)" }}>
               아직 실행 기록이 없어요.
             </p>
           ) : (
             <div>
-              {logs.map((l) => {
+              {shownLogs.map((l) => {
                 const key = `${l.assessmentId}:${l.nodeId}`;
                 const open = logDetail?.key === key;
                 return (
                   <div key={l.id} style={{ borderBottom: "1px solid var(--line-subtle)" }}>
-                    <button
-                      type="button"
+                    {/* 행 전체가 트레이스 토글 — 안에 기업명(진단 필터) 버튼이 있어 button 중첩을
+                        피하려고 role=button div로 둔다. 키보드는 Enter·Space로 연다 */}
+                    <div
+                      role="button"
+                      tabIndex={0}
                       onClick={() => void openLog(l)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          void openLog(l);
+                        }
+                      }}
                       style={{
                         width: "100%",
                         display: "flex",
                         alignItems: "center",
                         gap: 10,
                         padding: "10px 16px",
-                        border: "none",
-                        background: "transparent",
                         textAlign: "left",
                         cursor: "pointer",
                       }}
@@ -359,10 +508,36 @@ export default function AdminAgentsPage() {
                         aria-hidden
                         style={{ width: 7, height: 7, borderRadius: 999, background: RUN_TONE[l.status] ?? "var(--grey-400)", flex: "none" }}
                       />
-                      <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)", minWidth: 120 }}>{l.nodeId}</span>
-                      <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", minWidth: 150 }}>
-                        {l.companyName ?? "이름 없음"}
+                      <span style={{ font: "var(--text-label-s)", color: "var(--fg-primary)", minWidth: 120, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                        {l.nodeId}
+                        {l.nodeId.startsWith("code:") && (
+                          <span style={{ flex: "none", font: "10px/1.4 var(--font-sans)", color: "var(--fg-tertiary)", background: "var(--bg-tertiary)", borderRadius: 4, padding: "1px 5px" }}>
+                            코드 단계
+                          </span>
+                        )}
                       </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAssessOnly({ id: l.assessmentId, name: l.companyName ?? "이름 없음" });
+                        }}
+                        title="이 진단의 실행만 모아 보기"
+                        style={{
+                          minWidth: 150,
+                          padding: 0,
+                          border: "none",
+                          background: "transparent",
+                          textAlign: "left",
+                          font: "var(--text-caption)",
+                          color: "var(--fg-tertiary)",
+                          textDecoration: "underline dotted",
+                          textUnderlineOffset: 3,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {l.companyName ?? "이름 없음"}
+                      </button>
                       <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", fontFamily: "var(--font-mono)", minWidth: 130 }}>
                         {l.createdAt.slice(5, 16).replace("T", " ")}
                       </span>
@@ -371,6 +546,12 @@ export default function AdminAgentsPage() {
                       </span>
                       <span style={{ font: "var(--text-caption)", color: "var(--fg-quaternary)", fontFamily: "var(--font-mono)", minWidth: 110 }}>
                         in {l.tokensIn.toLocaleString("ko-KR")}
+                      </span>
+                      <span
+                        title="현재 배정 모델 단가 기준 추정"
+                        style={{ font: "var(--text-caption)", color: "var(--fg-quaternary)", fontFamily: "var(--font-mono)", minWidth: 70 }}
+                      >
+                        {l.estCostUsd != null ? `$${l.estCostUsd.toFixed(4)}` : "—"}
                       </span>
                       <span
                         style={{
@@ -384,9 +565,37 @@ export default function AdminAgentsPage() {
                       >
                         {l.error ?? l.status}
                       </span>
-                    </button>
+                    </div>
                     {open && (
                       <div style={{ padding: "0 16px 12px 44px" }}>
+                        {/* 에러 전문 — 행에서는 한 줄로 잘리니 펼치면 전체를 보여 주고 복사할 수 있게 */}
+                        {l.error && (
+                          <div style={{ marginBottom: 8 }}>
+                            <pre
+                              style={{
+                                margin: 0,
+                                padding: "8px 10px",
+                                borderRadius: "var(--radius-m)",
+                                background: "var(--bg-danger-weak)",
+                                color: "var(--fg-danger)",
+                                font: "11px/1.5 var(--font-mono)",
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-all",
+                                maxHeight: 200,
+                                overflowY: "auto",
+                              }}
+                            >
+                              {l.error}
+                            </pre>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => void navigator.clipboard.writeText(l.error ?? "")}
+                            >
+                              에러 복사
+                            </Button>
+                          </div>
+                        )}
                         {logDetail?.run == null ? (
                           <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
                             상세 트레이스를 불러오는 중이거나 남아 있지 않아요.
@@ -415,6 +624,14 @@ export default function AdminAgentsPage() {
                   </div>
                 );
               })}
+            </div>
+          )}
+          {/* 서버가 준 total 기준 페이지네이션 — 이어 붙이기라 보던 자리가 유지된다 */}
+          {logs && logs.length < logTotal && (
+            <div style={{ padding: "10px 16px", display: "flex", justifyContent: "center", borderTop: "1px solid var(--line-subtle)" }}>
+              <Button variant="ghost" size="sm" onClick={() => loadLogs(logFilter, logs.length)}>
+                더 보기 ({logs.length.toLocaleString("ko-KR")}/{logTotal.toLocaleString("ko-KR")})
+              </Button>
             </div>
           )}
         </Card>
@@ -997,6 +1214,118 @@ export default function AdminAgentsPage() {
                         노드 저장 · 발행
                       </Button>
                     </div>
+
+                    {/* 시험 실행 — 운영과 같은 입력·프롬프트·모델로 이 노드만 한 번 돌려 본다.
+                        DB에 기록이 남지 않고, 결과로 출력 스키마 통과 여부까지 바로 확인한다 */}
+                    <p style={{ margin: "22px 0 6px", font: "var(--text-label-s)", color: "var(--fg-primary)" }}>
+                      드라이런
+                      <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)", marginLeft: 8 }}>
+                        최근 완료 진단을 샘플로 이 노드만 시험 실행 — 기록은 남지 않아요
+                      </span>
+                    </p>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      {dryRun == null && (
+                        <Button variant="secondary" size="sm" onClick={() => setDryRun({ phase: "confirm" })}>
+                          드라이런
+                        </Button>
+                      )}
+                      {dryRun?.phase === "confirm" && (
+                        <>
+                          <span style={{ font: "var(--text-caption)", color: "var(--fg-warning)" }}>
+                            실제 모델을 호출해요 — 비용이 들고 수십 초 걸릴 수 있어요.
+                          </span>
+                          <Button variant="secondary" size="sm" onClick={runDryRun}>
+                            실행
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setDryRun(null)}>
+                            취소
+                          </Button>
+                        </>
+                      )}
+                      {dryRun?.phase === "running" && (
+                        <>
+                          <Loader />
+                          <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                            실행 중 — 수십 초 걸릴 수 있어요
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    {dryRun?.phase === "done" && (
+                      <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: "var(--radius-m)", border: "1px solid var(--line-default)" }}>
+                        {dryRun.failMsg != null ? (
+                          <p role="alert" style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-danger)" }}>
+                            {dryRun.failMsg}
+                          </p>
+                        ) : dryRun.res ? (
+                          <>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                              {dryRun.res.error != null ? (
+                                <Badge tone="danger">실행 실패</Badge>
+                              ) : dryRun.res.valid ? (
+                                <Badge tone="success">스키마 통과</Badge>
+                              ) : (
+                                <Badge tone="danger">스키마 불일치</Badge>
+                              )}
+                              <span style={{ font: "11px/1.5 var(--font-mono)", color: "var(--fg-tertiary)" }}>
+                                {dryRun.res.model} · 샘플 {dryRun.res.assessmentId.slice(0, 8)}
+                                {dryRun.res.tokensIn != null &&
+                                  ` · in ${dryRun.res.tokensIn.toLocaleString("ko-KR")} · out ${(dryRun.res.tokensOut ?? 0).toLocaleString("ko-KR")}`}
+                                {` · ${(dryRun.res.durationMs / 1000).toFixed(1)}s`}
+                              </span>
+                            </div>
+                            {dryRun.res.error != null && (
+                              <pre
+                                style={{
+                                  margin: "8px 0 0",
+                                  padding: "8px 10px",
+                                  borderRadius: "var(--radius-m)",
+                                  background: "var(--bg-danger-weak)",
+                                  color: "var(--fg-danger)",
+                                  font: "11px/1.5 var(--font-mono)",
+                                  whiteSpace: "pre-wrap",
+                                  wordBreak: "break-all",
+                                  maxHeight: 200,
+                                  overflowY: "auto",
+                                }}
+                              >
+                                {dryRun.res.error}
+                              </pre>
+                            )}
+                            {(dryRun.res.schemaErrors ?? []).length > 0 && (
+                              <ul style={{ margin: "8px 0 0", paddingLeft: 18, font: "var(--text-caption)", color: "var(--fg-danger)" }}>
+                                {(dryRun.res.schemaErrors ?? []).map((s, i) => (
+                                  <li key={i}>{s}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <details style={{ marginTop: 8 }}>
+                              <summary style={{ font: "var(--text-caption)", color: "var(--fg-secondary)", cursor: "pointer" }}>
+                                입력 (앞 4,000자)
+                              </summary>
+                              <pre style={{ margin: "4px 0 0", padding: "8px 10px", borderRadius: "var(--radius-m)", background: "var(--bg-secondary)", font: "11px/1.5 var(--font-mono)", color: "var(--fg-secondary)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 240, overflowY: "auto" }}>
+                                {dryRun.res.input}
+                              </pre>
+                            </details>
+                            {dryRun.res.error == null && (
+                              <details style={{ marginTop: 4 }}>
+                                <summary style={{ font: "var(--text-caption)", color: "var(--fg-secondary)", cursor: "pointer" }}>
+                                  출력
+                                </summary>
+                                <pre style={{ margin: "4px 0 0", padding: "8px 10px", borderRadius: "var(--radius-m)", background: "var(--bg-secondary)", font: "11px/1.5 var(--font-mono)", color: "var(--fg-primary)", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 240, overflowY: "auto" }}>
+                                  {JSON.stringify(dryRun.res.output, null, 2)}
+                                </pre>
+                              </details>
+                            )}
+                          </>
+                        ) : null}
+                        <div style={{ marginTop: 8 }}>
+                          <Button variant="ghost" size="sm" onClick={() => setDryRun(null)}>
+                            닫기
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
