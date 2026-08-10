@@ -207,6 +207,8 @@ type SubData = {
   tone: string;
   toolCount: number;
   useCount: number;
+  /** 실제로 도는 모델 — 팝업을 열지 않아도 배정 불일치가 보여야 한다 (v9 B3) */
+  model: string;
   version: string;
   selected: boolean;
 };
@@ -243,6 +245,7 @@ function SubNode({ data }: NodeProps) {
       </strong>
       <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 3 }}>
         <span
+          title={d.slug}
           style={{
             minWidth: 0,
             flex: 1,
@@ -253,7 +256,7 @@ function SubNode({ data }: NodeProps) {
             textOverflow: "ellipsis",
           }}
         >
-          {d.slug}
+          {d.model}
         </span>
         <span style={{ flex: "none", font: "10px/1.4 var(--font-sans)", color: "var(--fg-quaternary)" }}>
           {d.toolCount > 0 ? `도구 ${d.toolCount}` : `자료 ${d.useCount}`} · {d.version}
@@ -511,6 +514,7 @@ export function AgentCanvas({
             tone,
             toolCount: toolsOf(s.key).length,
             useCount: pillsOf(s.key, s.uses).length,
+            model: sp.model,
             version: versionOf(sp),
             selected: selectedKey === s.key,
           } satisfies SubData as unknown as Record<string, unknown>,
