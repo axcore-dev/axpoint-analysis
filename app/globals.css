@@ -767,6 +767,32 @@ body {
 .react-flow:has(.react-flow__node.dragging) {
   cursor: grabbing;
 }
+/* 교체 대상 카드 — 집은 카드를 이 위에 놓으면 서로 자리가 바뀐다는 신호.
+   테두리 강조 + 스케일 펄스. 드래그 중인 카드(z 20)보다는 아래 */
+.react-flow__node.ax-wf-swap-target {
+  z-index: 15 !important;
+}
+.react-flow__node.ax-wf-swap-target .ax-wf-node {
+  border-color: var(--wf-tone, var(--line-brand));
+  box-shadow:
+    var(--shadow-1),
+    0 0 0 4px color-mix(in srgb, var(--wf-tone, #0a50ff) 22%, transparent);
+  animation: ax-wf-swap-pulse 0.85s var(--ease) infinite;
+}
+@keyframes ax-wf-swap-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+/* 교체 확정 직후 잠깐만 — 두 카드가 서로의 자리로 미끄러진다.
+   드래그 실시간 추종과 부딪히지 않게 드롭 후 짧게 켰다 끈다 */
+.ax-wf-swapping .react-flow__node {
+  transition: transform 300ms var(--ease);
+}
 
 /* ---- 접힌 내용 펼치기 (산출 내역 등) — 높이까지 함께 자라 딱딱하지 않게 (v7).
    grid-template-rows 0fr→1fr은 auto 높이를 애니메이션할 수 있는 유일한 방법이다.

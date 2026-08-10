@@ -77,6 +77,10 @@ type WorkflowGaps = {
   }[];
 };
 
+/* 분석 레이어 — 합성 노드별 기록 끊김·DX 지점·AX 지점 (백엔드 산수 결과).
+   결과 화면(읽기 모드)이 붉은 상자·배지·범례 칩을 이걸로 그린다 */
+type NodeLayerFlags = { broken: boolean; dx: boolean; ax: boolean };
+
 const NODE_W = 196;
 const LAYER_X = 268; // 층 간격 (노드 폭 + 여백)
 const ROW_H = 104; // 같은 층 안 세로 간격
@@ -113,9 +117,16 @@ type TaskData = {
   /** 화면에 못 담은 나머지 문서 수 */
   moreDocs: number;
   bottleneck: boolean;
+  /** 분석 레이어 배지 (결과 화면) — 카드에는 우선순위 하나만, 나머지는 툴팁 */
+  dx: boolean;
+  ax: boolean;
   /** 범례에서 다른 영역을 고른 상태 — 색을 빼고 흐리게 물러난다 (v7-1) */
   dimmed: boolean;
 };
+
+/** 레이어 배지 색 — DX는 파랑, AX는 보라 (STAGE_TONE.design과 같은 계열) */
+const DX_COLOR = "var(--blue-500)";
+const AX_COLOR = "#7A5AF8";
 
 /**
  * 업무 상자 — 영역 구분은 **테두리 색**만 맡는다 (v7-1).
@@ -130,10 +141,22 @@ function TaskNode({ data }: NodeProps) {
     : d.bottleneck
       ? "var(--fg-danger)"
       : d.tone;
+  /* 배지는 우선순위 하나만 카드에 — broken > dx > ax. 겹친 나머지는 툴팁으로 */
+  const badge = d.bottleneck
+    ? { label: "기록 끊김", color: "var(--fg-danger)" }
+    : d.dx
+      ? { label: "DX 지점", color: DX_COLOR }
+      : d.ax
+        ? { label: "AX 지점", color: AX_COLOR }
+        : null;
+  const hiddenLayers = [
+    d.bottleneck && d.dx ? "DX 지점" : null,
+    (d.bottleneck || d.dx) && d.ax ? "AX 지점" : null,
+  ].filter(Boolean) as string[];
   return (
     <div
       className="ax-wf-node"
-      title={d.stageName}
+      title={[d.stageName, ...hiddenLayers].join(" · ")}
       style={{
         /* 모양(테두리·그림자·집힘 효과)은 globals.css가 맡는다 — 인라인 스타일은 규칙보다 세서
            .dragging 규칙이 먹히지 않는다. 여기서는 값만 변수로 넘긴다 */
@@ -161,16 +184,16 @@ function TaskNode({ data }: NodeProps) {
         >
           {d.name}
         </span>
-        {d.bottleneck && !d.dimmed && (
+        {badge && !d.dimmed && (
           <span
             style={{
               flex: "none",
               font: "var(--text-caption)",
               fontWeight: 600,
-              color: "var(--fg-danger)",
+              color: badge.color,
             }}
           >
-            기록 끊김
+            {badge.label}
           </span>
         )}
       </span>
@@ -207,39 +230,9 @@ function TaskNode({ data }: NodeProps) {
   );
 }
 
-/** 레인 배경 띠 — 영역 이름과 옅은 바탕으로 가로 레인을 알려 준다. 상자 뒤에 깔린다 */
-type LaneData = { name: string; tone: string; width: number; height: number };
-
-function LaneNode({ data }: NodeProps) {
-  const d = data as unknown as LaneData;
-  return (
-    <div
-      style={{
-        width: d.width,
-        height: d.height,
-        borderRadius: 12,
-        background: `${d.tone}07`,
-        border: `1px dashed ${d.tone}2E`,
-        pointerEvents: "none",
-      }}
-    >
-      <span
-        style={{
-          position: "absolute",
-          top: 6,
-          left: 10,
-          font: "600 11px/1.4 var(--font-sans)",
-          color: d.tone,
-          opacity: 0.85,
-        }}
-      >
-        {d.name}
-      </span>
-    </div>
-  );
-}
-
-const nodeTypes = { task: TaskNode, lane: LaneNode };
+/* 레인 배경 띠·영역명 라벨은 그리지 않는다 — 영역 구분은 테두리 색과 하단 범례가 이미 한다.
+   레인은 배치 계산(placeLanes)에만 남아 세로 자리를 잡는다 */
+const nodeTypes = { task: TaskNode };
 
 /* ── 배치 계산 ─────────────────────────────────────────────────────── */
 
@@ -478,6 +471,8 @@ function buildChart({
   template = false,
   bottleneckOverride,
   inferredKeys,
+  dxSet,
+  axSet,
 }: {
   acts: Act[];
   /** 그릴 연결 — 표준 기반은 allEdges() 산출, 합성 모드는 합성 엣지를 넘긴다 (v9) */
@@ -497,6 +492,9 @@ function buildChart({
   bottleneckOverride?: Set<number>;
   /** 합성 엣지 중 '추정'(inferred) — 점선 + 라벨로 구분한다 (v9 A5) */
   inferredKeys?: Set<string>;
+  /** 분석 레이어 (결과 화면) — DX·AX 지점 노드의 화면 idx. 읽기 모드에서만 넘어온다 */
+  dxSet?: Set<number>;
+  axSet?: Set<number>;
 }): { nodes: Node[]; edges: Edge[]; bottlenecks: number[] } {
   const hasIn = new Set(edgeList.map((e) => e.to));
   const hasOut = new Set(edgeList.map((e) => e.from));
@@ -517,29 +515,19 @@ function buildChart({
           .map((a) => a.id),
       );
 
-  /** 고른 영역(또는 기록 끊김)에 드는 업무만 두각을 나타낸다 */
+  /** 고른 영역(또는 기록 끊김·DX·AX 레이어)에 드는 업무만 두각을 나타낸다 */
   const inFocus = (a: Act) =>
     focus === null ||
-    (focus === BOTTLENECK ? bottleneck.has(a.id) : a.stageCode === focus);
+    (focus === BOTTLENECK
+      ? bottleneck.has(a.id)
+      : focus === DX_FOCUS
+        ? (dxSet?.has(a.id) ?? false)
+        : focus === AX_FOCUS
+          ? (axSet?.has(a.id) ?? false)
+          : a.stageCode === focus);
   const focused = new Set(acts.filter(inFocus).map((a) => a.id));
 
-  /* 레인 배경 띠 — 상자보다 먼저 넣어 뒤에 깔리게 한다 */
-  const nodes: Node[] = (placed.lanes ?? []).map((lane) => ({
-    id: `lane:${lane.code}`,
-    type: "lane",
-    position: { x: -28, y: lane.y - LANE_PAD / 2 },
-    draggable: false,
-    selectable: false,
-    focusable: false,
-    zIndex: -1,
-    data: {
-      name: lane.name,
-      tone: lane.tone,
-      width: placed.width + 40,
-      height: lane.height + LANE_PAD / 2,
-    } satisfies LaneData as unknown as Record<string, unknown>,
-  }));
-
+  const nodes: Node[] = [];
   for (const a of acts) {
     const chips = template ? a.standardDocNames : a.docs;
     nodes.push({
@@ -554,6 +542,8 @@ function buildChart({
         docs: chips.slice(0, 2),
         moreDocs: Math.max(0, chips.length - 2),
         bottleneck: bottleneck.has(a.id),
+        dx: dxSet?.has(a.id) ?? false,
+        ax: axSet?.has(a.id) ?? false,
         dimmed: focus !== null && !focused.has(a.id),
       } satisfies TaskData as unknown as Record<string, unknown>,
     });
@@ -609,6 +599,9 @@ function buildChart({
 
 /** 범례에서 '기록 끊김'을 고른 상태를 가리키는 값 — 영역 코드와 섞이지 않게 따로 둔다 */
 const BOTTLENECK = "__bottleneck";
+/** 분석 레이어 포커스 키 (결과 화면) — DX 지점·AX 지점 칩 */
+const DX_FOCUS = "__dx";
+const AX_FOCUS = "__ax";
 
 /**
  * 범례 — 표시가 아니라 **버튼**이다 (v7-1).
@@ -617,12 +610,17 @@ const BOTTLENECK = "__bottleneck";
 function Legend({
   stages,
   bottlenecks,
+  dxCount = 0,
+  axCount = 0,
   focus,
   onFocus,
 }: {
   /** 범례 칩 목록 — 합성 모드에서는 노드가 실제로 있는 영역만 온다 (v9) */
   stages: { code: string; name: string }[];
   bottlenecks: number;
+  /** 분석 레이어 칩 (결과 화면) — 0이면 그리지 않는다 */
+  dxCount?: number;
+  axCount?: number;
   focus: string | null;
   onFocus: (next: string | null) => void;
 }) {
@@ -683,6 +681,8 @@ function Legend({
       {stages.map((s) => chip(s.code, toneOf(s.code), s.name))}
       {bottlenecks > 0 &&
         chip(BOTTLENECK, "var(--fg-danger)", `기록 끊김 ${bottlenecks}곳`, true)}
+      {dxCount > 0 && chip(DX_FOCUS, DX_COLOR, `DX 지점 ${dxCount}곳`)}
+      {axCount > 0 && chip(AX_FOCUS, AX_COLOR, `AX 지점 ${axCount}곳`)}
       {focus !== null && (
         <button
           type="button"
@@ -735,6 +735,8 @@ export function WorkflowChart({
   const [synthesized, setSynthesized] = useState<Synthesized | null>(null);
   /** v9 A6 — 표준 대비 갭. 합성 노드의 기록 끊김 표시와 미확인 업무 안내에 쓴다 */
   const [gaps, setGaps] = useState<WorkflowGaps | null>(null);
+  /** 분석 레이어 — 합성 노드별 기록 끊김·DX·AX 지점. 결과 화면 배지·범례 칩 재료 */
+  const [layers, setLayers] = useState<Record<string, NodeLayerFlags> | null>(null);
   /** 사용자가 옮겨 둔 상자 좌표 — 옮긴 것만 담긴다. 나머지는 자동 배치 (v7-1) */
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [saving, setSaving] = useState(false);
@@ -755,12 +757,14 @@ export function WorkflowChart({
       positions?: Record<string, { x: number; y: number }>;
       synthesized?: Synthesized | null;
       gaps?: WorkflowGaps | null;
+      layers?: Record<string, NodeLayerFlags> | null;
     }>(`/api/assessments/${assessmentId}/workflow`)
-      .then(({ stages, connections, positions, synthesized, gaps }) => {
+      .then(({ stages, connections, positions, synthesized, gaps, layers }) => {
         setStages(stages ?? []);
         setConnections(connections);
         setSynthesized(synthesized ?? null);
         setGaps(gaps ?? null);
+        setLayers(layers ?? null);
         setPositions(positions ?? {});
       })
       .catch(() => setStages([]));
@@ -829,6 +833,23 @@ export function WorkflowChart({
     );
   }, [synthMode, synthesized, gaps]);
 
+  /* 분석 레이어 → 화면 idx 집합. broken은 gaps보다 우선한다(같은 산수의 최종 결과라
+     결과 화면에서 기록 끊김이 빠지던 문제를 여기서 함께 잡는다). DX·AX는 읽기 모드 전용 */
+  const layerSets = useMemo(() => {
+    if (!synthMode || !synthesized || !layers) return null;
+    const broken = new Set<number>();
+    const dx = new Set<number>();
+    const ax = new Set<number>();
+    synthesized.nodes.forEach((n, i) => {
+      const l = layers[n.id];
+      if (!l) return;
+      if (l.broken) broken.add(i);
+      if (l.dx) dx.add(i);
+      if (l.ax) ax.add(i);
+    });
+    return { broken, dx, ax };
+  }, [synthMode, synthesized, layers]);
+
   const graph = useMemo(
     () => placeLanes(companyActs, companyEdges.list, positions),
     [companyActs, companyEdges, positions],
@@ -842,10 +863,13 @@ export function WorkflowChart({
         back: graph.back,
         editable,
         focus,
-        bottleneckOverride: synthBottlenecks,
+        bottleneckOverride: layerSets?.broken ?? synthBottlenecks,
         inferredKeys: companyEdges.inferred,
+        /* DX·AX 배지는 결과 화면(읽기 모드)에만 — 자료 정리 단계는 아직 분석 전이다 */
+        dxSet: !editable ? layerSets?.dx : undefined,
+        axSet: !editable ? layerSets?.ax : undefined,
       }),
-    [companyActs, companyEdges, graph, editable, focus, synthBottlenecks],
+    [companyActs, companyEdges, graph, editable, focus, synthBottlenecks, layerSets],
   );
 
   /* 기록 끊김 수 통지 — 문서가 한 건도 없으면 차트를 그리지 않으므로(아래 ownedDocCount 가드)
@@ -870,6 +894,79 @@ export function WorkflowChart({
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setLiveNodes((nds) => applyNodeChanges(changes, nds)),
     [],
+  );
+
+  /* ── 카드 교체 드래그 (v10 #1) — 카드 A를 카드 B 위에 놓으면 두 자리가 서로 바뀐다 ── */
+  /** 회사 차트 캔버스 — 커서 아래 카드 판정은 이 안의 노드 DOM 사각형으로 한다(줌 반영) */
+  const wrapRef = useRef<HTMLDivElement>(null);
+  /* onDragStop 콜백에서 최신 렌더 위치를 읽기 위한 ref — 상태를 deps로 걸면 드래그마다 재생성된다 */
+  const liveNodesRef = useRef(liveNodes);
+  useEffect(() => {
+    liveNodesRef.current = liveNodes;
+  }, [liveNodes]);
+  /** 집은 카드의 드래그 시작 자리 — 교체 시 상대 카드가 이 자리로 간다 */
+  const dragStartPos = useRef<{ x: number; y: number } | null>(null);
+  /** 커서가 올라가 있는 카드와 올라간 시각 — 잠깐 스치는 카드에 모션이 나가지 않게 */
+  const hoverRef = useRef<{ id: string | null; since: number }>({ id: null, since: 0 });
+  /* 커서가 카드 위에 도착한 뒤 멈춰 있으면 mousemove가 더 안 온다 — 타이머로 승격한다 */
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swapTargetRef = useRef<string | null>(null);
+  /** 교체 직후 한 프레임 — 두 카드의 이동을 transition으로 부드럽게 (드래그 중에는 끈다) */
+  const [swapAnim, setSwapAnim] = useState(false);
+  const swapAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setSwapTarget = useCallback((id: string | null) => {
+    if (swapTargetRef.current === id) return;
+    swapTargetRef.current = id;
+    /* 하이라이트는 liveNodes의 className으로만 — flow.nodes를 다시 만들면
+       드래그 중인 카드 위치가 초기화되므로 절대 배치를 재계산하지 않는다 */
+    setLiveNodes((nds) =>
+      nds.map((n) => ({ ...n, className: n.id === id ? "ax-wf-swap-target" : undefined })),
+    );
+  }, []);
+
+  const onDragStart = useCallback((_e: unknown, node: Node) => {
+    dragStartPos.current = { x: node.position.x, y: node.position.y };
+    hoverRef.current = { id: null, since: 0 };
+  }, []);
+
+  /** 드래그 중 — 커서가 든 카드 중 중심이 커서에 가장 가까운 1개만 교체 대상으로.
+      120ms 이상 머무를 때만 모션을 켠다 (통과 중 난사 방지) */
+  const onDrag = useCallback(
+    (e: MouseEvent | TouchEvent, node: Node) => {
+      if (!editable || !wrapRef.current) return;
+      const pt = "clientX" in e ? e : e.touches[0];
+      if (!pt) return;
+      let best: { id: string; d: number } | null = null;
+      for (const el of wrapRef.current.querySelectorAll<HTMLElement>(".react-flow__node")) {
+        const id = el.getAttribute("data-id");
+        if (!id || id === node.id) continue; // 자기 자신은 대상이 아니다
+        const r = el.getBoundingClientRect();
+        if (pt.clientX < r.left || pt.clientX > r.right || pt.clientY < r.top || pt.clientY > r.bottom)
+          continue;
+        const d = Math.hypot(
+          pt.clientX - (r.left + r.width / 2),
+          pt.clientY - (r.top + r.height / 2),
+        );
+        if (!best || d < best.d) best = { id, d };
+      }
+      const now = Date.now();
+      if ((best?.id ?? null) !== hoverRef.current.id) {
+        hoverRef.current = { id: best?.id ?? null, since: now };
+        setSwapTarget(null);
+        if (hoverTimer.current) clearTimeout(hoverTimer.current);
+        if (best) {
+          /* 도착 후 커서가 멈추면 mousemove가 더 안 온다 — 120ms 뒤에도 같은 카드 위면 승격 */
+          const candidate = best.id;
+          hoverTimer.current = setTimeout(() => {
+            if (hoverRef.current.id === candidate) setSwapTarget(candidate);
+          }, 120);
+        }
+      } else if (best && now - hoverRef.current.since >= 120) {
+        setSwapTarget(best.id);
+      }
+    },
+    [editable, setSwapTarget],
   );
 
   const standardPlaced = useMemo(() => (compare ? placeStandard(acts) : null), [compare, acts]);
@@ -918,9 +1015,40 @@ export function WorkflowChart({
 
   const onDragStop = useCallback(
     (_e: unknown, node: Node) => {
+      const target = swapTargetRef.current;
+      setSwapTarget(null);
+      hoverRef.current = { id: null, since: 0 };
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
       if (!editable) return;
       const posKey = posKeyByNodeId.get(node.id);
       if (!posKey) return;
+
+      /* 교체 드롭 — 두 카드의 '현재 렌더 위치'를 서로 저장한다. A(집은 카드)는 B의 지금
+         자리로, B는 A가 출발한 자리로. 저장 좌표가 없던(자동 배치) 카드도 렌더 위치는
+         있으므로 한쪽만 저장돼 있어도 동작한다. 저장은 기존 배치 저장(pendingPos) 재사용 */
+      if (target && target !== node.id && dragStartPos.current) {
+        const targetKey = posKeyByNodeId.get(target);
+        const targetNode = liveNodesRef.current.find((n) => n.id === target);
+        if (targetKey && targetNode) {
+          const aTo = {
+            x: Math.round(targetNode.position.x),
+            y: Math.round(targetNode.position.y),
+          };
+          const bTo = {
+            x: Math.round(dragStartPos.current.x),
+            y: Math.round(dragStartPos.current.y),
+          };
+          setSwapAnim(true);
+          if (swapAnimTimer.current) clearTimeout(swapAnimTimer.current);
+          swapAnimTimer.current = setTimeout(() => setSwapAnim(false), 360);
+          setPositions((prev) => ({ ...prev, [posKey]: aTo, [targetKey]: bTo }));
+          pendingPos.current = { ...pendingPos.current, [posKey]: aTo, [targetKey]: bTo };
+          if (flushTimer.current) clearTimeout(flushTimer.current);
+          flushTimer.current = setTimeout(flushPositions, 800);
+          return;
+        }
+      }
+
       const at = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
       const before = positions[posKey];
       if (before && before.x === at.x && before.y === at.y) return; // 제자리 — 보낼 것 없다
@@ -929,13 +1057,15 @@ export function WorkflowChart({
       if (flushTimer.current) clearTimeout(flushTimer.current);
       flushTimer.current = setTimeout(flushPositions, 800);
     },
-    [editable, positions, flushPositions, posKeyByNodeId],
+    [editable, positions, flushPositions, posKeyByNodeId, setSwapTarget],
   );
 
   /* 화면을 떠날 때 아직 못 보낸 좌표가 있으면 그때 보낸다 */
   useEffect(
     () => () => {
       if (flushTimer.current) clearTimeout(flushTimer.current);
+      if (swapAnimTimer.current) clearTimeout(swapAnimTimer.current);
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
       flushPositions();
     },
     [flushPositions],
@@ -992,7 +1122,9 @@ export function WorkflowChart({
 
   return (
     <div>
-      {/* 안내 + 비교하기 — 안내는 가운데, 버튼은 오른쪽 (v7) */}
+      {/* 안내 + 비교하기 — 자료 정리(편집) 단계에만. 결과 화면(읽기 모드)은 캡션 없이
+          차트가 바로 온다 — 배지·범례가 이미 읽는 법을 알려 준다 (v10 #4) */}
+      {editable && (
       <div
         style={{
           position: "relative",
@@ -1012,15 +1144,12 @@ export function WorkflowChart({
             color: "var(--fg-tertiary)",
           }}
         >
-          {editable
-            ? "업무 상자를 드래그해 우리 회사의 실제 흐름대로 놓을 수 있어요"
-            : "분석 결과예요 — 화살표가 흐름 방향, 붉은 상자가 기록이 끊기는 지점이에요"}
+          업무 상자를 드래그해 우리 회사의 실제 흐름대로 놓을 수 있어요
           {saving ? " · 저장 중…" : linking ? " · AI가 업무 연결을 분석하고 있어요…" : ""}
         </p>
         {/* 비교하기는 자료 정리(도출·확인) 단계에만 — 결과 화면은 분석 결과를 보는 자리라
             표준 대비 비교가 목적이 아니다 (v8 이슈 3-1) */}
-        {editable && (
-          <button
+        <button
             type="button"
             onClick={() => setCompare((v) => !v)}
             aria-expanded={compare}
@@ -1040,15 +1169,21 @@ export function WorkflowChart({
           >
             {compare ? "비교 닫기" : "비교하기"}
           </button>
-        )}
       </div>
+      )}
 
-      <div style={{ ...canvasBox, height: canvasHeight(graph.rows) }}>
+      <div
+        ref={wrapRef}
+        className={swapAnim ? "ax-wf-swapping" : undefined}
+        style={{ ...canvasBox, height: canvasHeight(graph.rows) }}
+      >
         <ReactFlow
           nodes={liveNodes}
           edges={flow.edges}
           nodeTypes={nodeTypes}
           onNodesChange={onNodesChange}
+          onNodeDragStart={onDragStart}
+          onNodeDrag={onDrag}
           onNodeDragStop={onDragStop}
           /* 초기 로드에 전체가 한 화면에 들어온다 (v8 이슈②) — 스임레인이 세로로 정돈되어
              fitView를 걸어도 읽을 수 있는 배율이 나온다 */
@@ -1079,6 +1214,8 @@ export function WorkflowChart({
             : stages
         }
         bottlenecks={flow.bottlenecks.length}
+        dxCount={!editable ? (layerSets?.dx.size ?? 0) : 0}
+        axCount={!editable ? (layerSets?.ax.size ?? 0) : 0}
         focus={focus}
         onFocus={setFocus}
       />
