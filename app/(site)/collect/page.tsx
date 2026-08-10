@@ -6,6 +6,7 @@ import { useAuth } from "@/components/auth/AuthContext";
 import { LoginModal } from "@/components/auth/LoginModal";
 import { ClassifyProgress } from "@/components/flow/ClassifyProgress";
 import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
+import { DatasetFlagsNotice, type DatasetFlags } from "@/components/flow/DatasetFlagsNotice";
 import { FileEditBoard } from "@/components/flow/FileEditBoard";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { DigitalLevelSection } from "@/components/flow/DigitalLevelSection";
@@ -151,6 +152,8 @@ export default function CollectPage() {
   /* 부족 문서 목록 복사 버튼 피드백 (v4-2) */
   const [copiedMissing, setCopiedMissing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 데이터셋 이상 경고 (v9 A4) — 분류 현황 응답에 실려 온다. 없으면(구버전 응답) null 유지 */
+  const [datasetFlags, setDatasetFlags] = useState<DatasetFlags | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /* ── 1단계 상태 — 필수 서류·슬롯 업로드·프로그램·사전 설문 ── */
@@ -172,10 +175,13 @@ export default function CollectPage() {
   const fetchFiles = useCallback(async () => {
     if (!assessmentId) return;
     try {
-      const { items } = await api<{ items: FileRow[] }>(
-        `/api/assessments/${assessmentId}/files`,
-      );
+      const { items, datasetFlags: flags } = await api<{
+        items: FileRow[];
+        /** 데이터셋 이상 경고 — 백엔드 배포 전 응답에는 필드 자체가 없다 */
+        datasetFlags?: DatasetFlags | null;
+      }>(`/api/assessments/${assessmentId}/files`);
       setFiles(items);
+      setDatasetFlags(flags ?? null);
       const busy = items.some((f) => f.status === "pending" || f.status === "processing");
       if (!busy && pollTimer.current) {
         clearInterval(pollTimer.current);
@@ -559,6 +565,9 @@ export default function CollectPage() {
                 </div>
               ))}
 
+            {/* 데이터셋 이상 경고 (v9 A4) — 분류가 끝난 뒤에만. 진행을 막지 않는 안내 배너 */}
+            {!classifying && <DatasetFlagsNotice data={datasetFlags} style={{ marginTop: 16 }} />}
+
             {/* 필수 서류 현황 — 업무영역별로 묶어 무엇이 비었는지 바로 보이게 (수정요청v9)
                 v5-2: 부족한 자료 목록·올리기 버튼은 카드 밖 우측 패널로 분리 (여기서는 현황만) */}
             {requiredDocs && requiredDocs.items.length > 0 && (
@@ -834,6 +843,9 @@ export default function CollectPage() {
           )}
         </p>
       </header>
+
+      {/* 데이터셋 이상 경고 (v9 A4) — 분류가 끝난 뒤에만. '진단 결과 보기'를 막지 않는다 */}
+      {!classifying && <DatasetFlagsNotice data={datasetFlags} style={{ marginTop: 20 }} />}
 
       {/* ── 파일별 분류 결과 그리드 — 최대 9개, 나머지는 팝업으로 (문서유형·디지털화 수준·진행 상태) ── */}
       {files && files.length > 0 && (

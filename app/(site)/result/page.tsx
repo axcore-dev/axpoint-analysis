@@ -16,6 +16,7 @@ import {
 } from "@/components/ui";
 import { useDiagnosis } from "@/components/flow/DiagnosisContext";
 import { CoverageSurveyModal } from "@/components/flow/CoverageSurveyModal";
+import { DatasetFlagsNotice, type DatasetFlags } from "@/components/flow/DatasetFlagsNotice";
 import {
   PublicSourceDetail,
   type PublicSourceCard,
@@ -125,6 +126,8 @@ type ResultPayload = {
     dartVerified?: boolean;
   } | null;
   publicStats?: PublicStat[];
+  /** 데이터셋 이상 경고 (v9 A4) — 백엔드 배포 전 응답에는 필드 자체가 없다 */
+  datasetFlags?: DatasetFlags | null;
   areas: AreaView[];
   judgments: {
     questionCode: string;
@@ -922,6 +925,8 @@ export default function ResultPage() {
   const [readProgress, setReadProgress] = useState(0);
   /* 결측 보완 설문 팝업 */
   const [surveyOpen, setSurveyOpen] = useState(false);
+  /* 보완 설문 존재 여부 — 데이터셋 경고의 '보완 설문으로 보정' 버튼 노출 판단에만 쓴다 (null=미확인) */
+  const [surveyAvailable, setSurveyAvailable] = useState<boolean | null>(null);
   /* 사유 보기 팝업 대상 영역 (null이면 닫힘) */
   const [chainArea, setChainArea] = useState<AreaView | null>(null);
   /* 판정 진행 중 — 완료를 기다리는 동안 진행 현황 프로그레스바를 보여준다 */
@@ -1009,6 +1014,23 @@ export default function ResultPage() {
         if (!cancelled) setTaskRows(items ?? []);
       })
       .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [assessmentId, data]);
+
+  /* 데이터셋 경고가 있을 때만 설문 목록을 조회 — 설문이 있어야 '보완 설문으로 보정' 버튼을 보인다.
+     조회 실패는 버튼 없이 안내 문구로 폴백한다 */
+  useEffect(() => {
+    if (!assessmentId || !data?.datasetFlags?.flags?.length) return;
+    let cancelled = false;
+    api<{ items: unknown[] }>(`/api/assessments/${assessmentId}/surveys`)
+      .then(({ items }) => {
+        if (!cancelled) setSurveyAvailable((items ?? []).length > 0);
+      })
+      .catch(() => {
+        if (!cancelled) setSurveyAvailable(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -1474,6 +1496,25 @@ export default function ResultPage() {
                 </div>
               )}
             </div>
+
+            {/* 데이터셋 이상 경고 (v9 A4) — 자료 구성 이상 신호를 칩으로 요약하고 보완 설문으로
+                잇는다. 설문이 없으면 버튼 대신 안내 문구만. flags가 없으면 블록 자체를 안 그린다 */}
+            <DatasetFlagsNotice
+              data={data.datasetFlags}
+              compact
+              style={{ marginTop: 24 }}
+              action={
+                surveyAvailable === null ? null : surveyAvailable ? (
+                  <Button variant="secondary" size="sm" onClick={() => setSurveyOpen(true)}>
+                    보완 설문으로 보정
+                  </Button>
+                ) : (
+                  <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                    지금 답할 보완 설문이 없어요 — 자료를 더 올리면 보정돼요.
+                  </span>
+                )
+              }
+            />
 
             {/* 연한 구분선 + 통계 칩 — 수집된 값이 있을 때만 */}
             {companyStats.length > 0 && (

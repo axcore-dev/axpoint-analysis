@@ -90,7 +90,9 @@ components/
 │                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
 │                   DigitalLevelSection(디지털화 수준 SVG 도넛 + 문서 목록 — 레벨은 단일 색상
 │                   명도 램프, 조각 클릭 필터, 대표 수준=최빈값. 외부 차트 라이브러리 없음 — v8),
-│                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달 — v5)
+│                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달 — v5),
+│                   DatasetFlagsNotice(데이터셋 이상 경고 — 분류 현황·결과 응답의 datasetFlags를
+│                   collect 배너·result 칩으로, 필드 없으면 미렌더 — v9 A4)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
 
 data/               구 더미데이터 계층 — 시나리오·카탈로그는 전 화면 미참조(정리 보류 — 루트 docs/로직.md §5)
