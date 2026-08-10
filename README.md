@@ -41,7 +41,11 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
 │   ├── collect/    S1 자료 정리 — 2단계. ① 자료 확인(필수 서류 현황 + 부족 자료 우측 패널·사용 프로그램)
 │   │               → 진입과 동시에 분류 시작. 사전 설문 스텝은 v5에서 삭제(설문은 판정 후 결과 화면에서)
 │   │               ② 자료 분류(분류 진행 로그·자료 편집 칸반 팝업·공개데이터 수집·워크플로우 플로우차트)
-│   ├── result/     S2 진단 결과 — 5축 점수, 8업무영역(8×1) 서술, 워크플로우, 종합 분석(report)
+│   ├── result/     S2 진단 결과 — 5개 섹션 고정 순서(v8): ① 진단 개요(기업·레벨·통계 칩 + 거시 해설)
+│   │               → ② 카테고리 분석(레이더 + 5축 상세 카드, 문항 코드는 사람 말로 치환)
+│   │               → ③ 워크플로우 분석(차트 + 업무 흐름 진단 문단) → ④ 업무영역 분석(8영역 카드에
+│   │               추천 과제·활용 AI 연결, /tasks 이동 CTA) → ⑤ 종합분석(여정 요약 + 강점·보완·전략).
+│   │               우측 sticky TOC(scroll spy + 읽기 진행률, lg 미만 숨김).
 │   │               판정 중 진행률 프로그레스바(%), 데이터 로딩 스켈레톤, 통계 칩 캐러셀(양방향 화살표),
 │   │               강등 사유(달성 조건 미충족)·검토 필요(근거 상충) 표시,
 │   │               결측 문항 보완 설문 — 에이전트 생성 질문을 카드 모달로 1문항씩 자동 진행(v5)
@@ -73,7 +77,8 @@ components/
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
 │                   WorkflowChart(React Flow 플로우차트 — 화살표·업로드 문서 칩·영역/업무 드래그 편집·
-│                   에이전트 업무 연결선. WorkflowSection=자료 정리 편집용, WorkflowStandard=결과 보기 전용),
+│                   에이전트 업무 연결선. WorkflowSection=자료 정리 편집용, 결과 화면은 섹션 카드 안에
+│                   직접 삽입. WorkflowStandard는 워크플로우 응답 타입만 남음),
 │                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
 │                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달 — v5)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
