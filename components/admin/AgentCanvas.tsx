@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import {
   Controls,
   Handle,
@@ -14,6 +14,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Icons } from "@/components/ui";
+import { api } from "@/lib/api";
 
 /**
  * 멀티 에이전트 캔버스 — 메인 에이전트를 사용자 동선 순서로 잇고, 그 메인을 거드는 지시문을
@@ -116,6 +117,90 @@ const pillX = (i: number) => LANE + (i % PILL_COLS) * (PILL_W + PILL_GAP_X);
 const pillRow = (i: number) => Math.floor(i / PILL_COLS);
 const pillBlockH = (n: number) => (n === 0 ? 0 : Math.ceil(n / PILL_COLS) * (PILL_H + PILL_GAP_Y));
 
+/* ── 비용·호출 오버레이 (v9 B10) ────────────────────────────────────
+   GET /api/admin/agent-stats?days=N 의 nodeId 단위 행을 promptKey로 합산해 노드 위에 겹친다.
+   기본은 꺼짐 — 켠 사람에게만 데이터를 부르고, 응답이 없으면 배지 없이 조용히 지나간다. */
+
+type NodeStat = {
+  calls: number;
+  failed: number;
+  tokensIn: number;
+  tokensOut: number;
+  avgDurationMs: number;
+  /** 현재 배정 모델 단가 기준 추정치 — 단가를 모르면 null */
+  estCostUsd: number | null;
+};
+
+/** nodeId 행 → promptKey 합산. 평균 시간은 호출 수 가중 평균, 비용은 전부 미상일 때만 null */
+function aggregateStats(items: (NodeStat & { promptKey: string | null })[]) {
+  const byKey = new Map<string, NodeStat>();
+  for (const it of items) {
+    if (!it.promptKey) continue;
+    const prev = byKey.get(it.promptKey);
+    if (!prev) {
+      byKey.set(it.promptKey, {
+        calls: it.calls,
+        failed: it.failed,
+        tokensIn: it.tokensIn,
+        tokensOut: it.tokensOut,
+        avgDurationMs: it.avgDurationMs,
+        estCostUsd: it.estCostUsd,
+      });
+      continue;
+    }
+    const calls = prev.calls + it.calls;
+    prev.avgDurationMs =
+      calls > 0 ? (prev.avgDurationMs * prev.calls + it.avgDurationMs * it.calls) / calls : 0;
+    prev.calls = calls;
+    prev.failed += it.failed;
+    prev.tokensIn += it.tokensIn;
+    prev.tokensOut += it.tokensOut;
+    prev.estCostUsd =
+      prev.estCostUsd === null && it.estCostUsd === null
+        ? null
+        : (prev.estCostUsd ?? 0) + (it.estCostUsd ?? 0);
+  }
+  return byKey;
+}
+
+/** 1234 → 1.2k — 칩에 긴 수가 들어가지 않게 */
+const abbr = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k` : String(n));
+const fmtCost = (v: number) => (v > 0 && v < 0.005 ? "<$0.01" : `$${v.toFixed(2)}`);
+const fmtDur = (ms: number) =>
+  ms >= 60000 ? `${(ms / 60000).toFixed(1)}분` : `${(ms / 1000).toFixed(ms > 0 && ms < 10000 ? 1 : 0)}초`;
+
+/** 노드 위에 얹는 통계 칩 — 카드 우상단 모서리에 겹쳐 배치가 밀리지 않는다 */
+function StatChip({ stat, days }: { stat: NodeStat; days: number }) {
+  return (
+    <span
+      title={`최근 ${days}일 — 호출 ${stat.calls} · 실패 ${stat.failed} · 토큰 입력 ${abbr(stat.tokensIn)}·출력 ${abbr(stat.tokensOut)} · 평균 ${fmtDur(stat.avgDurationMs)}. 비용은 현재 배정 모델 단가 기준 추정치`}
+      style={{
+        position: "absolute",
+        top: -11,
+        right: 8,
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "2px 8px",
+        borderRadius: "var(--radius-full)",
+        border: "1px solid var(--line-default)",
+        background: "var(--bg-elevated)",
+        boxShadow: "var(--shadow-1)",
+        font: "500 11px/1.4 var(--font-sans)",
+        color: "var(--fg-secondary)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span>호출 {abbr(stat.calls)}</span>
+      {stat.failed > 0 && (
+        <span style={{ color: "var(--fg-danger)", fontWeight: 600 }}>실패 {abbr(stat.failed)}</span>
+      )}
+      {stat.estCostUsd !== null && <span>{fmtCost(stat.estCostUsd)}</span>}
+      <span style={{ color: "var(--fg-quaternary)" }}>{fmtDur(stat.avgDurationMs)}</span>
+    </span>
+  );
+}
+
 type MainData = {
   title: string;
   slug: string;
@@ -129,6 +214,9 @@ type MainData = {
   model: string;
   version: string;
   selected: boolean;
+  /** 비용·호출 오버레이가 켜졌고 이 노드에 실행 기록이 있을 때만 */
+  stat?: NodeStat;
+  statDays?: number;
 };
 
 function MainNode({ data }: NodeProps) {
@@ -141,6 +229,7 @@ function MainNode({ data }: NodeProps) {
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
+        position: "relative",
         /* 워크플로우 차트와 같은 문법 — 모서리 12px, 테두리 색이 곧 구분 색이다 */
         borderRadius: 12,
         padding: "12px 14px",
@@ -151,6 +240,7 @@ function MainNode({ data }: NodeProps) {
       }}
       title={`${d.title} — ${d.desc}`}
     >
+      {d.stat && <StatChip stat={d.stat} days={d.statDays ?? 7} />}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       <Handle type="target" id="api" position={Position.Top} style={{ opacity: 0 }} />
@@ -239,6 +329,8 @@ type SubData = {
   model: string;
   version: string;
   selected: boolean;
+  stat?: NodeStat;
+  statDays?: number;
 };
 
 function SubNode({ data }: NodeProps) {
@@ -251,6 +343,7 @@ function SubNode({ data }: NodeProps) {
         boxSizing: "border-box",
         display: "flex",
         flexDirection: "column",
+        position: "relative",
         borderRadius: 12,
         padding: "8px 11px",
         border: `1px solid ${d.selected ? d.tone : "var(--line-default)"}`,
@@ -260,6 +353,7 @@ function SubNode({ data }: NodeProps) {
       }}
       title={d.title}
     >
+      {d.stat && <StatChip stat={d.stat} days={d.statDays ?? 7} />}
       <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
       {/* 관계 이름(전처리·폴백·…)은 연결선 위에 있다 — 카드에 또 쓰지 않는다 */}
       <strong
@@ -511,6 +605,30 @@ export function AgentCanvas({
   /** 기본값은 뷰포트 기준(clamp) — 고정 px가 필요하면 숫자로 넘긴다 */
   height?: number | string;
 }) {
+  /* 비용·호출 오버레이 (v9 B10) — 기본 꺼짐. 켜면 그때 기간별로 한 번씩만 받아 온다 */
+  const [showStats, setShowStats] = useState(false);
+  const [statDays, setStatDays] = useState<7 | 30>(7);
+  const [statCache, setStatCache] = useState<Record<number, Map<string, NodeStat>>>({});
+
+  useEffect(() => {
+    if (!showStats || statCache[statDays]) return;
+    let alive = true;
+    api<{ items: (NodeStat & { nodeId: string; promptKey: string | null })[] }>(
+      `/api/admin/agent-stats?days=${statDays}`,
+    )
+      .then((res) => {
+        if (alive) setStatCache((prev) => ({ ...prev, [statDays]: aggregateStats(res.items ?? []) }));
+      })
+      .catch(() => {
+        /* 백엔드 미가동·권한 문제 등 — 배지 없이 조용히 지나간다. 토글을 껐다 켜면 재시도 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [showStats, statDays, statCache]);
+
+  const stats = showStats ? statCache[statDays] : undefined;
+
   const { nodes, edges } = useMemo(() => {
     const byKey = new Map(prompts.map((p) => [p.key, p]));
     /* 지시문 → 그래프 노드. 도구·외부 API는 그래프가 원본이라 여기서 끌어온다 */
@@ -649,6 +767,8 @@ export function AgentCanvas({
           model: p.model,
           version: versionOf(p),
           selected: selectedKey === m.key,
+          stat: stats?.get(m.key),
+          statDays,
         } satisfies MainData as unknown as Record<string, unknown>,
       });
       attachPills(m.key, m.uses, x, y, MAIN_H);
@@ -672,6 +792,8 @@ export function AgentCanvas({
             model: sp.model,
             version: versionOf(sp),
             selected: selectedKey === s.key,
+            stat: stats?.get(s.key),
+            statDays,
           } satisfies SubData as unknown as Record<string, unknown>,
         });
         /* 알약은 통로 오른쪽부터 깔리므로 서브 카드(통로만큼 들여쓴)보다 왼쪽 기준이 같다 */
@@ -715,7 +837,7 @@ export function AgentCanvas({
     }
 
     return { nodes: out, edges: links };
-  }, [graph, prompts, flow, toolMeta, selectedKey]);
+  }, [graph, prompts, flow, toolMeta, selectedKey, stats, statDays]);
 
   return (
     <div style={{ height, borderRadius: "var(--radius-xl)", overflow: "hidden" }}>
@@ -735,6 +857,64 @@ export function AgentCanvas({
         {/* 점 격자 배경은 깔지 않는다 — 워크플로우 차트(v8)와 같은 톤을 쓴다 */}
         <Controls showInteractive={false} />
         <CanvasLegend />
+        {/* 비용·호출 오버레이 토글 + 기간 — 켠 동안만 노드에 통계 칩이 얹힌다 */}
+        <Panel position="top-right">
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {showStats && (
+              <div
+                style={{
+                  display: "inline-flex",
+                  gap: 2,
+                  padding: 2,
+                  borderRadius: "var(--radius-full)",
+                  border: "1px solid var(--line-default)",
+                  background: "var(--bg-secondary)",
+                }}
+              >
+                {([7, 30] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => setStatDays(d)}
+                    aria-pressed={statDays === d}
+                    style={{
+                      padding: "3px 10px",
+                      borderRadius: "var(--radius-full)",
+                      border: "none",
+                      background: statDays === d ? "var(--bg-elevated)" : "transparent",
+                      boxShadow: statDays === d ? "var(--shadow-1)" : "none",
+                      color: statDays === d ? "var(--fg-primary)" : "var(--fg-tertiary)",
+                      font: "var(--text-caption)",
+                      fontFamily: "var(--font-sans)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {d}일
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowStats((v) => !v)}
+              aria-pressed={showStats}
+              title="노드별 호출·실패·평균 시간과 비용을 겹쳐 본다 — 비용은 현재 배정 모델 단가 기준 추정치"
+              style={{
+                padding: "5px 12px",
+                borderRadius: "var(--radius-full)",
+                border: `1px solid ${showStats ? "var(--line-brand)" : "var(--line-default)"}`,
+                background: showStats ? "var(--bg-brand-weak)" : "var(--bg-elevated)",
+                color: showStats ? "var(--fg-brand)" : "var(--fg-secondary)",
+                font: "var(--text-caption)",
+                fontWeight: 600,
+                fontFamily: "var(--font-sans)",
+                cursor: "pointer",
+              }}
+            >
+              비용·호출 보기
+            </button>
+          </div>
+        </Panel>
         {/* 미니맵은 붙이지 않는다 — 커스텀 노드가 그려지지 않아 빈 상자만 남는다.
             확대·축소와 '전체 보기'(Controls)로 충분하다 */}
       </ReactFlow>
