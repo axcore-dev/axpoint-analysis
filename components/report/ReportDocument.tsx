@@ -263,6 +263,7 @@ function Page({
     <div
       data-report-page=""
       style={{
+        position: "relative",
         width: PAGE_W,
         height: PAGE_H,
         boxSizing: "border-box",
@@ -276,6 +277,14 @@ function Page({
         overflow: "hidden",
       }}
     >
+      {/* 우측 상단 브랜드 — 절대배치라 본문 높이(BODY_H)에 영향을 주지 않는다.
+          next/image가 아니라 순수 img다 — html2canvas는 같은 오리진 img만 확실히 그린다 */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/assets/axcore-color.png"
+        alt=""
+        style={{ position: "absolute", top: 22, right: PAGE_PAD, height: 13, opacity: 0.9 }}
+      />
       <div style={{ flex: "1 1 auto", minHeight: 0 }}>{children}</div>
       {/* 페이지 하단 — AXpoint 표기 + 페이지 번호 */}
       <div
@@ -323,42 +332,50 @@ function SectionTitle({ no, sub, children }: { no: string; sub?: string; childre
 }
 
 /**
- * 배지·알약 — html2canvas가 세로 padding + line-height 조합에서 글자를 위로 밀어 찍는다.
- * 세로 padding을 0으로 두고 height와 lineHeight를 같은 px로 맞추면 그 어긋남이 사라진다.
+ * 배지 — 채운 배경을 뺐다(2026-08-11 사용자 지시).
+ *
+ * PDF에서 알약 배경과 글자가 어긋나 보인다는 지적이 있었다. html2canvas를 격리해
+ * 다섯 가지 배치(height+lineHeight / 대칭 padding / table-cell / flex)로 재현을 시도했지만
+ * 전부 정상으로 찍혔고(밴드 52px, 중심 어긋남 1px), 폰트도 var()가 아닌 실제 스택이라
+ * 원인을 특정하지 못했다. 배경 상자가 없으면 어긋날 대상 자체가 사라진다.
+ * tone은 글자색으로만 남는다 — 호출부는 그대로 둔다.
  */
 function Pill({
   children,
   tone = "brand",
-  size = 22,
 }: {
   children: ReactNode;
   tone?: "brand" | "muted" | "warn" | "ok";
   size?: number;
 }) {
-  const palette = {
-    brand: { bg: WASH, fg: BLUE },
-    muted: { bg: MIST, fg: SECONDARY },
-    warn: { bg: "#FFF6E9", fg: AMBER },
-    ok: { bg: "#EAF7F0", fg: GREEN },
-  }[tone];
+  const fg = { brand: BLUE, muted: SECONDARY, warn: AMBER, ok: GREEN }[tone];
   return (
     <span
       style={{
         display: "inline-block",
-        height: size,
-        lineHeight: `${size}px`,
-        padding: "0 11px",
-        borderRadius: size / 2,
-        boxSizing: "border-box",
-        background: palette.bg,
-        color: palette.fg,
+        color: fg,
         fontSize: 11.5,
-        fontWeight: 600,
+        fontWeight: 700,
         whiteSpace: "nowrap",
-        verticalAlign: "top",
+        letterSpacing: "-0.01em",
       }}
     >
       {children}
+    </span>
+  );
+}
+
+/** 배지 사이 가운뎃점 — 배경을 뺀 뒤 구분이 필요해졌다 */
+function PillRow({ children }: { children: ReactNode }) {
+  const items = Array.isArray(children) ? children.filter(Boolean) : [children];
+  return (
+    <span style={{ display: "inline-block" }}>
+      {items.map((c, i) => (
+        <span key={i}>
+          {i > 0 && <span style={{ color: HAIRLINE, margin: "0 7px" }}>·</span>}
+          {c}
+        </span>
+      ))}
     </span>
   );
 }
@@ -445,6 +462,81 @@ function ScoreBar({ score, avg }: { score: number; avg: number | null }) {
         />
       )}
     </div>
+  );
+}
+
+/**
+ * 5축 레이더 — 화면(result/page.tsx `RadarChart`)과 같은 기하를 쓰되 색을 hex로 박고
+ * hover·선택을 뺀 정적판이다. PDF에는 지금까지 막대만 있어 축 사이 균형이 안 보였다.
+ * 순수 인라인 SVG라 html2canvas가 그대로 그린다.
+ */
+function RadarPdf({ axes }: { axes: ReportAxis[] }) {
+  const list = axes.filter((a) => a.name);
+  if (list.length < 3) return null;
+  const cx = 175;
+  const cy = 158;
+  const R = 104;
+  const step = 360 / list.length;
+  const pt = (i: number, v: number): [number, number] => {
+    const ang = (Math.PI / 180) * (-90 + i * step);
+    return [cx + R * (v / 100) * Math.cos(ang), cy + R * (v / 100) * Math.sin(ang)];
+  };
+  const poly = (vals: number[]) =>
+    vals.map((v, i) => pt(i, Math.max(0, Math.min(100, v))).map((n) => n.toFixed(1)).join(",")).join(" ");
+  const own = list.map((a) => Number(a.score ?? 0));
+  const hasAvg = list.every((a) => a.industryAvg !== null);
+  const avg = list.map((a) => Number(a.industryAvg ?? 0));
+
+  return (
+    <svg viewBox="-46 0 442 316" style={{ width: 350, display: "block" }} aria-hidden>
+      {[25, 50, 75, 100].map((v) => (
+        <polygon
+          key={v}
+          points={poly(list.map(() => v))}
+          fill="none"
+          stroke={v === 100 ? "#D8DDE3" : "#EDF0F3"}
+          strokeWidth={1}
+        />
+      ))}
+      {list.map((_, i) => {
+        const [x, y] = pt(i, 100);
+        return <line key={i} x1={cx} y1={cy} x2={x} y2={y} stroke="#EDF0F3" strokeWidth={1} />;
+      })}
+      {hasAvg && (
+        <polygon points={poly(avg)} fill="none" stroke="#98A2B3" strokeWidth={1.4} strokeDasharray="4 3" />
+      )}
+      <polygon points={poly(own)} fill={BLUE} fillOpacity={0.16} stroke={BLUE} strokeWidth={1.8} />
+      {list.map((a, i) => {
+        const [x, y] = pt(i, 118);
+        return (
+          <text
+            key={a.code}
+            x={x}
+            y={y}
+            textAnchor={Math.abs(x - cx) < 12 ? "middle" : x > cx ? "start" : "end"}
+            dominantBaseline="middle"
+            style={{ fontSize: 10.5, fontWeight: 700, fill: SECONDARY }}
+          >
+            {a.name}
+          </text>
+        );
+      })}
+      {list.map((a, i) => {
+        const [x, y] = pt(i, 118);
+        return (
+          <text
+            key={`${a.code}-v`}
+            x={x}
+            y={y + 12}
+            textAnchor={Math.abs(x - cx) < 12 ? "middle" : x > cx ? "start" : "end"}
+            dominantBaseline="middle"
+            style={{ fontSize: 10, fontFamily: MONO, fill: MUTED }}
+          >
+            {score1(a.score ?? 0)}
+          </text>
+        );
+      })}
+    </svg>
   );
 }
 
@@ -705,6 +797,32 @@ export function ReportDocument({
             <Stat label="균형" value={summary.balanceLabel ?? "—"} />
           )}
         </div>
+
+        {/* 5축 균형 — 막대는 축별 수치, 레이더는 축 사이 치우침을 보여준다 (2026-08-11 추가) */}
+        {axes.length >= 3 && (
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 18 }}>
+            <RadarPdf axes={axes} />
+            <div style={{ fontSize: 10.5, lineHeight: 1.8, color: MUTED }}>
+              <div>
+                <span style={{ display: "inline-block", width: 16, height: 2, background: BLUE, verticalAlign: "middle" }} />
+                <span style={{ marginLeft: 6 }}>자사</span>
+              </div>
+              {axes.every((a) => a.industryAvg !== null) && (
+                <div>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: 16,
+                      borderTop: "2px dashed #98A2B3",
+                      verticalAlign: "middle",
+                    }}
+                  />
+                  <span style={{ marginLeft: 6 }}>업종 평균</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 달성 조건 미충족 강등 — 점수 구간과 판정 단계가 다른 이유 */}
         {summary.capReasons && (
@@ -1455,20 +1573,24 @@ export function ReportDocument({
 
   const cover = (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+      {/* 표지 — 문서 종류 · 대상 · 판정 결과 세 덩이로 읽히게 (2026-08-11 재디자인).
+          종전에는 로고 아래 큰 여백 하나에 회사명만 떠 있어 보고서보다 표제지에 가까웠다 */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
         <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", color: BLUE }}>
           AXpoint
         </span>
-        <span style={{ fontSize: 11, fontWeight: 600, color: MUTED }}>by 주식회사 에이엑스코어</span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: MUTED }}>제조 AX 진단</span>
       </div>
 
-      <div style={{ marginTop: 130 }}>
+      {/* 문서 종류 — 굵은 규칙선 위에 얹어 표제임을 분명히 한다 */}
+      <div style={{ marginTop: 96 }}>
+        <div style={{ height: 3, width: 56, background: BLUE, borderRadius: 2 }} />
         <div
           style={{
-            fontSize: 12,
-            fontWeight: 600,
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
+            marginTop: 20,
+            fontSize: 13,
+            fontWeight: 700,
+            letterSpacing: "0.14em",
             color: BLUE,
           }}
         >
@@ -1476,7 +1598,7 @@ export function ReportDocument({
         </div>
         <div
           style={{
-            marginTop: 16,
+            marginTop: 14,
             fontSize: 40,
             fontWeight: 700,
             letterSpacing: "-0.02em",
@@ -1486,35 +1608,51 @@ export function ReportDocument({
         >
           {companyName}
         </div>
-        {summary.diagnosedAt && (
-          <div style={{ marginTop: 12, fontFamily: MONO, fontSize: 13, color: SECONDARY }}>
-            진단일 {summary.diagnosedAt}
+        {(company?.bizNo || summary.diagnosedAt) && (
+          <div style={{ marginTop: 14, fontSize: 12, color: SECONDARY }}>
+            {company?.bizNo ? <span style={{ fontFamily: MONO }}>사업자 {company.bizNo}</span> : null}
+            {company?.bizNo && summary.diagnosedAt ? (
+              <span style={{ color: HAIRLINE, margin: "0 8px" }}>·</span>
+            ) : null}
+            {summary.diagnosedAt ? (
+              <span style={{ fontFamily: MONO }}>진단일 {summary.diagnosedAt}</span>
+            ) : null}
           </div>
         )}
       </div>
 
-      <div style={{ marginTop: 60, paddingTop: 36, borderTop: `1px solid ${HAIRLINE}` }}>
-        <div style={{ fontSize: 13, color: SECONDARY }}>현재 단계</div>
+      {/* 판정 결과 — 표지에서 가장 먼저 읽혀야 하는 값 */}
+      <div style={{ marginTop: 52, paddingTop: 30, borderTop: `1px solid ${HAIRLINE}` }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: MUTED }}>진단 결과</div>
         <div
           style={{
-            marginTop: 8,
-            fontSize: 54,
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-            lineHeight: 1.05,
-            color: INK,
+            marginTop: 10,
+            display: "flex",
+            alignItems: "baseline",
+            gap: 10,
+            flexWrap: "wrap",
           }}
         >
-          {`Lv.${summary.level} ${summary.levelName}`}
+          <span style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.02em", color: BLUE }}>
+            Lv.{summary.level}
+          </span>
+          <span style={{ fontSize: 22, fontWeight: 700, color: INK }}>{summary.levelName}</span>
         </div>
-        <div style={{ marginTop: 18, display: "flex", gap: 6 }}>
-          <Pill size={26}>종합 점수 {score1(summary.totalScore)}점</Pill>
-          {summary.industryAvg !== null && (
-            <Pill tone="muted" size={26}>
-              업종 평균 {Math.round(summary.industryAvg)}점
-            </Pill>
-          )}
+        <div style={{ marginTop: 14 }}>
+          <PillRow>
+            <Pill>종합 점수 {score1(summary.totalScore)}점</Pill>
+            {summary.industryAvg !== null ? (
+              <Pill tone="muted">업종 평균 {Math.round(summary.industryAvg)}점</Pill>
+            ) : null}
+          </PillRow>
         </div>
+      </div>
+
+      {/* 아래를 채워 표지 하단이 비어 보이지 않게 한다 */}
+      <div style={{ flex: "1 1 auto" }} />
+      <div style={{ paddingBottom: 8, fontSize: 10.5, lineHeight: 1.7, color: MUTED }}>
+        이 보고서는 제출 자료 {files.length}건과 공개 데이터 {publicSources.length}종을 근거로
+        작성됐습니다. 자료로 판단할 수 없는 항목은 점수를 매기지 않고 보류로 두었습니다.
       </div>
     </div>
   );
