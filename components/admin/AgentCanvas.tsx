@@ -711,6 +711,9 @@ export function AgentCanvas({
           source: id,
           target: `p::${key}`,
           targetHandle: "api",
+          /* 선 모양은 캔버스 전체가 직교로 통일 — 알약은 카드 위·아래에 어긋나게 깔려서
+             곡선으로 두면 짧은 선들이 제각각 휘어 보인다 */
+          type: "smoothstep",
           style: { stroke: "var(--line-brand)", strokeWidth: 1.2, strokeDasharray: "4 4" },
         });
       });
@@ -736,6 +739,7 @@ export function AgentCanvas({
           source: `p::${key}`,
           sourceHandle: "tools",
           target: id,
+          type: "smoothstep",
           style: {
             stroke: pill.external ? "var(--line-brand)" : "var(--grey-300)",
             strokeWidth: 1.2,
@@ -831,6 +835,7 @@ export function AgentCanvas({
           id: `${prev}=>${m.key}`,
           source: `p::${prev}`,
           target: `p::${m.key}`,
+          type: "smoothstep",
           markerEnd: { type: MarkerType.ArrowClosed, width: 18, height: 18, color: "var(--grey-500)" },
           style: { stroke: "var(--grey-500)", strokeWidth: 2 },
         });
