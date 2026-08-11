@@ -389,7 +389,8 @@ export default function LandingPage() {
         <div key="search" className="ax-step-enter relative m-auto w-full max-w-[640px]">
           <div className="absolute bottom-full left-1/2 mb-10 flex w-max max-w-[calc(100vw-48px)] -translate-x-1/2 flex-col items-center text-center">
             <h1 className="flex-col ax-heading mt-4 [font:var(--text-display2)] tracking-[var(--track-display)] text-ink">
-              제조 <b className="text-brand">AX</b>를 위한 <b className="text-brand">AI</b> 컨설턴트
+              제조 <b className="text-brand">AX</b>를 위한 <b className="text-brand">AI</b> 컨설턴트{" "}
+              AXpoint&trade;
             </h1>
             <p className="mt-3 [font:var(--text-body1)] tracking-[var(--track-body)] text-ink-3">
               조사·분석·진단·설계까지, One-stop 맞춤형 솔루션
