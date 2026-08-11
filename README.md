@@ -2,7 +2,7 @@
 
 중소기업 AX(AI 전환) 진단 플랫폼. 기업 자료를 수집·분석해 5축 채점 기반의 진단 결과와 개선 과제, 로드맵, 보고서를 제공한다.
 
-> 현재 상태: **전 화면 실 API 연동.** 백엔드는 `axpoint-analysis-api`(Hono :3001, 쿠키 세션). `data/`의 시나리오 더미는 더 이상 어떤 화면도 참조하지 않는다(정리 대기 — `docs/로직.md` §5). 더미데이터 데모 버전은 `archive/dummy-data-demo` 브랜치에 보존되어 있다.
+> 현재 상태: **전 화면 실 API 연동.** 백엔드는 `axpoint-analysis-api`(Hono :3001, 쿠키 세션). `data/`의 시나리오 더미는 더 이상 어떤 화면도 참조하지 않는다(정리 대기 — api `docs/로직.md` §5). 더미데이터 데모 버전은 `archive/dummy-data-demo` 브랜치에 보존되어 있다.
 
 ## 기술 스택
 
@@ -12,7 +12,7 @@
   `layout.tsx`에서 preload). 축 범위를 빼면 브라우저가 굵은 글씨를 합성해 뭉갠다
 - **UI**: 자체 프리미티브(`components/ui`) + Radix UI 일부(dialog/tabs/tooltip/collapsible)
 - **PDF**: html2canvas + jsPDF (`lib/pdf.ts`)
-- **백엔드**: `axpoint-analysis-api` — Hono(:3001) + Drizzle/Postgres + BullMQ/Redis + MinIO, better-auth 쿠키 세션. 설계 문서는 루트 `docs/`(DB 설계.md · 로직.md · 외부 API 명세.md)
+- **백엔드**: `axpoint-analysis-api` — Hono(:3001) + Drizzle/Postgres + BullMQ/Redis + MinIO, better-auth 쿠키 세션. 설계 문서는 api `docs/`(DB 설계.md · 로직.md · ★외부 데이터 연동.md)
 
 ## 시작하기
 
@@ -95,7 +95,7 @@ components/
 │                   collect 배너·result 칩으로, 필드 없으면 미렌더 — v9 A4)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
 
-data/               구 더미데이터 계층 — 시나리오·카탈로그는 전 화면 미참조(정리 보류 — 루트 docs/로직.md §5)
+data/               구 더미데이터 계층 — 시나리오·카탈로그는 전 화면 미참조(정리 보류 — api docs/로직.md §5)
 ├── rubric/         구 채점 체계 — 화면은 meta의 DIGITAL_LEVELS(L1~L4 라벨)만 참조
 ├── scenario/       (주)데모기업 더미 시나리오 — 화면 미참조
 ├── catalog/        구 과제 카탈로그 — 화면 미참조 (실데이터는 백엔드 시드)
@@ -131,7 +131,7 @@ result / report 화면 ◄── lib/api.ts (쿠키 세션, 진행률 SSE·폴�
 ```
 
 - 채점·판정·추천은 전부 백엔드(`axpoint-analysis-api`)가 계산한다. 프론트는 표시 전용이며 점수를 재계산하지 않는다.
-- 로직 사양은 루트 `docs/로직.md`, 구 프론트 계산기(`lib/scoring` 등)는 미참조 — 정리 보류(같은 문서 §5).
+- 로직 사양은 api `docs/로직.md`, 구 프론트 계산기(`lib/scoring` 등)는 미참조 — 정리 보류(같은 문서 §5).
 
 ## 협업 규칙
 
