@@ -1304,7 +1304,6 @@ export default function ResultPage() {
     docCount !== null && docCount > 0 && areas.length > 0
       ? `올린 자료 ${docCount}건을 ${areaPhrase}으로 분류했어요.`
       : null,
-    totalQ > 0 ? `${totalQ}개 문항 중 ${answered}개를 자료로 판정했어요.` : null,
     bottleneckCount !== null && bottleneckCount > 0
       ? `업무 흐름에서는 기록이 끊기는 지점 ${bottleneckCount}곳이 확인됐어요.`
       : null,
@@ -1945,8 +1944,7 @@ export default function ResultPage() {
                               color: "var(--fg-tertiary)",
                             }}
                           >
-                            전체 {totalQ}개 문항 중 {answered}개를 자료로 판정했어요. 자료가 부족한
-                            문항은{" "}
+                            자료가 부족한 문항은{" "}
                             <TermTooltip term="분석 보류">{getGlossary("분석 보류")?.easy}</TermTooltip>
                             로 두고 감점하지 않아요.
                           </p>
