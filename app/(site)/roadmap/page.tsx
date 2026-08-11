@@ -56,6 +56,8 @@ type RoadmapTask = RoadmapPayload["tasks"][number];
 function taskDuration(t: RoadmapTask): string | null {
   if (t.durationMinMonths == null) return null;
   const max = t.durationMaxMonths ?? t.durationMinMonths;
+  // 1단계 교육·워크숍·컨설팅은 하루짜리라 개월 단위로 0이다
+  if (max === 0) return "1개월 미만";
   return t.durationMinMonths === max ? `${max}개월` : `${t.durationMinMonths}~${max}개월`;
 }
 
@@ -316,7 +318,7 @@ export default function RoadmapPage() {
                 style={{ marginBottom: i === data.stages.length - 1 ? 0 : 28 }}
               >
                 <div className="axp-rm-row">
-                  {/* 기간 마커 — '약 N개월' */}
+                  {/* 기간 마커 — '약 N개월', 달을 못 채우는 단계는 '1개월 미만' */}
                   <div
                     style={{
                       ...mono,
@@ -330,7 +332,7 @@ export default function RoadmapPage() {
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {`약 ${stage.durationMonths}개월`}
+                    {stage.durationMonths === 0 ? "1개월 미만" : `약 ${stage.durationMonths}개월`}
                   </div>
                   {/* 도트 */}
                   <div style={{ display: "flex", justifyContent: "center" }}>

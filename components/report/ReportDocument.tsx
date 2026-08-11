@@ -1096,12 +1096,15 @@ export function ReportDocument({
     pageBreak("br-tasks");
     const t = section("개선 과제", `담으신 과제 ${tasks.length}건의 상세입니다`);
     tasks.forEach((task, i) => {
+      const durMax = task.durationMaxMonths ?? task.durationMinMonths;
       const dur =
         task.durationMinMonths == null
           ? null
-          : task.durationMinMonths === (task.durationMaxMonths ?? task.durationMinMonths)
-            ? `${task.durationMaxMonths ?? task.durationMinMonths}개월`
-            : `${task.durationMinMonths}~${task.durationMaxMonths}개월`;
+          : durMax === 0 // 1단계 교육·워크숍·컨설팅은 하루짜리라 개월 단위로 0이다
+            ? "1개월 미만"
+            : task.durationMinMonths === durMax
+              ? `${durMax}개월`
+              : `${task.durationMinMonths}~${task.durationMaxMonths}개월`;
       const cost =
         task.costMin == null || task.costMax == null
           ? null
@@ -1190,7 +1193,9 @@ export function ReportDocument({
                     .map((no) => taskByNo.get(no)?.title ?? `No.${no}`)
                     .join(" · ")}
                 </td>
-                <td style={{ ...tdMono, textAlign: "right" }}>{s.durationMonths}개월</td>
+                <td style={{ ...tdMono, textAlign: "right" }}>
+                  {s.durationMonths === 0 ? "1개월 미만" : `${s.durationMonths}개월`}
+                </td>
                 <td style={{ ...tdMono, textAlign: "right" }}>
                   {fmt(s.costMin)}~{fmt(s.costMax)}
                 </td>

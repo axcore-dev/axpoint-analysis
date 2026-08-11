@@ -8,7 +8,7 @@ import { Button, Loader, Modal } from "@/components/ui";
 
 /**
  * 자료 편집 칸반 보드 — 자료 정리 2단계 팝업 (사용자 인터뷰 확정안).
- * 분류된 파일을 8대 영역 + ISO·표준경영 + 미분류 컬럼으로 펼쳐 보여주고,
+ * 분류된 파일을 8대 업무 영역 + 미분류 컬럼으로 펼쳐 보여주고,
  * HTML5 드래그앤드롭으로 영역을 옮긴다. 컬럼별 '+ 파일 추가'는 즉시 업로드.
  * 이동·추가된 카드에는 그 영역의 소분류 select가 열린다(기본 '자동 분류').
  * 저장 시 변경된 파일만 처리한다:
@@ -22,7 +22,7 @@ import { Button, Loader, Modal } from "@/components/ui";
 /** 서버 doc_group 마스터 (GET /api/doc-groups) */
 type DocGroupItem = {
   id: number;
-  major: string; // '제조 문서 유형' / '표준경영 시스템 문서 (ISO 9001)'
+  major: string; // '8대 업무 영역' (2026-08-11 개정에서 ISO 관리영역이 여기로 흡수됐다)
   name: string;
   sortOrder: number;
   docTypes: { id: number; name: string }[];
@@ -38,25 +38,20 @@ export type BoardFile = {
   digitalLevel: number | null;
 };
 
-/** 컬럼 키 — 제조 8영역은 groupId 숫자, ISO 묶음·미분류는 고정 문자열 */
-type ColKey = number | "iso" | "none";
+/** 컬럼 키 — 8대 영역은 groupId 숫자, 미분류만 고정 문자열 */
+type ColKey = number | "none";
 
 type CardState = {
   file: BoardFile;
   col: ColKey;
-  /** ISO 컬럼에서 고른 관리영역 groupId (4개 중 하나) */
-  isoGroupId: number | null;
   /** 사용자가 고른 소분류(문서 유형) — null이면 '자동 분류'(영역만 지정) */
   docTypeId: number | null;
   /** 열었을 때의 위치 — null이면 팝업에서 새로 올린 파일(항상 변경 취급) */
-  init: { col: ColKey; isoGroupId: number | null } | null;
+  init: { col: ColKey } | null;
 };
 
 const isChanged = (c: CardState) =>
-  c.init === null ||
-  c.col !== c.init.col ||
-  (c.col === "iso" && c.isoGroupId !== c.init.isoGroupId) ||
-  c.docTypeId !== null;
+  c.init === null || c.col !== c.init.col || c.docTypeId !== null;
 
 /** select 조작이 카드 드래그로 번지지 않게 막는 공통 속성 */
 const selectDragBlock = {
@@ -70,18 +65,14 @@ const selectDragBlock = {
 /** 파일 카드 — 파일명 + 소분류명 + L레벨 뱃지 + 분류 상태, 변경 시 점 표시 */
 function BoardCard({
   card,
-  isoGroups,
   docTypes,
   onDragStart,
-  onPickIso,
   onPickType,
 }: {
   card: CardState;
-  isoGroups: DocGroupItem[];
-  /** 카드가 놓인 영역(ISO는 고른 관리영역)의 소분류 목록 — 미분류 컬럼은 빈 배열 */
+  /** 카드가 놓인 영역의 소분류 목록 — 미분류 컬럼은 빈 배열 */
   docTypes: { id: number; name: string }[];
   onDragStart: (e: DragEvent, fileId: string) => void;
-  onPickIso: (fileId: string, groupId: number) => void;
   onPickType: (fileId: string, docTypeId: number | null) => void;
 }) {
   const f = card.file;
@@ -125,22 +116,6 @@ function BoardCard({
             </>
           )}
         </div>
-      )}
-      {/* ISO 컬럼은 관리영역 4개 중 어디로 확정할지 카드에서 고른다 */}
-      {card.col === "iso" && isoGroups.length > 0 && (
-        <select
-          value={card.isoGroupId ?? isoGroups[0].id}
-          onChange={(e) => onPickIso(f.id, Number(e.target.value))}
-          {...selectDragBlock}
-          aria-label="ISO 관리영역 선택"
-          className="mt-1.5 w-full rounded-[var(--radius-xs)] border border-line bg-surface px-1.5 py-1 [font:var(--text-caption)] text-ink-2"
-        >
-          {isoGroups.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name}
-            </option>
-          ))}
-        </select>
       )}
       {/* 이동·추가된 카드는 소분류까지 지정할 수 있다 — 기본 '자동 분류'(영역만 지정) */}
       {isChanged(card) && card.col !== "none" && docTypes.length > 0 && (
@@ -186,8 +161,7 @@ export function FileEditBoard({
   /** '+ 파일 추가'를 누른 컬럼 — 파일 선택창은 하나를 공유한다 */
   const uploadColRef = useRef<ColKey>("none");
 
-  const mfgGroups = groups?.filter((g) => g.major.startsWith("제조")) ?? [];
-  const isoGroups = groups?.filter((g) => g.major.includes("ISO")) ?? [];
+  const areaGroups = groups ?? [];
 
   /* 영역(그룹) 마스터 — 첫 오픈에 한 번만 */
   useEffect(() => {
@@ -213,10 +187,8 @@ export function FileEditBoard({
         .filter((f) => f.status !== "split")
         .map((f) => {
           const g = f.docTypeId != null ? groupByType.get(f.docTypeId) : undefined;
-          const col: ColKey =
-            g === undefined ? "none" : g.major.includes("ISO") ? "iso" : g.id;
-          const isoGroupId = col === "iso" && g ? g.id : null;
-          return { file: f, col, isoGroupId, docTypeId: null, init: { col, isoGroupId } };
+          const col: ColKey = g === undefined ? "none" : g.id;
+          return { file: f, col, docTypeId: null, init: { col } };
         }),
     );
   }, [open, groups, cards, files]);
@@ -226,40 +198,20 @@ export function FileEditBoard({
       (prev) =>
         prev?.map((c) => {
           if (c.file.id !== fileId || c.col === to) return c;
-          // ISO로 옮기면: 원래 ISO 4개 중 하나였으면 그 영역 유지, 아니면 첫 그룹으로
-          const isoGroupId =
-            to !== "iso"
-              ? null
-              : c.init?.col === "iso" && c.init.isoGroupId != null
-                ? c.init.isoGroupId
-                : (isoGroups[0]?.id ?? null);
           // 컬럼이 바뀌면 소분류 목록도 바뀐다 — 고른 소분류는 '자동 분류'로 되돌린다
-          return { ...c, col: to, isoGroupId, docTypeId: null };
+          return { ...c, col: to, docTypeId: null };
         }) ?? null,
     );
   };
-
-  const pickIso = (fileId: string, groupId: number) =>
-    setCards(
-      (prev) =>
-        prev?.map((c) =>
-          // 관리영역이 바뀌면 소분류 목록도 바뀐다 — 고른 소분류는 '자동 분류'로 되돌린다
-          c.file.id === fileId ? { ...c, isoGroupId: groupId, docTypeId: null } : c,
-        ) ?? null,
-    );
 
   const pickType = (fileId: string, docTypeId: number | null) =>
     setCards(
       (prev) => prev?.map((c) => (c.file.id === fileId ? { ...c, docTypeId } : c)) ?? null,
     );
 
-  /** 카드가 놓인 영역의 소분류 목록 — ISO는 고른 관리영역 기준, 미분류는 없음 */
-  const typesFor = (c: CardState): { id: number; name: string }[] => {
-    if (c.col === "none") return [];
-    if (c.col === "iso")
-      return isoGroups.find((g) => g.id === (c.isoGroupId ?? isoGroups[0]?.id))?.docTypes ?? [];
-    return mfgGroups.find((g) => g.id === c.col)?.docTypes ?? [];
-  };
+  /** 카드가 놓인 영역의 소분류 목록 — 미분류 컬럼은 없음 */
+  const typesFor = (c: CardState): { id: number; name: string }[] =>
+    c.col === "none" ? [] : (areaGroups.find((g) => g.id === c.col)?.docTypes ?? []);
 
   /* '+ 파일 추가' — 즉시 업로드 후 해당 컬럼에 배치. 미분류 컬럼은 영역 지정 없이 올리기만 */
   const uploadTo = async (col: ColKey, list: FileList | null) => {
@@ -292,7 +244,6 @@ export function FileEditBoard({
                 digitalLevel: null,
               },
               col,
-              isoGroupId: col === "iso" ? (isoGroups[0]?.id ?? null) : null,
               docTypeId: null, // 카드에 열리는 select에서 소분류를 고를 수 있다 (기본 '자동 분류')
               init: null, // 새로 올린 파일 — 저장 시 영역 확정 + 분류 대상
             })),
@@ -327,7 +278,7 @@ export function FileEditBoard({
           continue;
         }
         // 미분류로 옮긴 파일은 영역 지정 없이 재분류만 건다
-        const groupId = c.col === "none" ? null : c.col === "iso" ? c.isoGroupId : c.col;
+        const groupId = c.col === "none" ? null : c.col;
         if (groupId != null) {
           await api(`/api/files/${c.file.id}/group`, {
             method: "PATCH",
@@ -354,8 +305,7 @@ export function FileEditBoard({
   };
 
   const columns: { key: ColKey; label: string }[] = [
-    ...mfgGroups.map((g) => ({ key: g.id as ColKey, label: g.name })),
-    { key: "iso" as ColKey, label: "ISO·표준경영" },
+    ...areaGroups.map((g) => ({ key: g.id as ColKey, label: g.name })),
     { key: "none" as ColKey, label: "미분류" },
   ];
 
@@ -413,13 +363,11 @@ export function FileEditBoard({
                     <BoardCard
                       key={c.file.id}
                       card={c}
-                      isoGroups={isoGroups}
                       docTypes={typesFor(c)}
                       onDragStart={(e, fileId) => {
                         e.dataTransfer.setData("text/plain", fileId);
                         e.dataTransfer.effectAllowed = "move";
                       }}
-                      onPickIso={pickIso}
                       onPickType={pickType}
                     />
                   ))}
