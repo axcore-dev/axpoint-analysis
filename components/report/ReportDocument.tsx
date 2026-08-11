@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
@@ -224,6 +225,27 @@ const withAxisNames = (text: string | null | undefined, axes: { code: string; na
   return out;
 };
 
+/**
+ * `**굵게**` 마크업을 실제 굵기로 바꾼다. PDF에는 마크다운 파서가 없어 그대로 두면
+ * 별표가 본문에 그대로 찍힌다(서사 에이전트가 강조에 이 표기를 쓴다).
+ */
+const boldify = (s: string): ReactNode =>
+  s
+    .split(/\*\*(.+?)\*\*/g)
+    .map((part, i) =>
+      i % 2 === 1 ? (
+        <strong key={i} style={{ fontWeight: 700, color: INK }}>
+          {part}
+        </strong>
+      ) : (
+        part
+      ),
+    );
+
+/** 축 표기를 펴고 굵기 마크업까지 처리한 본문 노드 */
+const rich = (text: string | null | undefined, axes: { code: string; name: string }[]): ReactNode =>
+  boldify(withAxisNames(text, axes));
+
 /* ============ 페이지 골격 ============ */
 
 function Page({
@@ -428,21 +450,26 @@ function ScoreBar({ score, avg }: { score: number; avg: number | null }) {
 
 /* ============ 페이지 나누기 ============ */
 
-type Block = { key: string; h: number; node: ReactNode };
+/** fixed=쪽을 통째로 차지해야 하는 블록. 실측값으로 줄이면 뒤에 다른 블록이 얹힌다 */
+type Block = { key: string; h: number; node: ReactNode; fixed?: boolean };
 
-/** 어림 높이대로 블록을 쪽에 채운다 — 한 블록이 한 쪽보다 크면 그 쪽을 혼자 쓴다 */
-function pack(blocks: Block[]): Block[][] {
+/**
+ * 블록을 쪽에 채운다 — 한 블록이 한 쪽보다 크면 그 쪽을 혼자 쓴다.
+ * height는 실측 높이를 돌려주는 함수다. 측정 전 첫 렌더에서는 어림값이 쓰인다.
+ */
+function pack(blocks: Block[], height: (b: Block) => number): Block[][] {
   const pages: Block[][] = [];
   let cur: Block[] = [];
   let used = 0;
   for (const b of blocks) {
-    if (cur.length > 0 && used + b.h > FILL_H) {
+    const h = height(b);
+    if (cur.length > 0 && used + h > FILL_H) {
       pages.push(cur);
       cur = [];
       used = 0;
     }
     cur.push(b);
-    used += b.h;
+    used += h;
   }
   if (cur.length > 0) pages.push(cur);
   return pages;
@@ -478,6 +505,7 @@ function tableBlocks<T>({
     out.push({
       key: `${key}-${part}`,
       h: BODY_H, // 쪽을 통째로 쓴다 — 표 뒤에 다른 블록을 얹지 않는다
+      fixed: true,
       node: (
         <div>
           {first && title ? title.node : null}
@@ -519,6 +547,13 @@ export function ReportDocument({
   files,
   publicSources,
 }: ReportDocumentProps) {
+  /* 쪽 나누기는 원래 어림 높이로만 했다. 어림이 모자라면 쪽이 overflow:hidden이라 잘리고,
+     넉넉하면 쪽 하단에 큰 여백이 남았다(perLine 46자는 실제 폭보다 보수적이라 후자가 잦았다).
+     그래서 첫 렌더에서 블록을 화면 밖에 실제로 그려 높이를 재고, 그 값으로 다시 나눈다.
+     어림값은 측정 전 1패스용 폴백으로만 남는다 */
+  const [measured, setMeasured] = useState<Record<string, number> | null>(null);
+  const measureRef = useRef<HTMLDivElement>(null);
+
   const roi = summary.roi;
   const scoreNum = Number(summary.totalScore);
   const detail = narrative?.detail ?? null;
@@ -582,9 +617,10 @@ export function ReportDocument({
       ...(company?.employees != null
         ? ([["직원 수", `${fmt(company.employees)}명`]] as [string, string][])
         : []),
+      /* 문항 수는 뺐다 — 문항별 판정은 축별 상세와 판정 근거표에서 그대로 볼 수 있다 */
       [
         "진단 범위",
-        `제출 자료 ${files.length}건 · 공개 데이터 ${publicSources.length}종 · 진단 문항 ${judgments.length}문항(분석 완료 ${answered}문항)`,
+        `제출 자료 ${files.length}건 · 공개 데이터 ${publicSources.length}종`,
       ],
     ];
     push(
@@ -809,7 +845,9 @@ export function ReportDocument({
       t.h + linesOf(title, 38) * 30 + 18,
       <div>
         {t.node}
-        <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.45, color: INK }}>{title}</div>
+        <div style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.45, color: INK }}>
+          {boldify(title)}
+        </div>
       </div>,
     );
 
@@ -821,7 +859,7 @@ export function ReportDocument({
         `narr-body-${i}`,
         linesOf(p) * 22 + 16,
         <p key={i} style={para}>
-          {p}
+          {boldify(p)}
         </p>,
       );
     });
@@ -839,7 +877,7 @@ export function ReportDocument({
           }}
         >
           <div style={{ fontSize: 11.5, fontWeight: 700, color: INK, marginBottom: 6 }}>요약</div>
-          <p style={{ ...para, fontSize: 12 }}>{withAxisNames(narrative.report.summary, axes)}</p>
+          <p style={{ ...para, fontSize: 12 }}>{rich(narrative.report.summary, axes)}</p>
         </div>,
       );
     }
@@ -908,7 +946,7 @@ export function ReportDocument({
                         color: SECONDARY,
                       }}
                     >
-                      {withAxisNames(it.body, axes)}
+                      {rich(it.body, axes)}
                     </span>
                   </span>
                 </li>
@@ -916,7 +954,7 @@ export function ReportDocument({
             </ul>
             {g.detail && (
               <p style={{ ...para, fontSize: 11.5, color: MUTED, marginTop: 4, paddingLeft: 14 }}>
-                {withAxisNames(g.detail, axes)}
+                {rich(g.detail, axes)}
               </p>
             )}
           </div>,
@@ -965,16 +1003,16 @@ export function ReportDocument({
           )}
           {a.finding && (
             <p style={{ ...para, fontSize: 12.5, color: INK, marginTop: 10 }}>
-              {withAxisNames(a.finding, axes)}
+              {rich(a.finding, axes)}
             </p>
           )}
-          {a.detail && <p style={{ ...para, marginTop: 8 }}>{withAxisNames(a.detail, axes)}</p>}
+          {a.detail && <p style={{ ...para, marginTop: 8 }}>{rich(a.detail, axes)}</p>}
           {a.functionLinks && (
             <div style={{ marginTop: 12, background: MIST, borderRadius: 10, padding: "12px 14px" }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: SECONDARY, marginBottom: 5 }}>
                 업무영역 연계
               </div>
-              <p style={{ ...para, fontSize: 11.5 }}>{withAxisNames(a.functionLinks, axes)}</p>
+              <p style={{ ...para, fontSize: 11.5 }}>{rich(a.functionLinks, axes)}</p>
             </div>
           )}
           {axisJudgments.length > 0 && (
@@ -986,6 +1024,22 @@ export function ReportDocument({
         </div>,
       );
     });
+  }
+
+  /* ── 업무 흐름 진단 (v9 A5 워크플로우 합성) ──
+     화면 ③ 워크플로우 분석에 해당한다. 차트 자체는 캔버스라 PDF에 실을 수 없지만,
+     서사가 낸 진단 문단(workflow_note)은 지금까지 props로 받고도 그리지 않았다.
+     문서가 어디서 끊기고 무엇이 영향을 받는지가 이 보고서에서 통째로 빠져 있던 셈이다 */
+  if (narrative?.workflow_note) {
+    const t = section("업무 흐름 진단", "문서가 실제로 이어지는 흐름에서 끊기는 지점입니다");
+    push(
+      "workflow-note",
+      t.h + linesOf(narrative.workflow_note) * 22 + 24,
+      <div>
+        {t.node}
+        <p style={para}>{rich(narrative.workflow_note, axes)}</p>
+      </div>,
+    );
   }
 
   /* ── 업무영역 판정 ── */
@@ -1007,7 +1061,7 @@ export function ReportDocument({
             {area.grade === "hold" && <Pill tone="muted">자료 부족</Pill>}
             {area.grade === "good" && <Pill tone="ok">양호</Pill>}
           </div>
-          {body && <p style={{ ...para, fontSize: 12 }}>{withAxisNames(body, axes)}</p>}
+          {body && <p style={{ ...para, fontSize: 12 }}>{rich(body, axes)}</p>}
           {chain.length > 0 && (
             <div style={{ marginTop: 10 }}>
               <div style={{ fontSize: 10.5, fontWeight: 700, color: MUTED, marginBottom: 5 }}>
@@ -1377,7 +1431,23 @@ export function ReportDocument({
   );
 
   /* ── 쪽으로 나눈다 (페이지 브레이크 블록은 자리만 차지하고 그려지지 않는다) ── */
-  const packed = pack(blocks).map((page) => page.filter((b) => b.node !== null));
+  /* 블록 구성이 바뀌면 다시 잰다 — 키 목록이 곧 구성이다 */
+  const blockSig = blocks.map((b) => b.key).join("|");
+  const sigRef = useRef<string>("");
+  useLayoutEffect(() => {
+    const el = measureRef.current;
+    if (!el) return;
+    if (measured && sigRef.current === blockSig) return;
+    const next: Record<string, number> = {};
+    el.querySelectorAll<HTMLElement>("[data-mb]").forEach((n) => {
+      next[n.dataset.mb as string] = n.getBoundingClientRect().height;
+    });
+    sigRef.current = blockSig;
+    setMeasured(next);
+  }, [blockSig, measured]);
+
+  const heightOf = (b: Block) => (b.fixed ? b.h : (measured?.[b.key] ?? b.h));
+  const packed = pack(blocks, heightOf).map((page) => page.filter((b) => b.node !== null));
   const bodyPages = packed.filter((page) => page.length > 0);
 
   /* 표지 · 목차 2장 + 본문 */
@@ -1444,9 +1514,6 @@ export function ReportDocument({
               업종 평균 {Math.round(summary.industryAvg)}점
             </Pill>
           )}
-          <Pill tone="muted" size={26}>
-            진단 문항 {answered}/{judgments.length}
-          </Pill>
         </div>
       </div>
     </div>
@@ -1495,6 +1562,29 @@ export function ReportDocument({
 
   return (
     <div>
+      {/* 높이 측정용 — 본문과 같은 폭으로 화면 밖에 한 번 그려 재기만 한다.
+          data-report-page가 없으므로 PDF 캡처 대상에 잡히지 않는다.
+          display:none이면 높이가 0이라 쓸 수 없어 화면 밖 배치로 둔다 */}
+      <div
+        ref={measureRef}
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: -20000,
+          top: 0,
+          width: PAGE_W - PAGE_PAD * 2,
+          visibility: "hidden",
+          pointerEvents: "none",
+        }}
+      >
+        {blocks
+          .filter((b) => b.node !== null && !b.fixed)
+          .map((b) => (
+            <div key={b.key} data-mb={b.key}>
+              {b.node}
+            </div>
+          ))}
+      </div>
       <Page no={1} total={totalPages} companyName={companyName}>
         {cover}
       </Page>
