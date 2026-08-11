@@ -283,7 +283,7 @@ function Page({
       <img
         src="/assets/axcore-color.png"
         alt=""
-        style={{ position: "absolute", top: 22, right: PAGE_PAD, height: 13, opacity: 0.9 }}
+        style={{ position: "absolute", top: PAGE_PAD, right: PAGE_PAD, height: 15 }}
       />
       <div style={{ flex: "1 1 auto", minHeight: 0 }}>{children}</div>
       {/* 페이지 하단 — AXpoint 표기 + 페이지 번호 */}
@@ -590,14 +590,16 @@ function tableBlocks<T>({
   let chunk: T[] = [];
   let used = (title?.h ?? 0) + headerH;
   let part = 0;
-  const flush = () => {
+  const flush = (last = false) => {
     if (chunk.length === 0) return;
     const rowsNow = chunk;
     const first = part === 0;
     out.push({
       key: `${key}-${part}`,
       h: BODY_H, // 쪽을 통째로 쓴다 — 표 뒤에 다른 블록을 얹지 않는다
-      fixed: true,
+      /* 마지막 조각만 실측을 허용한다. 전부 고정하면 표가 반 쪽만 채워도 BODY_H를 주장해,
+         바로 뒤에 오는 짧은 주석이 밀려나 혼자 한 쪽을 차지했다(구 19쪽 채움률 7%) */
+      fixed: !last,
       node: (
         <div>
           {first && title ? title.node : null}
@@ -618,7 +620,7 @@ function tableBlocks<T>({
     chunk.push(r);
     used += h;
   }
-  flush();
+  flush(true);
   return out;
 }
 
@@ -1583,7 +1585,7 @@ export function ReportDocument({
       </div>
 
       {/* 문서 종류 — 굵은 규칙선 위에 얹어 표제임을 분명히 한다 */}
-      <div style={{ marginTop: 96 }}>
+      <div style={{ marginTop: 72 }}>
         <div style={{ height: 3, width: 56, background: BLUE, borderRadius: 2 }} />
         <div
           style={{
@@ -1648,7 +1650,14 @@ export function ReportDocument({
         </div>
       </div>
 
-      {/* 아래를 채워 표지 하단이 비어 보이지 않게 한다 */}
+      {/* 5축 균형 — 표지 중앙이 통째로 비어 있어 표제지처럼 보이던 자리를 채운다.
+          표지에서 가장 먼저 읽혀야 할 것이 '어느 축이 약한가'이기도 하다 */}
+      {axes.length >= 3 && (
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
+          <RadarPdf axes={axes} />
+        </div>
+      )}
+
       <div style={{ flex: "1 1 auto" }} />
       <div style={{ paddingBottom: 8, fontSize: 10.5, lineHeight: 1.7, color: MUTED }}>
         이 보고서는 제출 자료 {files.length}건과 공개 데이터 {publicSources.length}종을 근거로
