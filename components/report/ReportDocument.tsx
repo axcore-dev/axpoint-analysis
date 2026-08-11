@@ -555,6 +555,16 @@ function pack(blocks: Block[], height: (b: Block) => number): Block[][] {
   let used = 0;
   for (const b of blocks) {
     const h = height(b);
+    /* 절 구분 개행은 '무르게' 건다 — 앞 쪽이 3분의 1도 안 찼는데 새 쪽을 열면
+       짧은 절이 60~70% 빈 쪽을 통째로 차지한다(실측 19~23쪽). 어느 정도 찼을 때만 넘긴다 */
+    if (b.node === null) {
+      if (cur.length > 0 && used > FILL_H * 0.34) {
+        pages.push(cur);
+        cur = [];
+        used = 0;
+      }
+      continue;
+    }
     if (cur.length > 0 && used + h > FILL_H) {
       pages.push(cur);
       cur = [];
