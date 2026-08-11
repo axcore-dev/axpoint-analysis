@@ -169,8 +169,12 @@ function TaskNode({ data }: NodeProps) {
         filter: d.dimmed ? "grayscale(1)" : undefined,
       }}
     >
-      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+      {/* 좌·우는 영역을 가로지르는 연결, 상·하는 같은 영역 안 순서 연결에 쓴다.
+          세로로 쌓인 상자를 좌·우 핸들로 이으면 선이 옆으로 크게 돌아 나간다 */}
+      <Handle id="l" type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0 }} />
+      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle id="b" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
 
       <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
         <span
@@ -566,13 +570,18 @@ function buildChart({
         : e.cross
           ? "var(--blue-500)"
           : (toneById.get(e.from) ?? "var(--grey-400)");
-    /* 레인을 건너는 선은 직교로 꺾는다 (v8 이슈②) — 사선이 여러 레인을 관통하며 엉키지 않게 */
+    /* 선 모양은 하나로 통일한다 — 같은 영역 안은 상·하 핸들로 곧게, 영역을 건너는 선은
+       좌·우 핸들 + 직교로 꺾는다(v8 이슈②). 예전엔 같은 영역 안만 베지어라 한 화면에
+       곡선과 직각이 섞여 보였다.
+       표준 패널은 순서 나열이 전부라 직선으로 둔다 — 꺾을 구간 자체가 없다 */
     const crossLane = stageById.get(e.from) !== stageById.get(e.to);
     return {
       id: `e:${e.from}-${e.to}`,
       source: `act:${e.from}`,
       target: `act:${e.to}`,
-      type: crossLane ? "smoothstep" : "default",
+      sourceHandle: crossLane ? "r" : "b",
+      targetHandle: crossLane ? "l" : "t",
+      type: template ? "straight" : "smoothstep",
       markerEnd: { ...ARROW, color },
       ...(isInferred && near
         ? {
