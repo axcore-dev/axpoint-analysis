@@ -18,6 +18,7 @@ const NAV: { path: string; label: string; icon: IconName }[] = [
   { path: "/admin/analyses", label: "진단 이력", icon: "clipboard" },
   { path: "/admin/integrations", label: "외부 연동", icon: "globe" },
   { path: "/admin/agents", label: "멀티 에이전트", icon: "spark" },
+  { path: "/admin/logs", label: "로그 기록", icon: "file" },
   { path: "/admin/env", label: "환경 관리", icon: "plug" },
 ];
 
