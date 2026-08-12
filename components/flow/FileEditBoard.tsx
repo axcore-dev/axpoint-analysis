@@ -36,6 +36,7 @@ export type BoardFile = {
   docTypeId: number | null;
   docTypeName: string | null;
   digitalLevel: number | null;
+  hitlStatus?: string | null; // 'needed' = 저신뢰·미분류 — 카드에 '확인 요청' 칩으로 정정을 유도
 };
 
 /** 컬럼 키 — 8대 영역은 groupId 숫자, 미분류만 고정 문자열 */
@@ -111,6 +112,11 @@ function BoardCard({
               {f.digitalLevel != null && (
                 <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-3">
                   {DIGITAL_LEVELS[`L${f.digitalLevel}`] ?? `L${f.digitalLevel}`}
+                </span>
+              )}
+              {f.hitlStatus === "needed" && (
+                <span className="flex-none rounded-[var(--radius-xs)] bg-[var(--bg-warning-weak)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--fg-warning)]">
+                  확인 요청
                 </span>
               )}
             </>

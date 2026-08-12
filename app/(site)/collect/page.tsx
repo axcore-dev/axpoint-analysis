@@ -75,6 +75,8 @@ type FileRow = {
   docTypeName: string | null;
   digitalLevel: number | null;
   confidence: number | null;
+  hitlStatus: string | null; // 'needed'면 저신뢰·미분류 — 화면에는 '확인 요청'으로 표기
+  supersededBy: string | null; // 같은 번호의 상위 레벨 원본에 대체된 사본
 };
 
 type RequiredDocs = {
@@ -115,6 +117,16 @@ function FileCell({ f }: { f: FileRow }) {
           {f.digitalLevel != null && (
             <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-3">
               {DIGITAL_LEVELS[`L${f.digitalLevel}`] ?? `L${f.digitalLevel}`}
+            </span>
+          )}
+          {f.hitlStatus === "needed" && (
+            <span className="flex-none rounded-[var(--radius-xs)] bg-[var(--bg-warning-weak)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--fg-warning)]">
+              확인 요청
+            </span>
+          )}
+          {f.supersededBy !== null && (
+            <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-4">
+              대체됨
             </span>
           )}
           <Icons.check size={14} />
@@ -625,8 +637,13 @@ export default function CollectPage() {
                               {d.docTypeName}
                             </span>
                             {done && (
-                              <span className="flex-none truncate [font:var(--text-caption)] text-ink-4">
+                              /* 같은 유형 여러 건이면 첫 파일 + 건수 — 전체는 title 툴팁으로 */
+                              <span
+                                title={d.files.map((f) => f.name).join("\n")}
+                                className="flex-none truncate [font:var(--text-caption)] text-ink-4"
+                              >
                                 {d.files[0].name}
+                                {d.files.length > 1 && ` 외 ${d.files.length - 1}건`}
                               </span>
                             )}
                           </div>

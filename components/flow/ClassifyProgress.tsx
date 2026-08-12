@@ -19,6 +19,8 @@ type ClassifyFile = {
   status: string | null; // pending / processing / done / failed / unclassified / split
   docTypeName: string | null;
   digitalLevel: number | null;
+  hitlStatus?: string | null; // 'needed' = 저신뢰·미분류 — '확인 요청' 표기
+  supersededBy?: string | null; // 상위 레벨 원본에 대체된 사본
 };
 
 /** done 외 종결 상태 표기 — 파일 그리드(STATUS_LABEL)와 같은 문구를 쓴다 */
@@ -93,6 +95,16 @@ export function ClassifyProgress({ files, done = false }: { files: ClassifyFile[
                 {f.name} — {f.docTypeName}
                 {f.digitalLevel != null && ` · L${f.digitalLevel}`}
               </span>
+              {f.hitlStatus === "needed" && (
+                <span className="flex-none rounded-[var(--radius-xs)] bg-[var(--bg-warning-weak)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--fg-warning)]">
+                  확인 요청
+                </span>
+              )}
+              {f.supersededBy != null && (
+                <span className="flex-none rounded-[var(--radius-xs)] bg-surface-3 px-1.5 py-0.5 text-[11px] font-semibold text-ink-4">
+                  대체됨
+                </span>
+              )}
             </div>
           );
         }
@@ -133,10 +145,22 @@ export function ClassifyProgress({ files, done = false }: { files: ClassifyFile[
 
   if (!done) return log;
 
-  /* 분류 완료 — 우측 정렬 접힌 아코디언으로 최종 로그 보존 */
+  /* 완료 요약 — 몇 건이 들어와 어떻게 정리됐는지 상시 노출 (0건 항목은 생략) */
+  const doneCount = rows.filter((f) => f.status === "done").length;
+  const unclassified = rows.filter((f) => f.status === "unclassified" || f.status === "failed").length;
+  const needed = rows.filter((f) => f.status === "done" && f.hitlStatus === "needed").length;
+  const summary = [
+    `자료 ${rows.length}건`,
+    `분류 완료 ${doneCount}건`,
+    ...(unclassified > 0 ? [`미분류 ${unclassified}건`] : []),
+    ...(needed > 0 ? [`확인 요청 ${needed}건`] : []),
+  ].join(" · ");
+
+  /* 분류 완료 — 좌측 요약 + 우측 접힌 아코디언으로 최종 로그 보존 */
   return (
     <div>
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate [font:var(--text-caption)] text-ink-3">{summary}</span>
         <button
           type="button"
           onClick={() => setOpen((v) => !v)}
