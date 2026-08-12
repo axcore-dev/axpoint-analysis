@@ -27,9 +27,9 @@ const toKorean = (e: unknown) => {
  * 로그인/회원가입 폼 — 모달과 /auth 페이지가 공유. 백엔드(better-auth) 연동.
  * 가입은 이메일 인증 완료 후 로그인 가능.
  *
- * '체험하기' 버튼은 없앴다 (작업요청 v6-3) — 자료 분류까지는 로그인 없이 진행하고
- * 결과 분석 시점에 이 폼을 띄운다. 그때까지의 진단은 익명 세션에 담겨 있다가
- * 로그인·가입에 성공하면 그 계정으로 넘어온다 (v6-4, AuthContext.claimGuestWork).
+ * 자료 분류까지는 로그인 없이 진행하고 결과 분석 시점에 이 폼을 띄운다.
+ * 그때까지의 진단은 익명 세션에 담겨 있다가
+ * 로그인·가입에 성공하면 그 계정으로 넘어온다 (AuthContext.claimGuestWork).
  */
 export function AuthForm({
   mode: initialMode = "login",

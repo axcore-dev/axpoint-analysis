@@ -2,13 +2,11 @@ import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 
 /**
- * 클라이언트 PDF 생성 유틸 (F-RPT-02, F-RPT-06 · 2026-07-09 수정요청v1)
+ * 클라이언트 PDF 생성 유틸
  *
- * 구 방식(긴 캔버스를 A4 높이로 슬라이싱)은 표·행이 페이지 경계에서 잘리는
- * 문제가 있어 폐기. ReportDocument가 페이지 컨테이너 배열(각 794×1123px,
- * `data-report-page` 속성)로 렌더되고, 여기서는 각 페이지 요소를 개별
- * html2canvas 캡처 → jsPDF addPage로 삽입한다. 794×1123은 A4(210×297mm)
- * 비율과 일치하므로 페이지 흐름이 끊어지지 않는다.
+ * ReportDocument가 페이지 컨테이너 배열(각 794×1123px, `data-report-page` 속성)로
+ * 렌더되고, 여기서는 각 페이지 요소를 개별 html2canvas 캡처 → jsPDF addPage로
+ * 삽입한다. 794×1123은 A4(210×297mm) 비율과 일치하므로 페이지 흐름이 끊어지지 않는다.
  *
  * 주의: html2canvas는 oklch 등 최신 CSS 색상 함수를 지원하지 않으므로
  * ReportDocument 내부는 인라인 hex 스타일만 사용한다 (Tailwind 유틸리티 금지).

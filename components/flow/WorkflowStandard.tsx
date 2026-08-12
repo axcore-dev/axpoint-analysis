@@ -2,8 +2,7 @@
  * 워크플로우 응답 타입 — GET /api/assessments/:id/workflow의 표준 정의에 이 진단의
  * 문서 보유 여부(covered)를 얹은 형태. WorkflowChart가 이 타입으로 차트를 그린다.
  *
- * 결과 화면 전용이던 WorkflowStandard 컴포넌트는 v8 개편에서 삭제 —
- * 진단 결과 화면이 섹션 카드 안에 WorkflowChart를 직접 넣으면서 래퍼가 할 일이 없어졌다.
+ * 이 파일은 타입 정의만 담는다 — 렌더 컴포넌트는 없다.
  */
 
 export type OutputDoc = { docTypeId: number | string; name: string; covered: boolean };

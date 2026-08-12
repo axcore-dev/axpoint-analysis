@@ -42,9 +42,7 @@ export default function AdminLoginPage() {
     }
   };
 
-  /* 익명 게스트는 '권한 없는 계정'이 아니라 계정이 없는 상태다 (v7) — 로그인 폼을 그대로 보여준다.
-     종전에는 진단을 체험하다 온 게스트 세션에도 "관리자 권한이 없어요"가 떠서
-     관리자 계정에 권한이 없는 것처럼 보였다 */
+  /* 익명 게스트는 '권한 없는 계정'이 아니라 계정이 없는 상태다 — 로그인 폼을 그대로 보여준다 */
   const wrongAccount = hydrated && user && !user.isAnonymous && user.role !== "admin";
 
   return (

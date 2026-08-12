@@ -430,8 +430,7 @@ export default function ReportPage() {
         .axp-drill-arrow { display: inline-flex; transition: transform var(--dur-base) var(--ease-out); }
         .axp-drill-link { transition: color var(--dur-fast) var(--ease); }
       `}</style>
-      {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준)
-          v5-8: 컨테이너·카드 확대 — '현재 단계' 카드의 레벨명이 줄바꿈으로 잘려 보이던 문제 */}
+      {/* ══ 요약 — 흰 캔버스 단일 흐름 (원본 레이아웃, 서버 응답 기준) */}
       <section style={{ padding: "var(--space-16) var(--gutter) 0" }}>
         <div style={{ maxWidth: 1200, margin: "0 auto" }}>
           <Eyebrow>STEP 6 · 보고서</Eyebrow>

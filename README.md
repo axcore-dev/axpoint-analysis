@@ -2,7 +2,7 @@
 
 중소기업 AX(AI 전환) 진단 플랫폼. 기업 자료를 수집·분석해 5축 채점 기반의 진단 결과와 개선 과제, 로드맵, 보고서를 제공한다.
 
-> 현재 상태: **전 화면 실 API 연동.** 백엔드는 `axpoint-analysis-api`(Hono :3001, 쿠키 세션). `data/`의 시나리오 더미는 더 이상 어떤 화면도 참조하지 않는다(정리 대기 — api `docs/로직.md` §5). 더미데이터 데모 버전은 `archive/dummy-data-demo` 브랜치에 보존되어 있다.
+> 현재 상태: **전 화면 실 API 연동.** 백엔드는 `axpoint-analysis-api`(Hono :3001, 쿠키 세션). `data/`의 시나리오 더미는 어떤 화면도 참조하지 않는다(미참조 — 삭제 예정, api `docs/로직.md` §5).
 
 ## 기술 스택
 
@@ -25,10 +25,10 @@ npm run lint    # ESLint
 
 백엔드(`axpoint-analysis-api`, :3001)가 떠 있어야 로그인·진단이 동작한다(`NEXT_PUBLIC_API_URL` 미설정 시 `http://localhost:3001`). 인증은 better-auth 쿠키 세션 — 이메일 인증·Google OAuth.
 
-**로그인을 요구하는 지점은 '진단 결과 보기' 한 곳이다** (작업요청 v6-4). 기업을 고르는 순간
+**로그인을 요구하는 지점은 '진단 결과 보기' 한 곳이다.** 기업을 고르는 순간
 `ensureSession()`이 익명 세션을 조용히 발급해 자료 업로드·분류까지 로그인 없이 진행하고,
 결과 분석 버튼에서 `LoginModal`을 띄운다. 로그인·가입에 성공하면 서버가 그때까지의 진단을 그 계정으로
-옮기므로(`auth.ts` `onLinkAccount`) 흐름이 끊기지 않는다. '체험하기' 버튼은 없앴다.
+옮기므로(`auth.ts` `onLinkAccount`) 흐름이 끊기지 않는다.
 
 ## 폴더 구조
 
@@ -39,19 +39,19 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
 │                   전용 레이아웃: 진단 스텝 숨김(StepBar showSteps={false}) + 푸터
 ├── (site)/         진단 플로우 공용 레이아웃(StepBar + main + SiteFooter)
 │   ├── collect/    S1 자료 정리 — 2단계. ① 자료 확인(필수 서류 현황 + 부족 자료 우측 패널·사용 프로그램)
-│   │               → 진입과 동시에 분류 시작. 사전 설문 스텝은 v5에서 삭제(설문은 판정 후 결과 화면에서)
+│   │               → 진입과 동시에 분류 시작. 설문은 결과 화면에서 진행한다
 │   │               ② 자료 분류(분류 진행 로그·자료 편집 칸반 팝업·공개데이터 수집·
-│   │               디지털화 수준 도넛(DigitalLevelSection — v8)·워크플로우 플로우차트)
-│   ├── result/     S2 진단 결과 — 5개 섹션 고정 순서(v8): ① 진단 개요(기업·레벨·통계 칩 + 거시 해설)
+│   │               디지털화 수준 도넛(DigitalLevelSection)·워크플로우 플로우차트)
+│   ├── result/     S2 진단 결과 — 5개 섹션 고정 순서: ① 진단 개요(기업·레벨·통계 칩 + 거시 해설)
 │   │               → ② 카테고리 분석(레이더 + 선택형 상세 카드: 축 선택 시 상세·'모두 보기' 토글,
-│   │               문항 코드는 문항 내용 칩(명사형)으로 치환 — v10) → ③ 워크플로우 분석(차트 +
+│   │               문항 코드는 문항 내용 칩(명사형)으로 치환) → ③ 워크플로우 분석(차트 +
 │   │               분석 레이어 배지·범례 칩 + 업무 흐름 진단 문단) → ④ 업무영역 분석(8영역 카드,
 │   │               컨설팅 4단: 현재 상태·문제·방향·추천 과제/활용 AI, /tasks 이동 CTA)
 │   │               → ⑤ 종합분석(여정 요약 + 강점·보완·전략).
 │   │               우측 sticky TOC(플로팅 카드, scroll spy + 읽기 진행률, lg 미만 숨김).
 │   │               판정 중 진행률 프로그레스바(%), 데이터 로딩 스켈레톤, 통계 칩 캐러셀(양방향 화살표),
 │   │               강등 사유(달성 조건 미충족)·검토 필요(근거 상충) 표시,
-│   │               결측 문항 보완 설문 — 에이전트 생성 질문을 카드 모달로 1문항씩 자동 진행(v5)
+│   │               결측 문항 보완 설문 — 에이전트 생성 질문을 카드 모달로 1문항씩 자동 진행
 │   ├── tasks/      S3 개선 과제 — 과제 카탈로그 탐색·담기
 │   ├── roadmap/    S4 로드맵 — 담은 과제 기반 단계별 타임라인
 │   ├── report/     S5 보고서 — 요약·ROI 드릴다운, 문의 CTA
@@ -67,7 +67,6 @@ app/                라우트 (App Router, 전 페이지 클라이언트 컴포�
                     편집한다. 실행 로그 탭은 노드 실행·실패를 진단과 무관하게 조회).
                     role=admin 가드. admin.axcore.io.kr은 proxy.ts가 여기로 리라이트
                     ※ 어드민 화면은 전부 좌측 내비에 있다 — 링크로만 들어가는 화면을 두지 않는다.
-                      지시문 편집(prompts/)이 그래서 안 보였고 2026-08-07에 agents/로 합쳤다.
 
 proxy.ts            admin.* 호스트 → /admin 리라이트 (/auth는 제외 — 로그인 공용)
 
@@ -79,39 +78,40 @@ components/
 │                   FieldHelp(라벨 옆 물음표 → 설명·예시 팝업)
 ├── auth/           인증 UI + AuthContext (better-auth 쿠키 세션, role 포함)
 ├── flow/           진단 플로우 공통 — DiagnosisContext(전역 상태), steps.ts(6단계 SSOT), StepBar
-│                   WorkflowChart(React Flow 플로우차트 — 응답에 synthesized(v9 문서 도출 합성)가
-│                   있으면 합성 노드를 그린다: 배치만 function_area 레인 기준(띠·라벨은 v10에서 제거,
+│                   WorkflowChart(React Flow 플로우차트 — 응답에 synthesized(문서 도출 합성)가
+│                   있으면 합성 노드를 그린다: 배치만 function_area 레인 기준(띠·라벨 없이
 │                   영역 구분은 테두리 색+범례), 근거 문서 칩·inferred 엣지는 점선+'추정' 라벨,
 │                   기록 끊김·DX·AX 지점은 응답 layers로 배지·범례 칩 표시(읽기 모드),
-│                   편집 모드는 카드를 다른 카드 위에 놓으면 자리 교체(v10), 좌표는 syn: 키로 저장.
+│                   편집 모드는 카드를 다른 카드 위에 놓으면 자리 교체, 좌표는 syn: 키로 저장.
 │                   과거 진단은 종전 표준 activity+connections 렌더 유지. 비교 패널(표준 템플릿)은 그대로.
 │                   WorkflowSection=자료 정리 편집용, 결과 화면은 섹션 카드 안에
-│                   직접 삽입. WorkflowStandard는 워크플로우 응답 타입만 남음),
+│                   직접 삽입. WorkflowStandard는 워크플로우 응답 타입 정의다),
 │                   ClassifyProgress(분류 진행 텍스트 로그), FileEditBoard(자료 편집 칸반 팝업),
 │                   DigitalLevelSection(디지털화 수준 SVG 도넛 + 문서 목록 — 레벨은 단일 색상
-│                   명도 램프, 조각 클릭 필터, 대표 수준=최빈값. 외부 차트 라이브러리 없음 — v8),
-│                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달 — v5),
+│                   명도 램프, 조각 클릭 필터, 대표 수준=최빈값. 외부 차트 라이브러리 없음),
+│                   PublicDataSection(공개데이터 수집·SSE), CoverageSurveyModal(보완 설문 카드 모달),
 │                   DatasetFlagsNotice(데이터셋 이상 경고 — 분류 현황·결과 응답의 datasetFlags를
-│                   collect 배너·result 칩으로, 필드 없으면 미렌더 — v9 A4)
+│                   collect 배너·result 칩으로, 필드 없으면 미렌더)
 └── report/         ReportDocument — PDF용 A4 페이지 DOM (보고서 화면의 실데이터 요약으로 렌더)
 
-data/               구 더미데이터 계층 — 시나리오·카탈로그는 전 화면 미참조(정리 보류 — api docs/로직.md §5)
-├── rubric/         구 채점 체계 — 화면은 meta의 DIGITAL_LEVELS(L1~L4 라벨)만 참조
-├── scenario/       (주)데모기업 더미 시나리오 — 화면 미참조
-├── catalog/        구 과제 카탈로그 — 화면 미참조 (실데이터는 백엔드 시드)
+data/               더미데이터 계층 (미참조 — 삭제 예정, api docs/로직.md §5)
+├── rubric/         채점 체계 (미참조 — 삭제 예정. 화면은 meta의 DIGITAL_LEVELS(L1~L4 라벨)만 참조)
+├── scenario/       (주)데모기업 더미 시나리오 (미참조 — 삭제 예정)
+├── catalog/        과제 카탈로그 (미참조 — 삭제 예정. 실데이터는 백엔드 시드)
 └── glossary.ts     용어사전 (툴팁) — result 화면이 참조
 
 lib/                API 클라이언트 + 순수 계산 로직
 ├── api.ts          백엔드 호출 공통 (쿠키 세션 credentials 포함)
 ├── companySearch.ts 기업 검색 자동완성 공용 — 첫 화면·내 정보가 공유
 ├── types.ts        도메인 타입 SSOT — 백엔드 API 계약의 출발점
-├── scoring/        (미참조) 구 프론트 채점 엔진 — 채점은 백엔드가 한다
-├── roadmap.ts      (미참조) 구 로드맵 계산 — 화면은 서버 응답 표시
-├── roi.ts          (미참조) 구 ROI 계산 — 보고서 ROI는 백엔드 산출
+├── scoring/        프론트 채점 엔진 (미참조 — 삭제 예정. 채점은 백엔드가 한다)
+├── roadmap.ts      로드맵 계산 (미참조 — 삭제 예정. 화면은 서버 응답 표시)
+├── roi.ts          ROI 계산 (미참조 — 삭제 예정. 보고서 ROI는 백엔드 산출)
 └── pdf.ts          ReportDocument DOM → A4 PDF Blob (브라우저 다운로드 + 메일 첨부 업로드 공용)
 
 public/             로고, fonts/PretendardVariable.woff2 (본문 서체 — 유일한 웹폰트)
-docs/               기획·수정요청·참고자료 (로컬 전용) — update/(작업 기록)만 git 추적
+docs/               로컬 전용 문서 — design-system/·기획/·ISO9001/·archive/(데모 시절 문서 보관).
+                    update/(작업 기록)만 git 추적
 ```
 
 ## 데이터 흐름
@@ -131,12 +131,12 @@ result / report 화면 ◄── lib/api.ts (쿠키 세션, 진행률 SSE·폴�
 ```
 
 - 채점·판정·추천은 전부 백엔드(`axpoint-analysis-api`)가 계산한다. 프론트는 표시 전용이며 점수를 재계산하지 않는다.
-- 로직 사양은 api `docs/로직.md`, 구 프론트 계산기(`lib/scoring` 등)는 미참조 — 정리 보류(같은 문서 §5).
+- 로직 사양은 api `docs/로직.md`. 프론트 계산기(`lib/scoring` 등)는 미참조 — 삭제 예정(같은 문서 §5).
 
 ## 협업 규칙
 
 - **저장소**: `https://github.com/axcore-dev/axpoint-analysis` (조직 소유). 커밋은 조직 이메일 계정으로 한다.
-- **브랜치**: `main` 보호를 원칙으로, 기능 단위 브랜치 → PR → 머지. (현재 1인 개발이라 main 직접 커밋 허용, 팀원 합류 시 PR 필수로 전환)
+- **브랜치**: `main` 단일 브랜치에 직접 커밋·푸시한다(1인 개발). 팀원 합류 시 브랜치+PR로 전환.
 - `archive/dummy-data-demo`: 더미데이터 데모 버전 보존 브랜치. 삭제 금지.
 - **커밋**: 기능 단위로 쪼개고, 한국어로 무엇을 했는지 명확히 쓴다.
 - **문서**: `docs/`는 로컬 전용(미추적)이되 `docs/update/`(작업 기록)만 git으로 추적한다. 그 외 공유할 문서는 별도 채널로 전달하거나 추적 전환을 논의한다.

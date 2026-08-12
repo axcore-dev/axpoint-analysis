@@ -2,10 +2,8 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
- * PDF용 상세 보고서 DOM — 컨설팅 보고서판 (작업 요청 v7 전면 확장)
+ * PDF용 상세 보고서 DOM — 컨설팅 보고서판.
  *
- * v6까지는 표지·요약·ROI 세 장이었다. 진단 결과 화면에 있는 것(종합 서술·축별 근거·업무영역
- * 판정·문항별 판정 사유)이 하나도 담기지 않아 "받아 보니 너무 짧다"는 그대로였다. 그래서
  * 화면이 가진 데이터를 전부 실어 나른다 — 없는 절은 그리지 않는다(값이 없으면 그 장이 사라진다).
  *
  * 페이지 구성
@@ -467,8 +465,7 @@ function ScoreBar({ score, avg }: { score: number; avg: number | null }) {
 
 /**
  * 5축 레이더 — 화면(result/page.tsx `RadarChart`)과 같은 기하를 쓰되 색을 hex로 박고
- * hover·선택을 뺀 정적판이다. PDF에는 지금까지 막대만 있어 축 사이 균형이 안 보였다.
- * 순수 인라인 SVG라 html2canvas가 그대로 그린다.
+ * hover·선택을 뺀 정적판이다. 순수 인라인 SVG라 html2canvas가 그대로 그린다.
  */
 function RadarPdf({ axes }: { axes: ReportAxis[] }) {
   const list = axes.filter((a) => a.name);
@@ -1585,8 +1582,7 @@ export function ReportDocument({
 
   const cover = (
     <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      {/* 표지 — 문서 종류 · 대상 · 판정 결과 세 덩이로 읽히게 (2026-08-11 재디자인).
-          종전에는 로고 아래 큰 여백 하나에 회사명만 떠 있어 보고서보다 표제지에 가까웠다 */}
+      {/* 표지 — 문서 종류 · 대상 · 판정 결과 세 덩이로 읽히게 구성한다 */}
       <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
         <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", color: BLUE }}>
           AXpoint
@@ -1660,8 +1656,7 @@ export function ReportDocument({
         </div>
       </div>
 
-      {/* 5축 균형 — 표지 중앙이 통째로 비어 있어 표제지처럼 보이던 자리를 채운다.
-          표지에서 가장 먼저 읽혀야 할 것이 '어느 축이 약한가'이기도 하다 */}
+      {/* 5축 균형 — 표지에서 가장 먼저 읽혀야 할 것이 '어느 축이 약한가'다 */}
       {axes.length >= 3 && (
         <div style={{ marginTop: 8, display: "flex", justifyContent: "center" }}>
           <RadarPdf axes={axes} />
