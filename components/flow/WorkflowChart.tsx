@@ -3,18 +3,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   applyNodeChanges,
+  BaseEdge,
+  ConnectionMode,
   Controls,
+  EdgeLabelRenderer,
+  getSmoothStepPath,
   Handle,
   MarkerType,
   Position,
   ReactFlow,
+  useInternalNode,
+  type Connection as FlowConnection,
   type Edge,
+  type EdgeProps,
+  type InternalNode,
   type Node,
   type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Loader } from "@/components/ui";
+import { Button, Input, Loader, Modal } from "@/components/ui";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api } from "@/lib/api";
 import { type WorkflowStage } from "@/components/flow/WorkflowStandard";
@@ -51,10 +59,18 @@ type SynthNode = {
 type SynthEdge = {
   from: string;
   to: string;
-  basis: "shared_identifier" | "document_reference" | "text_sequence";
+  /** 'user' = 편집 화면에서 사용자가 직접 그은 연결 — 실선으로 그린다 (2026-08-13) */
+  basis: "shared_identifier" | "document_reference" | "text_sequence" | "user";
   evidence: string[];
   confidence: number;
   inferred: boolean; // 근거 약함 — 점선 + '추정' 라벨
+};
+
+/** PUT /workflow에 통째로 보내는 사용자 편집 그래프 — 서버가 원본 합성과 대조해 거른다 */
+type UserGraphBody = {
+  nodes: { id: string; activity_name: string; function_area: string; source_documents: string[] }[];
+  edges: { from: string; to: string }[];
+  removedEdges: string[];
 };
 type Synthesized = {
   nodes: SynthNode[];
@@ -120,6 +136,8 @@ type TaskData = {
   ax: boolean;
   /** 범례에서 다른 영역을 고른 상태 — 색을 빼고 흐리게 물러난다 (v7-1) */
   dimmed: boolean;
+  /** 편집 모드 — 4방향 핸들을 보이게 해 연결을 그을 수 있다 (2026-08-13) */
+  editable: boolean;
 };
 
 /** 레이어 배지 색 — DX는 파랑, AX는 보라 (STAGE_TONE.design과 같은 계열) */
@@ -167,12 +185,35 @@ function TaskNode({ data }: NodeProps) {
         filter: d.dimmed ? "grayscale(1)" : undefined,
       }}
     >
-      {/* 좌·우는 영역을 가로지르는 연결, 상·하는 같은 영역 안 순서 연결에 쓴다.
-          세로로 쌓인 상자를 좌·우 핸들로 이으면 선이 옆으로 크게 돌아 나간다 */}
-      <Handle id="l" type="target" position={Position.Left} style={{ opacity: 0 }} />
-      <Handle id="r" type="source" position={Position.Right} style={{ opacity: 0 }} />
-      <Handle id="t" type="target" position={Position.Top} style={{ opacity: 0 }} />
-      <Handle id="b" type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      {/* 상/하/좌/우 4방향 핸들 — 선의 실제 접점은 floating 엣지가 상대 위치로 다시 계산하므로
+          핸들은 연결 드래그의 시작·끝점 역할이다. 편집 모드에서만 점으로 보인다 (2026-08-13).
+          ConnectionMode.Loose라 어느 핸들에서든 어느 핸들로든 이을 수 있다 */}
+      {(
+        [
+          ["l", "target", Position.Left],
+          ["r", "source", Position.Right],
+          ["t", "target", Position.Top],
+          ["b", "source", Position.Bottom],
+        ] as const
+      ).map(([id, type, position]) => (
+        <Handle
+          key={id}
+          id={id}
+          type={type}
+          position={position}
+          style={
+            d.editable
+              ? {
+                  width: 9,
+                  height: 9,
+                  background: "var(--bg-elevated)",
+                  border: "2px solid var(--blue-500)",
+                  opacity: 0.9,
+                }
+              : { opacity: 0, pointerEvents: "none" }
+          }
+        />
+      ))}
 
       <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
         <span
@@ -235,6 +276,81 @@ function TaskNode({ data }: NodeProps) {
 /* 레인 배경 띠·영역명 라벨은 그리지 않는다 — 영역 구분은 테두리 색과 하단 범례가 이미 한다.
    레인은 배치 계산(placeLanes)에만 남아 세로 자리를 잡는다 */
 const nodeTypes = { task: TaskNode };
+
+/* ── Floating 엣지 (2026-08-13) ────────────────────────────────────────
+   React Flow 공식 'Floating Edges' 패턴 — 고정 핸들 대신 두 카드의 상대 위치를 보고
+   가장 가까운 변(상/하/좌/우)을 매 렌더마다 다시 계산한다. 카드를 어디로 옮겨도
+   화살표가 어색하게 돌지 않는다. */
+
+/** 두 카드의 상대 위치 → 접점 좌표·방향. 지배 축(가로/세로 거리 큰 쪽)의 마주 보는 변을 잇는다 */
+function floatingAnchors(sn: InternalNode, tn: InternalNode) {
+  const sw = sn.measured?.width ?? NODE_W;
+  const sh = sn.measured?.height ?? 64;
+  const tw = tn.measured?.width ?? NODE_W;
+  const th = tn.measured?.height ?? 64;
+  const sx = sn.internals.positionAbsolute.x;
+  const sy = sn.internals.positionAbsolute.y;
+  const tx = tn.internals.positionAbsolute.x;
+  const ty = tn.internals.positionAbsolute.y;
+  const scx = sx + sw / 2;
+  const scy = sy + sh / 2;
+  const tcx = tx + tw / 2;
+  const tcy = ty + th / 2;
+  const dx = tcx - scx;
+  const dy = tcy - scy;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return {
+      sourceX: dx > 0 ? sx + sw : sx,
+      sourceY: scy,
+      targetX: dx > 0 ? tx : tx + tw,
+      targetY: tcy,
+      sourcePosition: dx > 0 ? Position.Right : Position.Left,
+      targetPosition: dx > 0 ? Position.Left : Position.Right,
+    };
+  }
+  return {
+    sourceX: scx,
+    sourceY: dy > 0 ? sy + sh : sy,
+    targetX: tcx,
+    targetY: dy > 0 ? ty : ty + th,
+    sourcePosition: dy > 0 ? Position.Bottom : Position.Top,
+    targetPosition: dy > 0 ? Position.Top : Position.Bottom,
+  };
+}
+
+function FloatingEdge({ id, source, target, markerEnd, style, label }: EdgeProps) {
+  const sn = useInternalNode(source);
+  const tn = useInternalNode(target);
+  if (!sn || !tn) return null;
+  const a = floatingAnchors(sn, tn);
+  const [path, labelX, labelY] = getSmoothStepPath({ ...a, borderRadius: 8 });
+  return (
+    <>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={14} />
+      {label != null && label !== "" && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+              font: "10px var(--font-sans)",
+              color: "var(--fg-tertiary)",
+              background: "var(--bg-elevated)",
+              padding: "1px 5px",
+              borderRadius: 4,
+              pointerEvents: "none",
+            }}
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+
+const edgeTypes = { floating: FloatingEdge };
 
 /* ── 배치 계산 ─────────────────────────────────────────────────────── */
 
@@ -475,10 +591,12 @@ function buildChart({
   inferredKeys,
   dxSet,
   axSet,
+  flashKey,
 }: {
   acts: Act[];
-  /** 그릴 연결 — 표준 기반은 allEdges() 산출, 합성 모드는 합성 엣지를 넘긴다 (v9) */
-  edgeList: { from: number; to: number; cross: boolean }[];
+  /** 그릴 연결 — 표준 기반은 allEdges() 산출, 합성 모드는 합성 엣지를 넘긴다 (v9).
+      key·user는 합성 모드 전용 — key는 합성 노드 id 기준 "from->to", user는 사용자 직접 연결 */
+  edgeList: { from: number; to: number; cross: boolean; key?: string; user?: boolean }[];
   placed: Placed;
   back: Set<string>;
   editable: boolean;
@@ -497,6 +615,8 @@ function buildChart({
   /** 분석 레이어 (결과 화면) — DX·AX 지점 노드의 화면 idx. 읽기 모드에서만 넘어온다 */
   dxSet?: Set<number>;
   axSet?: Set<number>;
+  /** 방금 그은 연결의 key — 잠깐 대시가 흐르는 모션으로 '연결됐다'를 알린다 (2026-08-13) */
+  flashKey?: string | null;
 }): { nodes: Node[]; edges: Edge[]; bottlenecks: number[] } {
   const hasIn = new Set(edgeList.map((e) => e.to));
   const hasOut = new Set(edgeList.map((e) => e.from));
@@ -547,6 +667,7 @@ function buildChart({
         dx: dxSet?.has(a.id) ?? false,
         ax: axSet?.has(a.id) ?? false,
         dimmed: focus !== null && !focused.has(a.id),
+        editable,
       } satisfies TaskData as unknown as Record<string, unknown>,
     });
   }
@@ -557,6 +678,8 @@ function buildChart({
     const isBack = back.has(`${e.from}->${e.to}`);
     /* 추정 연결 (v9 A5) — 근거가 약해 코드가 inferred로 강제한 엣지. 점선 + '추정' 라벨 */
     const isInferred = inferredKeys?.has(`${e.from}->${e.to}`) ?? false;
+    /* 사용자가 직접 그은 연결 (2026-08-13) — 근거가 사용자 자신이라 실선·또렷하게 */
+    const isUser = e.user === true;
     /* 병목에서 나가는 선은 붉게 — 그 자리에서 기록이 끊긴 채 다음으로 넘어간다는 뜻 */
     const broken = bottleneck.has(e.from);
     /* 고른 영역에 한쪽이라도 닿는 선만 색을 남긴다 — 나머지는 회색으로 물러난다 */
@@ -568,9 +691,8 @@ function buildChart({
         : e.cross
           ? "var(--blue-500)"
           : (toneById.get(e.from) ?? "var(--grey-400)");
-    /* 선 모양은 하나로 통일한다 — 같은 영역 안은 상·하 핸들로 곧게, 영역을 건너는 선은
-       좌·우 핸들 + 직교로 꺾는다(v8 이슈②). 예전엔 같은 영역 안만 베지어라 한 화면에
-       곡선과 직각이 섞여 보였다.
+    /* 핸들 지정은 폴백일 뿐이다 — 회사 차트는 floating 엣지가 카드 상대 위치로 접점을
+       매번 다시 계산한다(카드를 옮기면 화살표 방향도 따라 바뀐다, 2026-08-13).
        표준 패널은 순서 나열이 전부라 직선으로 둔다 — 꺾을 구간 자체가 없다 */
     const crossLane = stageById.get(e.from) !== stageById.get(e.to);
     return {
@@ -579,22 +701,19 @@ function buildChart({
       target: `act:${e.to}`,
       sourceHandle: crossLane ? "r" : "b",
       targetHandle: crossLane ? "l" : "t",
-      type: template ? "straight" : "smoothstep",
+      type: template ? "straight" : "floating",
       markerEnd: { ...ARROW, color },
-      ...(isInferred && near
-        ? {
-            label: "추정",
-            labelStyle: { fontSize: 10, fill: "var(--fg-tertiary)" },
-            /* bg-elevated — SVG rect의 fill이라 정의 안 된 변수면 검은 상자가 된다 */
-            labelBgStyle: { fill: "var(--bg-elevated)", fillOpacity: 0.85 },
-            labelBgPadding: [4, 2] as [number, number],
-          }
-        : {}),
+      /* 편집 화면의 클릭 선택·재연결 판별 재료 — key는 합성 노드 id 기준 */
+      data: { key: e.key, user: isUser },
+      reconnectable: editable && isUser,
+      /* 방금 그은 연결 — 잠깐 대시가 흐른다 (ax-wf-canvas CSS) */
+      animated: flashKey != null && e.key === flashKey,
+      ...(isInferred && near ? { label: "추정" } : {}),
       style: {
         stroke: color,
-        strokeWidth: e.cross ? 1.6 : 1.3,
+        strokeWidth: isUser ? 2.2 : e.cross ? 1.6 : 1.3,
         strokeDasharray: isBack || isInferred ? "5 4" : undefined,
-        opacity: !near ? 0.18 : broken ? 0.85 : e.cross ? 0.7 : 0.5,
+        opacity: !near ? 0.18 : isUser ? 0.95 : broken ? 0.85 : e.cross ? 0.7 : 0.5,
       },
     };
   });
@@ -738,8 +857,21 @@ export function WorkflowChart({
 }) {
   const [stages, setStages] = useState<ChartStage[] | null>(null);
   const [connections, setConnections] = useState<Connection[] | null>(null);
-  /** v9 — 문서 도출 합성 그래프. 있으면 이것이 회사 워크플로우다 (과거 진단은 null 유지) */
+  /** v9 — 문서 도출 합성 그래프(사용자 편집 병합본). 있으면 이것이 회사 워크플로우다 */
   const [synthesized, setSynthesized] = useState<Synthesized | null>(null);
+  /** 숨긴 AI 연결 (2026-08-13) — 되돌리기 재료. 병합본에는 빠져 있다 */
+  const [hiddenEdges, setHiddenEdges] = useState<SynthEdge[]>([]);
+  /** 편집 — 클릭으로 고른 연결. 삭제(사용자 연결)·숨기기(AI 연결) 버튼이 붙는다 */
+  const [selectedEdge, setSelectedEdge] = useState<{ key: string; user: boolean; label: string } | null>(null);
+  /** 방금 그은 연결 key — 0.9초 대시 흐름 모션 후 실선 고정 */
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 업무 카드 생성 모달 */
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addArea, setAddArea] = useState("기타");
+  const [addDocs, setAddDocs] = useState<string[]>([]);
+  const [graphSaving, setGraphSaving] = useState(false);
   /** v9 A6 — 표준 대비 갭. 합성 노드의 기록 끊김 표시와 미확인 업무 안내에 쓴다 */
   const [gaps, setGaps] = useState<WorkflowGaps | null>(null);
   /** 분석 레이어 — 합성 노드별 기록 끊김·DX·AX 지점. 결과 화면 배지·범례 칩 재료 */
@@ -763,13 +895,15 @@ export function WorkflowChart({
       connections: Connection[] | null;
       positions?: Record<string, { x: number; y: number }>;
       synthesized?: Synthesized | null;
+      hiddenEdges?: SynthEdge[];
       gaps?: WorkflowGaps | null;
       layers?: Record<string, NodeLayerFlags> | null;
     }>(`/api/assessments/${assessmentId}/workflow`)
-      .then(({ stages, connections, positions, synthesized, gaps, layers }) => {
+      .then(({ stages, connections, positions, synthesized, hiddenEdges, gaps, layers }) => {
         setStages(stages ?? []);
         setConnections(connections);
         setSynthesized(synthesized ?? null);
+        setHiddenEdges(hiddenEdges ?? []);
         setGaps(gaps ?? null);
         setLayers(layers ?? null);
         setPositions(positions ?? {});
@@ -814,7 +948,7 @@ export function WorkflowChart({
       return { list: allEdges(companyActs, connections ?? []), inferred: new Set<string>() };
     }
     const idxById = new Map(synthesized.nodes.map((n, i) => [n.id, i]));
-    const list: { from: number; to: number; cross: boolean }[] = [];
+    const list: { from: number; to: number; cross: boolean; key: string; user: boolean }[] = [];
     const inferred = new Set<string>();
     const seen = new Set<string>();
     for (const e of synthesized.edges) {
@@ -824,7 +958,7 @@ export function WorkflowChart({
       const key = `${from}->${to}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      list.push({ from, to, cross: true });
+      list.push({ from, to, cross: true, key: `${e.from}->${e.to}`, user: e.basis === "user" });
       if (e.inferred) inferred.add(key);
     }
     return { list, inferred };
@@ -875,8 +1009,9 @@ export function WorkflowChart({
         /* DX·AX 배지는 결과 화면(읽기 모드)에만 — 자료 정리 단계는 아직 분석 전이다 */
         dxSet: !editable ? layerSets?.dx : undefined,
         axSet: !editable ? layerSets?.ax : undefined,
+        flashKey,
       }),
-    [companyActs, companyEdges, graph, editable, focus, synthBottlenecks, layerSets],
+    [companyActs, companyEdges, graph, editable, focus, synthBottlenecks, layerSets, flashKey],
   );
 
   /* 기록 끊김 수 통지 — 문서가 한 건도 없으면 차트를 그리지 않으므로(아래 ownedDocCount 가드)
@@ -1071,10 +1206,143 @@ export function WorkflowChart({
       if (flushTimer.current) clearTimeout(flushTimer.current);
       if (swapAnimTimer.current) clearTimeout(swapAnimTimer.current);
       if (hoverTimer.current) clearTimeout(hoverTimer.current);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
       flushPositions();
     },
     [flushPositions],
   );
+
+  /* ── 워크플로우 편집 (2026-08-13) — 연결 긋기·숨기기·재연결·카드 생성 ──
+     편집분은 서버의 user_graph에 통째 교체 저장되고, 읽기 병합(applyUserGraph)을 거쳐
+     화면·갭·레이어·서사 입력까지 함께 반영된다. AI 연결 삭제는 숨김이라 되돌릴 수 있다 */
+
+  /** 현재 병합본에서 사용자 편집분만 추린다 — PUT은 통째 교체(멱등) */
+  const currentUserGraph = useCallback((): UserGraphBody | null => {
+    if (!synthesized) return null;
+    return {
+      nodes: synthesized.nodes
+        .filter((n) => n.id.startsWith("usr:"))
+        .map((n) => ({
+          id: n.id,
+          activity_name: n.activity_name,
+          function_area: n.function_area,
+          source_documents: n.source_documents,
+        })),
+      edges: synthesized.edges
+        .filter((e) => e.basis === "user")
+        .map((e) => ({ from: e.from, to: e.to })),
+      removedEdges: hiddenEdges.map((e) => `${e.from}->${e.to}`),
+    };
+  }, [synthesized, hiddenEdges]);
+
+  const putUserGraph = useCallback(
+    (mutate: (g: UserGraphBody) => void) => {
+      const g = currentUserGraph();
+      if (!g) return;
+      mutate(g);
+      setGraphSaving(true);
+      api(`/api/assessments/${assessmentId}/workflow`, {
+        method: "PUT",
+        body: JSON.stringify({ userGraph: g }),
+      })
+        .then(() => load()) // 병합본·갭·레이어를 서버 기준으로 다시 받는다
+        .catch(() => {})
+        .finally(() => setGraphSaving(false));
+    },
+    [assessmentId, currentUserGraph, load],
+  );
+
+  /** 화면 노드 id(act:idx) → 합성 노드 id */
+  const synthIdOf = useCallback(
+    (nodeId: string | null | undefined): string | null => {
+      if (!synthesized || !nodeId?.startsWith("act:")) return null;
+      return synthesized.nodes[Number(nodeId.slice(4))]?.id ?? null;
+    },
+    [synthesized],
+  );
+
+  /** 핸들 드래그로 연결 긋기 — 사용자 연결(실선)로 저장, 직후 잠깐 대시가 흐른다 */
+  const onConnect = useCallback(
+    (conn: FlowConnection) => {
+      const from = synthIdOf(conn.source);
+      const to = synthIdOf(conn.target);
+      if (!from || !to || from === to) return;
+      putUserGraph((g) => {
+        if (!g.edges.some((e) => e.from === from && e.to === to)) g.edges.push({ from, to });
+      });
+      setFlashKey(`${from}->${to}`);
+      if (flashTimer.current) clearTimeout(flashTimer.current);
+      flashTimer.current = setTimeout(() => setFlashKey(null), 900);
+    },
+    [synthIdOf, putUserGraph],
+  );
+
+  /** 연결 클릭 — 선택해 삭제(사용자 연결)·숨기기(AI 연결) 버튼을 띄운다 */
+  const onEdgeClick = useCallback(
+    (_e: React.MouseEvent, edge: Edge) => {
+      if (!editable || !synthMode) return;
+      const d = edge.data as { key?: string; user?: boolean } | undefined;
+      if (!d?.key) return;
+      const [from, to] = d.key.split("->");
+      const nameOf = new Map(synthesized?.nodes.map((n) => [n.id, n.activity_name]) ?? []);
+      setSelectedEdge({
+        key: d.key,
+        user: d.user === true,
+        label: `${nameOf.get(from) ?? from} → ${nameOf.get(to) ?? to}`,
+      });
+    },
+    [editable, synthMode, synthesized],
+  );
+
+  /** 선택한 연결 처리 — 사용자 연결은 삭제, AI 연결은 숨김(removedEdges 키, 되돌리기 가능) */
+  const deleteSelectedEdge = useCallback(() => {
+    const sel = selectedEdge;
+    if (!sel) return;
+    setSelectedEdge(null);
+    putUserGraph((g) => {
+      if (sel.user) {
+        const [from, to] = sel.key.split("->");
+        g.edges = g.edges.filter((e) => !(e.from === from && e.to === to));
+      } else if (!g.removedEdges.includes(sel.key)) {
+        g.removedEdges.push(sel.key);
+      }
+    });
+  }, [selectedEdge, putUserGraph]);
+
+  /** 사용자 연결의 끝점 재연결 — 옛 연결을 지우고 새 연결로 바꾼다 */
+  const onReconnect = useCallback(
+    (oldEdge: Edge, conn: FlowConnection) => {
+      const d = oldEdge.data as { key?: string; user?: boolean } | undefined;
+      if (!d?.user || !d.key) return;
+      const from = synthIdOf(conn.source);
+      const to = synthIdOf(conn.target);
+      if (!from || !to || from === to) return;
+      const [oldFrom, oldTo] = d.key.split("->");
+      putUserGraph((g) => {
+        g.edges = g.edges.filter((e) => !(e.from === oldFrom && e.to === oldTo));
+        if (!g.edges.some((e) => e.from === from && e.to === to)) g.edges.push({ from, to });
+      });
+    },
+    [synthIdOf, putUserGraph],
+  );
+
+  /** 카드 생성 — 업무 이름 + 8대 기능(+기타) + 업로드 문서(선택) */
+  const addCard = useCallback(() => {
+    const name = addName.trim();
+    if (!name) return;
+    putUserGraph((g) => {
+      g.nodes.push({
+        id: `usr:${crypto.randomUUID().slice(0, 8)}`,
+        activity_name: name,
+        function_area: addArea,
+        source_documents: addDocs,
+      });
+    });
+    setAddOpen(false);
+    setAddName("");
+    setAddArea("기타");
+    setAddDocs([]);
+  }, [addName, addArea, addDocs, putUserGraph]);
 
   /* 불러오는 중·AI가 합성을 만드는 중 — 섹션 안에서 그대로 알린다 (v7).
      종전엔 아무것도 그리지 않아 화면이 비어 있다가 갑자기 나타났다.
@@ -1149,18 +1417,28 @@ export function WorkflowChart({
             color: "var(--fg-tertiary)",
           }}
         >
-          업무 상자를 드래그해 우리 회사의 실제 흐름대로 놓을 수 있어요
-          {saving ? " · 저장 중…" : linking ? " · AI가 업무 연결을 분석하고 있어요…" : ""}
+          {synthMode
+            ? "카드를 끌어 옮기고, 카드 가장자리 점을 끌어 화살표를 이을 수 있어요"
+            : "업무 상자를 드래그해 우리 회사의 실제 흐름대로 놓을 수 있어요"}
+          {saving || graphSaving
+            ? " · 저장 중…"
+            : linking
+              ? " · AI가 업무 연결을 분석하고 있어요…"
+              : ""}
         </p>
         {/* 비교하기는 자료 정리(도출·확인) 단계에만 — 결과 화면은 분석 결과를 보는 자리라
             표준 대비 비교가 목적이 아니다 (v8 이슈 3-1) */}
-        <button
+        <span style={{ position: "absolute", right: 0, display: "flex", gap: 6 }}>
+          {synthMode && (
+            <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>
+              + 업무 추가
+            </Button>
+          )}
+          <button
             type="button"
             onClick={() => setCompare((v) => !v)}
             aria-expanded={compare}
             style={{
-              position: "absolute",
-              right: 0,
               padding: "5px 12px",
               borderRadius: "var(--radius-full)",
               border: `1px solid ${compare ? "var(--line-brand)" : "var(--line-default)"}`,
@@ -1174,18 +1452,49 @@ export function WorkflowChart({
           >
             {compare ? "비교 닫기" : "비교하기"}
           </button>
+        </span>
       </div>
+      )}
+
+      {/* 선택한 연결 — 삭제(사용자 연결)·숨기기(AI 연결). 숨김은 아래 되돌리기로 복구된다 */}
+      {editable && selectedEdge && (
+        <div
+          className="ax-step-enter"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+            marginBottom: 10,
+            padding: "6px 12px",
+            borderRadius: "var(--radius-m)",
+            background: "var(--bg-secondary)",
+            font: "var(--text-caption)",
+            color: "var(--fg-secondary)",
+          }}
+        >
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            선택한 연결 · {selectedEdge.label}
+          </span>
+          <Button variant="secondary" size="sm" onClick={deleteSelectedEdge}>
+            {selectedEdge.user ? "연결 삭제" : "연결 숨기기"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedEdge(null)}>
+            취소
+          </Button>
+        </div>
       )}
 
       <div
         ref={wrapRef}
-        className={swapAnim ? "ax-wf-swapping" : undefined}
+        className={`ax-wf-canvas${editable && synthMode ? " ax-wf-edit" : ""}${swapAnim ? " ax-wf-swapping" : ""}`}
         style={{ ...canvasBox, height: canvasHeight(graph.rows) }}
       >
         <ReactFlow
           nodes={liveNodes}
           edges={flow.edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onNodeDragStart={onDragStart}
           onNodeDrag={onDrag}
@@ -1197,7 +1506,15 @@ export function WorkflowChart({
           minZoom={0.25}
           maxZoom={1.6}
           proOptions={{ hideAttribution: true }}
-          nodesConnectable={false}
+          /* 편집 모드 연결 편집 (2026-08-13) — Loose라 어느 핸들에서든 이을 수 있다.
+             드래그 중 연결선은 점선, 놓으면 onConnect가 실선 사용자 연결로 저장한다 */
+          nodesConnectable={editable && synthMode}
+          elementsSelectable={editable}
+          connectionMode={ConnectionMode.Loose}
+          connectionLineStyle={{ stroke: "var(--blue-500)", strokeWidth: 1.8, strokeDasharray: "6 4" }}
+          onConnect={editable && synthMode ? onConnect : undefined}
+          onEdgeClick={editable && synthMode ? onEdgeClick : undefined}
+          onReconnect={editable && synthMode ? onReconnect : undefined}
           deleteKeyCode={null}
         >
           {/* 점 격자 배경은 뺐다 (v8 이슈⑥) — 페이지의 다른 섹션과 톤을 맞춘다 */}
@@ -1224,6 +1541,37 @@ export function WorkflowChart({
         focus={focus}
         onFocus={setFocus}
       />
+
+      {/* 숨긴 AI 연결 — 편집 화면에서만. 삭제가 아니라 숨김이라 언제든 되돌릴 수 있다 */}
+      {editable && synthMode && hiddenEdges.length > 0 && (
+        <p
+          style={{
+            margin: "8px 0 0",
+            textAlign: "center",
+            font: "var(--text-caption)",
+            color: "var(--fg-tertiary)",
+          }}
+        >
+          숨긴 연결 {hiddenEdges.length}개
+          <button
+            type="button"
+            onClick={() => putUserGraph((g) => (g.removedEdges = []))}
+            style={{
+              marginLeft: 8,
+              padding: "2px 10px",
+              borderRadius: "var(--radius-full)",
+              border: "1px solid var(--line-default)",
+              background: "var(--bg-elevated)",
+              font: "var(--text-caption)",
+              fontFamily: "var(--font-sans)",
+              color: "var(--fg-secondary)",
+              cursor: "pointer",
+            }}
+          >
+            모두 되돌리기
+          </button>
+        </p>
+      )}
 
       {/* v9 A6 — 표준에 있는데 문서 근거가 하나도 없는 업무(기록 끊김 후보) 안내 */}
       {synthMode && (gaps?.missing.length ?? 0) > 0 && (
@@ -1283,6 +1631,100 @@ export function WorkflowChart({
           </div>
         </div>
       )}
+
+      {/* 업무 카드 생성 (2026-08-13) — 이름 + 영역(8대 기능+기타) + 근거 문서(선택).
+          '기타'로 만든 카드가 생기면 범례에도 기타(무채색)가 그때 나타난다 */}
+      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="업무 추가">
+        <div style={{ display: "grid", gap: 14 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)" }}>업무 이름</span>
+            <Input
+              value={addName}
+              onChange={(e) => setAddName(e.target.value)}
+              placeholder="예: 출하 검사"
+              autoFocus
+            />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)" }}>업무 영역</span>
+            <select
+              value={addArea}
+              onChange={(e) => setAddArea(e.target.value)}
+              aria-label="업무 영역"
+              style={{
+                padding: "9px 10px",
+                borderRadius: "var(--radius-m)",
+                border: "1px solid var(--line-default)",
+                background: "var(--bg-elevated)",
+                font: "var(--text-body3)",
+                fontFamily: "var(--font-sans)",
+                color: "var(--fg-primary)",
+              }}
+            >
+              {[...(stages ?? []).map((s) => s.name), "기타"].map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {(synthesized?.documents.length ?? 0) > 0 && (
+            <div style={{ display: "grid", gap: 6 }}>
+              <span style={{ font: "var(--text-label-s)", color: "var(--fg-secondary)" }}>
+                근거 문서 (선택)
+              </span>
+              <div
+                className="ax-scrollbar-none"
+                style={{
+                  maxHeight: 180,
+                  overflowY: "auto",
+                  border: "1px solid var(--line-default)",
+                  borderRadius: "var(--radius-m)",
+                  padding: "6px 10px",
+                  display: "grid",
+                  gap: 4,
+                }}
+              >
+                {synthesized!.documents.map((d) => (
+                  <label
+                    key={d.ref}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      font: "var(--text-caption)",
+                      color: "var(--fg-secondary)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={addDocs.includes(d.ref)}
+                      onChange={(e) =>
+                        setAddDocs((prev) =>
+                          e.target.checked ? [...prev, d.ref] : prev.filter((r) => r !== d.ref),
+                        )
+                      }
+                    />
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {d.docTypeName}
+                      {d.level != null && ` · L${d.level}`}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <Button variant="secondary" onClick={() => setAddOpen(false)}>
+              취소
+            </Button>
+            <Button variant="primary" disabled={addName.trim() === "" || graphSaving} onClick={addCard}>
+              추가
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

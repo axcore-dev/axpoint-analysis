@@ -794,6 +794,17 @@ body {
   transition: transform 300ms var(--ease);
 }
 
+/* ---- 워크플로우 연결 편집 (2026-08-13) ----
+   호버·선택한 연결이 굵어져 '누를 수 있다'를 손이 먼저 안다. 새로 그은 연결은
+   React Flow의 .animated(대시 흐름)를 0.9초만 받아 '이어졌다'는 확인 신호가 된다 */
+.ax-wf-edit .react-flow__edge {
+  cursor: pointer;
+}
+.ax-wf-edit .react-flow__edge:hover .react-flow__edge-path,
+.ax-wf-edit .react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 2.6;
+}
+
 /* ---- 접힌 내용 펼치기 (산출 내역 등) — 높이까지 함께 자라 딱딱하지 않게 (v7).
    grid-template-rows 0fr→1fr은 auto 높이를 애니메이션할 수 있는 유일한 방법이다.
    자식(.ax-reveal > *)이 overflow:hidden이어야 내용이 잘리며 자란다 ---- */
