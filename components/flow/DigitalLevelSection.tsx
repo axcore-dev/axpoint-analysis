@@ -108,9 +108,39 @@ export function DigitalLevelSection({ files }: { files: LevelFile[] }) {
             <svg
               viewBox="0 0 192 192"
               className="h-[192px] w-[192px] flex-none"
+              /* 꼬리표(%)가 도넛 바깥에 붙는다 — viewBox를 살짝 넘어도 잘리지 않게 */
+              style={{ overflow: "visible" }}
               role="img"
               aria-label={`디지털화 수준 분포 — ${slices.map((s) => `${s.label} ${s.n}건 ${s.pct}%`).join(", ")}`}
             >
+              {/* 조각별 % 꼬리표 — 조각 중앙 각도에서 짧은 지시선 + 라벨 (범례에는 %를 빼고 여기로) */}
+              {arcs.map((s) => {
+                if (s.pct < 4) return null; // 너무 얇은 조각은 지시선이 겹친다 — 툴팁·목록으로 충분
+                const mid = (s.a0 + s.a1) / 2;
+                const sx = C + (R + 2) * Math.sin(mid);
+                const sy = C - (R + 2) * Math.cos(mid);
+                const ex = C + (R + 9) * Math.sin(mid);
+                const ey = C - (R + 9) * Math.cos(mid);
+                const tx = C + (R + 13) * Math.sin(mid);
+                const ty = C - (R + 13) * Math.cos(mid);
+                const right = Math.sin(mid) > 0.25;
+                const left = Math.sin(mid) < -0.25;
+                const on = active === null || active === s.level;
+                return (
+                  <g key={`tag-${s.level}`} opacity={on ? 1 : 0.25} style={{ pointerEvents: "none" }}>
+                    <line x1={sx} y1={sy} x2={ex} y2={ey} stroke={LEVEL_TONE[s.level]} strokeWidth={1.2} />
+                    <text
+                      x={tx}
+                      y={ty}
+                      textAnchor={right ? "start" : left ? "end" : "middle"}
+                      dominantBaseline={Math.cos(mid) > 0 ? "auto" : "hanging"}
+                      style={{ font: "600 11px var(--font-sans)", fill: "var(--fg-secondary)" }}
+                    >
+                      {s.pct}%
+                    </text>
+                  </g>
+                );
+              })}
               {arcs.map((s) => (
                 <path
                   key={s.level}
@@ -149,7 +179,7 @@ export function DigitalLevelSection({ files }: { files: LevelFile[] }) {
               </text>
             </svg>
 
-            {/* 조각 라벨 — 수준명·건수·% 전부. 조각이 하나뿐이어도 여기서 다 읽힌다 */}
+            {/* 조각 라벨 — 수준명·건수. %는 도넛 꼬리표가 맡는다 */}
             <ul className="m-0 flex list-none flex-wrap justify-center gap-x-4 gap-y-1 p-0">
               {arcs.map((s) => {
                 const on = active === null || active === s.level;
@@ -173,9 +203,8 @@ export function DigitalLevelSection({ files }: { files: LevelFile[] }) {
                         style={{ background: LEVEL_TONE[s.level] }}
                       />
                       <span className="text-ink-2">{s.label}</span>
-                      <span className="[font-family:var(--font-mono)] text-ink-3">
-                        {s.n}건 · {s.pct}%
-                      </span>
+                      {/* %는 도넛 꼬리표가 맡는다 — 범례는 건수만 */}
+                      <span className="[font-family:var(--font-mono)] text-ink-3">{s.n}건</span>
                     </button>
                   </li>
                 );

@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader } from "@/components/ui";
 import { TextShimmer } from "@/components/ui/text-shimmer";
 
 /**
  * 라우팅 전환 로딩 — 토스 라우팅 규칙 (수정요청v2 공통)
- * - 전역 전환은 3-dot, 데이터 로딩은 스켈레톤 허용(2026-08 개정)
  * - 진입/이탈 모션은 320ms(--dur-slow) ease-out 이내, 바운스 없음
  * - 문구는 해요체 진행형("~하고 있어요")으로 지금 무슨 일이 일어나는지 말한다
  * 페이지 이동·단계 전환 로딩은 모두 이 컴포넌트를 사용한다.
+ *
+ * 2026-08-13 개편: 3-dot 로더를 없애고 문구가 주인공이다 — 문구가 바뀔 때마다
+ * 아래→위로 올라오며(ax-step-enter) 등장한다. 경과 시간은 중앙 맨 위 큰 타이머로
+ * (hint가 있는 분석 로딩에만), 전체 크기는 종전의 2배다.
  */
 export function RouteLoading({
   title,
@@ -21,7 +23,7 @@ export function RouteLoading({
   title?: string;
   /** 순환 안내 문구 — 1개면 고정 표시 */
   messages: string[];
-  /** 예상 소요 시간 등 기다림의 기준 (v7-2) — 얼마나 걸리는지 알고 기다리게 한다 */
+  /** 예상 소요 시간 등 기다림의 기준 (v7-2) — 있으면 경과 타이머도 맨 위에 함께 돈다 */
   hint?: string;
   /** 문구 교체 주기 — 시머 한 바퀴(2.6s)에 맞춰 문구가 끝까지 밝아진 뒤 넘어간다 */
   interval?: number;
@@ -51,36 +53,45 @@ export function RouteLoading({
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        gap: 20,
+        gap: 36,
         padding: "0 24px",
         textAlign: "center",
       }}
       role="status"
     >
+      {/* 경과 타이머 — 중앙 맨 위. 분석 로딩(hint 있음)에서만 */}
+      {hint && (
+        <div
+          aria-label="지난 시간"
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: 30,
+            fontWeight: 600,
+            color: "var(--fg-tertiary)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
+        </div>
+      )}
       {title && (
-        <div className="ax-heading" style={{ font: "var(--text-h3)", fontWeight: 700, color: "var(--fg-primary)" }}>
+        <div
+          className="ax-heading"
+          style={{ font: "var(--text-display2)", color: "var(--fg-primary)" }}
+        >
           {title}
         </div>
       )}
-      <Loader style={{ color: "var(--fg-brand)" }} />
       {/* 문구 자체에 시머 애니메이션 (작업 요청 v5-1).
-          v7-2: key 재마운트·진입 모션·시작 지연을 걷어냈다 — 문구가 바뀔 때마다 흐리게 깜빡이고
-          띠가 처음부터 다시 도는 것이 겹쳐 부자연스러웠다. 이제 띠는 끊기지 않고 계속 흐르고
-          글자만 조용히 바뀐다 */}
-      <TextShimmer as="p" style={{ margin: 0, font: "var(--text-body2)" }}>
-        {messages[idx]}
-      </TextShimmer>
+          문구가 바뀔 때마다 key 재마운트로 아래→위 진입 모션(ax-step-enter)을 다시 탄다 */}
+      <div key={idx} className="ax-step-enter">
+        <TextShimmer as="p" style={{ margin: 0, font: "500 30px/1.45 var(--font-sans)" }}>
+          {messages[idx]}
+        </TextShimmer>
+      </div>
       {hint && (
-        <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-quaternary)" }}>
+        <p style={{ margin: 0, font: "400 22px/1.5 var(--font-sans)", color: "var(--fg-quaternary)" }}>
           {hint}
-          {elapsed >= 10 && (
-            <>
-              {" · 지난 시간 "}
-              <span style={{ fontFamily: "var(--font-mono)" }}>
-                {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}
-              </span>
-            </>
-          )}
         </p>
       )}
     </div>

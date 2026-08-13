@@ -150,7 +150,7 @@ export function CoverageSurveyModal({
             }}
           >
             <p style={{ margin: 0, font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
-              자료로 확인하지 못한 부분을 여쭤볼게요 — 모르시면 건너뛰어도 돼요.
+              자료로 확인하지 못한 부분을 확인합니다.
             </p>
             <span
               style={{

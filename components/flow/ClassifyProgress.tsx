@@ -47,20 +47,22 @@ export function ClassifyProgress({ files, done = false }: { files: ClassifyFile[
   /* 스크롤 기준 행 — 진행 중인 행, 없으면 마지막 완료 행 */
   const anchorIdx = processingIdx >= 0 ? processingIdx : Math.max(terminalCount - 1, 0);
 
-  /* 완료 행이 늘 때마다 기준 행이 하단에 보이게 스크롤 — 진행 중에만, 사용자 스크롤은 없다 */
+  /* 완료 행이 늘 때마다 기준 행이 세로 가운데로 오게 스크롤 — 진행 중에만, 사용자 스크롤은 없다 */
   useEffect(() => {
     if (done) return;
     const box = boxRef.current;
     const anchor = box?.children[anchorIdx] as HTMLElement | undefined;
     if (!box || !anchor) return;
     box.scrollTo({
-      top: anchor.offsetTop + anchor.offsetHeight - box.clientHeight + 12,
+      top: anchor.offsetTop - (box.clientHeight - anchor.offsetHeight) / 2,
       behavior: "smooth",
     });
   }, [anchorIdx, terminalCount, done]);
 
-  /* 위쪽 페이드 마스크 — 진행 중이면서 항목이 2개 이상일 때만 (1개면 또렷하게) */
-  const fade = !done && rows.length >= 2;
+  /* 슬롯머신 연출 — 진행 중이면서 항목이 2개 이상일 때만 (1개면 또렷하게).
+     위아래 대칭 페이드 + 상하 여백(첫 행·마지막 행도 가운데까지 올라올 스크롤 여유)으로
+     기준 행이 항상 창 한가운데에 놓인다 */
+  const focus = !done && rows.length >= 2;
 
   const log = (
     <div
@@ -73,10 +75,14 @@ export function ClassifyProgress({ files, done = false }: { files: ClassifyFile[
         display: "flex",
         flexDirection: "column",
         gap: 6,
-        ...(fade
+        ...(focus
           ? {
-              maskImage: "linear-gradient(to bottom, transparent 0, #000 36px)",
-              WebkitMaskImage: "linear-gradient(to bottom, transparent 0, #000 36px)",
+              height: 180 /* 창 크기 고정 — 행이 늘어도 카드가 흔들리지 않는다 */,
+              paddingBlock: 78,
+              maskImage:
+                "linear-gradient(to bottom, transparent 0, #000 42%, #000 58%, transparent 100%)",
+              WebkitMaskImage:
+                "linear-gradient(to bottom, transparent 0, #000 42%, #000 58%, transparent 100%)",
             }
           : {}),
       }}

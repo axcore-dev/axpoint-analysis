@@ -670,7 +670,7 @@ export default function CollectPage() {
                   disabled={classifying || uploading || total === 0}
                   onClick={() => setEditOpen(true)}
                 >
-                  자료 편집
+                  문서 편집
                 </Button>
                 <Button
                   variant="primary"
@@ -874,7 +874,7 @@ export default function CollectPage() {
           {/* 그리드 헤더 — 자료 편집(칸반 보드) 진입 */}
           <div className="mb-2 flex justify-end">
             <Button variant="secondary" size="sm" onClick={() => setEditOpen(true)}>
-              자료 편집
+              문서 편집
             </Button>
           </div>
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">

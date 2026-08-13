@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Card, Icons, Loader, Modal } from "@/components/ui";
+import { Badge, Card, Icons, Modal, Skeleton } from "@/components/ui";
 import { api, API_URL } from "@/lib/api";
 
 /**
@@ -126,6 +126,20 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
         </dl>
       )}
 
+      {/* 수집이 도는 동안은 카드 전체를 스켈레톤으로 — 출처마다 하나씩 열리면 순서가 계속
+          바뀌어 산만했다. 전부 끝나면(progress.running=false) 실제 카드가 한 번에 뜬다 */}
+      {snap.progress.running ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {snap.items.map((s) => (
+            <Card key={s.source} radius="l" padded={false}>
+              <div className="flex items-center justify-between gap-2 px-4 py-3">
+                <Skeleton width={96} height={15} />
+                <Skeleton width={34} height={15} />
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {/* 자료 많은 순 정렬 — 동률은 카탈로그 순서 유지 (sort는 stable) */}
         {[...snap.items].sort((a, b) => b.itemCount - a.itemCount).map((s) => {
@@ -158,32 +172,29 @@ export function PublicDataSection({ assessmentId }: { assessmentId: string }) {
                 <span className="min-w-0 truncate [font:var(--text-label-m)] text-ink">
                   {s.label}
                 </span>
-                {busy ? (
-                  <Loader style={{ width: 14, height: 14 }} />
-                ) : (
-                  <span className="flex flex-none items-center gap-1.5">
-                    {s.status === "failed" && (
-                      <span
-                        role="img"
-                        aria-label="수집 실패"
-                        title="수집 실패"
-                        className="flex flex-none text-[var(--fg-warning)]"
-                      >
-                        <Icons.alertCircle size={14} />
-                      </span>
-                    )}
-                    {s.status === "skipped" && <Badge tone="outline">보류</Badge>}
-                    <span className="[font-family:var(--font-mono)] text-[13px] font-semibold text-ink">
-                      {s.itemCount}건
+                <span className="flex flex-none items-center gap-1.5">
+                  {s.status === "failed" && (
+                    <span
+                      role="img"
+                      aria-label="수집 실패"
+                      title="수집 실패"
+                      className="flex flex-none text-[var(--fg-warning)]"
+                    >
+                      <Icons.alertCircle size={14} />
                     </span>
-                    {clickable && <Icons.chevronRight size={14} />}
+                  )}
+                  {s.status === "skipped" && <Badge tone="outline">보류</Badge>}
+                  <span className="[font-family:var(--font-mono)] text-[13px] font-semibold text-ink">
+                    {s.itemCount}건
                   </span>
-                )}
+                  {clickable && <Icons.chevronRight size={14} />}
+                </span>
               </div>
             </Card>
           );
         })}
       </div>
+      )}
 
       {/* 상세 팝업 — 요약 / 원본(제목에 출처 링크) */}
       <Modal open={opened !== null} onClose={() => setOpenedKey(null)} title={opened?.label} wide>
