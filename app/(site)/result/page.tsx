@@ -2017,7 +2017,13 @@ export default function ResultPage() {
                   whiteSpace: "pre-line",
                 }}
               >
-                {renderRich(result.narrative.workflow_note, axes, qLabelByCode)}
+                {/* DX 지점·AX 지점 언급 앞에 개행 — 한 문단에 붙어 있으면 구분이 안 읽힌다.
+                    프롬프트에도 줄바꿈 지시를 넣었지만 과거 저장분은 여기서 나눈다 */}
+                {renderRich(
+                  result.narrative.workflow_note.replace(/\s+(?=\*{0,2}[DA]X ?지점)/g, "\n"),
+                  axes,
+                  qLabelByCode,
+                )}
               </p>
             </div>
           )}
@@ -2241,15 +2247,11 @@ export default function ResultPage() {
                         gap: 8,
                       }}
                     >
+                      {/* '이 영역 과제 보러 가기' 버튼은 제거 (2026-08-13) — 종합분석 끝의
+                          '개선 과제 고르러 가기' CTA가 같은 곳으로 이어져 중복이었다 */}
                       {area.grade === "critical" && (area.causeChain?.length ?? 0) > 0 && (
                         <Button variant="secondary" size="sm" onClick={() => setChainArea(area)}>
                           사유 보기
-                        </Button>
-                      )}
-                      {areaTasks.length > 0 && (
-                        <Button variant="secondary" size="sm" onClick={() => goTasks()}>
-                          이 영역 과제 보러 가기
-                          <Icons.arrow size={14} />
                         </Button>
                       )}
                     </div>
@@ -2460,6 +2462,7 @@ export default function ResultPage() {
             position: "sticky",
             top: 76,
             margin: "40px 0 0",
+            transform: "translateX(10px)", // 본문에서 살짝 더 떨어뜨린다 (2026-08-13)
             padding: "16px 14px",
             background: "var(--bg-elevated)",
             border: "1px solid var(--line-default)",
