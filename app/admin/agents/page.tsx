@@ -31,6 +31,8 @@ type GraphRes = {
   active: { version: number; graph: GraphDef };
   usingDefault: boolean;
   versions: { version: number; isActive: boolean; createdAt: string }[];
+  /** 코드에는 있는데 발행 그래프에는 없는 노드 — 실행은 되는데 화면에 안 그려진다. 재발행 안내용 */
+  missingInPublished?: { id: string; label: string }[];
   tools: string[];
   toolMeta: ToolMeta;
 };
@@ -656,6 +658,30 @@ export default function AdminAgentsPage() {
               내려간 작은 카드는 그 메인을 거드는 서브 지시문이에요. 노드를 누르면 편집 팝업이 열려요.
             </span>
           </div>
+
+          {/* 발행 그래프에 아직 없는 코드 신규 노드 — 실행은 되는데 그림에 없다. 여기서 바로 병합 발행 */}
+          {(graphRes.missingInPublished?.length ?? 0) > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+              <Badge tone="warning">그래프에 없는 새 노드</Badge>
+              <span style={{ font: "var(--text-caption)", color: "var(--fg-tertiary)" }}>
+                {graphRes.missingInPublished!.map((n) => n.label).join(" · ")} — 코드에 추가된
+                노드라 실행은 되지만, 발행된 그래프(v{graphRes.active.version})에 없어 여기에 안
+                그려져요.
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  void run(async () => {
+                    await api("/api/admin/agent-graph/sync", { method: "POST" });
+                    load();
+                  }, "새 노드를 병합해 발행했어요")
+                }
+              >
+                병합해서 발행
+              </Button>
+            </div>
+          )}
 
           {/* 코드 기본값과 다른 지시문으로 도는 것들 — 노드를 일일이 열지 않아도 한눈에 보인다 */}
           {(() => {

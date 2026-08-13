@@ -7,7 +7,7 @@ import { Button, Card, Input, PasswordInput } from "@/components/ui";
 
 /**
  * 어드민 로그인 — 관리자 콘솔 전용 화면.
- * 사이트 로그인(`/auth/login`)과 분리한다: 회원가입·소셜·체험하기가 없고, 관리자 계정이
+ * 사이트 로그인(`/auth/login`)과 분리한다: 회원가입·소셜 로그인이 없고, 관리자 계정이
  * 아니면 들어가지 못한다. admin 서브도메인의 첫 화면이 이 페이지다.
  */
 export default function AdminLoginPage() {
