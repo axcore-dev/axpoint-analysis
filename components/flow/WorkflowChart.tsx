@@ -136,8 +136,6 @@ type TaskData = {
   ax: boolean;
   /** 범례에서 다른 영역을 고른 상태 — 색을 빼고 흐리게 물러난다 (v7-1) */
   dimmed: boolean;
-  /** 편집 모드 — 4방향 핸들을 보이게 해 연결을 그을 수 있다 (2026-08-13) */
-  editable: boolean;
 };
 
 /** 레이어 배지 색 — DX는 파랑, AX는 보라 (STAGE_TONE.design과 같은 계열) */
@@ -186,8 +184,10 @@ function TaskNode({ data }: NodeProps) {
       }}
     >
       {/* 상/하/좌/우 4방향 핸들 — 선의 실제 접점은 floating 엣지가 상대 위치로 다시 계산하므로
-          핸들은 연결 드래그의 시작·끝점 역할이다. 편집 모드에서만 점으로 보인다 (2026-08-13).
-          ConnectionMode.Loose라 어느 핸들에서든 어느 핸들로든 이을 수 있다 */}
+          핸들은 연결 드래그의 시작·끝점 역할이다.
+          ConnectionMode.Loose라 어느 핸들에서든 어느 핸들로든 이을 수 있다.
+          모양·표시 여부는 globals.css가 맡는다 — 편집 캔버스(.ax-wf-edit)에서 카드에 손이
+          올라간 동안에만 점이 뜬다. 인라인 스타일로 두면 그 hover 규칙이 먹히지 않는다 */}
       {(
         [
           ["l", "target", Position.Left],
@@ -196,23 +196,7 @@ function TaskNode({ data }: NodeProps) {
           ["b", "source", Position.Bottom],
         ] as const
       ).map(([id, type, position]) => (
-        <Handle
-          key={id}
-          id={id}
-          type={type}
-          position={position}
-          style={
-            d.editable
-              ? {
-                  width: 9,
-                  height: 9,
-                  background: "var(--bg-elevated)",
-                  border: "2px solid var(--blue-500)",
-                  opacity: 0.9,
-                }
-              : { opacity: 0, pointerEvents: "none" }
-          }
-        />
+        <Handle key={id} id={id} type={type} position={position} />
       ))}
 
       <span style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
@@ -319,12 +303,15 @@ function floatingAnchors(sn: InternalNode, tn: InternalNode) {
   };
 }
 
-function FloatingEdge({ id, source, target, markerEnd, style, label }: EdgeProps) {
+function FloatingEdge({ id, source, target, markerEnd, style, label, data }: EdgeProps) {
   const sn = useInternalNode(source);
   const tn = useInternalNode(target);
   if (!sn || !tn) return null;
   const a = floatingAnchors(sn, tn);
-  const [path, labelX, labelY] = getSmoothStepPath({ ...a, borderRadius: 8 });
+  /* 사용자가 그은 연결은 모서리를 죽여 직각으로 꺾는다 — 합성 연결(둥근 8px)과 손으로 그은
+     선을 굵기·투명도 말고 모양으로도 구분한다 */
+  const isUser = (data as { user?: boolean } | undefined)?.user === true;
+  const [path, labelX, labelY] = getSmoothStepPath({ ...a, borderRadius: isUser ? 0 : 8 });
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} interactionWidth={14} />
@@ -667,7 +654,6 @@ function buildChart({
         dx: dxSet?.has(a.id) ?? false,
         ax: axSet?.has(a.id) ?? false,
         dimmed: focus !== null && !focused.has(a.id),
-        editable,
       } satisfies TaskData as unknown as Record<string, unknown>,
     });
   }
@@ -862,7 +848,10 @@ export function WorkflowChart({
   /** 숨긴 AI 연결 (2026-08-13) — 되돌리기 재료. 병합본에는 빠져 있다 */
   const [hiddenEdges, setHiddenEdges] = useState<SynthEdge[]>([]);
   /** 편집 — 클릭으로 고른 연결. 삭제(사용자 연결)·숨기기(AI 연결) 버튼이 붙는다 */
-  const [selectedEdge, setSelectedEdge] = useState<{ key: string; user: boolean; label: string } | null>(null);
+  /** 클릭한 연결 — x·y는 캔버스 기준 좌표다(툴팁을 그 자리에 띄운다) */
+  const [selectedEdge, setSelectedEdge] = useState<
+    { key: string; user: boolean; label: string; x: number; y: number } | null
+  >(null);
   /** 방금 그은 연결 key — 0.9초 대시 흐름 모션 후 실선 고정 */
   const [flashKey, setFlashKey] = useState<string | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1261,11 +1250,25 @@ export function WorkflowChart({
     [synthesized],
   );
 
+  /** 드래그를 시작한 핸들의 종류 — 방향 판정에 쓴다 (아래 onConnect 주석) */
+  const connectFromType = useRef<string | null>(null);
+  const onConnectStart = useCallback(
+    (_e: unknown, params: { handleType: string | null }) => {
+      connectFromType.current = params.handleType;
+    },
+    [],
+  );
+
   /** 핸들 드래그로 연결 긋기 — 사용자 연결(실선)로 저장, 직후 잠깐 대시가 흐른다 */
   const onConnect = useCallback(
     (conn: FlowConnection) => {
-      const from = synthIdOf(conn.source);
-      const to = synthIdOf(conn.target);
+      /* React Flow는 '드래그를 시작한 핸들의 type'만으로 방향을 정한다. 좌·상 핸들은 target이라
+         거기서 선을 끌면 source/target이 뒤바뀐 채로 들어온다(화살표가 시작한 카드로 되돌아온다).
+         네 핸들 모두 그냥 연결점이라는 뜻이므로, 끈 방향이 곧 흐름 방향이 되게 되돌린다 */
+      const flip = connectFromType.current === "target";
+      connectFromType.current = null;
+      const from = synthIdOf(flip ? conn.target : conn.source);
+      const to = synthIdOf(flip ? conn.source : conn.target);
       if (!from || !to || from === to) return;
       putUserGraph((g) => {
         if (!g.edges.some((e) => e.from === from && e.to === to)) g.edges.push({ from, to });
@@ -1277,18 +1280,21 @@ export function WorkflowChart({
     [synthIdOf, putUserGraph],
   );
 
-  /** 연결 클릭 — 선택해 삭제(사용자 연결)·숨기기(AI 연결) 버튼을 띄운다 */
+  /** 연결 클릭 — 클릭한 자리에 삭제(사용자 연결)·숨기기(AI 연결) 툴팁을 띄운다 */
   const onEdgeClick = useCallback(
-    (_e: React.MouseEvent, edge: Edge) => {
+    (e: React.MouseEvent, edge: Edge) => {
       if (!editable || !synthMode) return;
       const d = edge.data as { key?: string; user?: boolean } | undefined;
       if (!d?.key) return;
       const [from, to] = d.key.split("->");
       const nameOf = new Map(synthesized?.nodes.map((n) => [n.id, n.activity_name]) ?? []);
+      const box = wrapRef.current?.getBoundingClientRect();
       setSelectedEdge({
         key: d.key,
         user: d.user === true,
         label: `${nameOf.get(from) ?? from} → ${nameOf.get(to) ?? to}`,
+        x: e.clientX - (box?.left ?? 0),
+        y: e.clientY - (box?.top ?? 0),
       });
     },
     [editable, synthMode, synthesized],
@@ -1308,6 +1314,25 @@ export function WorkflowChart({
       }
     });
   }, [selectedEdge, putUserGraph]);
+
+  /* 툴팁이 떠 있는 동안의 단축키 — Del·Backspace로 처리, Esc로 취소.
+     글자를 지우는 중인 사람의 Backspace를 뺏지 않도록 입력 칸에 손이 있으면 넘긴다.
+     (ReactFlow의 deleteKeyCode는 null로 꺼 뒀다 — AI 연결은 삭제가 아니라 '숨김'이라 직접 다룬다) */
+  useEffect(() => {
+    if (!selectedEdge) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelectedEdge();
+      } else if (e.key === "Escape") {
+        setSelectedEdge(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedEdge, deleteSelectedEdge]);
 
   /** 사용자 연결의 끝점 재연결 — 옛 연결을 지우고 새 연결로 바꾼다 */
   const onReconnect = useCallback(
@@ -1456,39 +1481,10 @@ export function WorkflowChart({
       </div>
       )}
 
-      {/* 선택한 연결 — 삭제(사용자 연결)·숨기기(AI 연결). 숨김은 아래 되돌리기로 복구된다 */}
-      {editable && selectedEdge && (
-        <div
-          className="ax-step-enter"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-            marginBottom: 10,
-            padding: "6px 12px",
-            borderRadius: "var(--radius-m)",
-            background: "var(--bg-secondary)",
-            font: "var(--text-caption)",
-            color: "var(--fg-secondary)",
-          }}
-        >
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            선택한 연결 · {selectedEdge.label}
-          </span>
-          <Button variant="secondary" size="sm" onClick={deleteSelectedEdge}>
-            {selectedEdge.user ? "연결 삭제" : "연결 숨기기"}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setSelectedEdge(null)}>
-            취소
-          </Button>
-        </div>
-      )}
-
       <div
         ref={wrapRef}
         className={`ax-wf-canvas${editable && synthMode ? " ax-wf-edit" : ""}${swapAnim ? " ax-wf-swapping" : ""}`}
-        style={{ ...canvasBox, height: canvasHeight(graph.rows) }}
+        style={{ ...canvasBox, height: canvasHeight(graph.rows), position: "relative" }}
       >
         <ReactFlow
           nodes={liveNodes}
@@ -1512,14 +1508,52 @@ export function WorkflowChart({
           elementsSelectable={editable}
           connectionMode={ConnectionMode.Loose}
           connectionLineStyle={{ stroke: "var(--blue-500)", strokeWidth: 1.8, strokeDasharray: "6 4" }}
+          onConnectStart={onConnectStart}
           onConnect={editable && synthMode ? onConnect : undefined}
           onEdgeClick={editable && synthMode ? onEdgeClick : undefined}
+          onPaneClick={() => setSelectedEdge(null)}
           onReconnect={editable && synthMode ? onReconnect : undefined}
           deleteKeyCode={null}
         >
           {/* 점 격자 배경은 뺐다 (v8 이슈⑥) — 페이지의 다른 섹션과 톤을 맞춘다 */}
           <Controls showInteractive={false} />
         </ReactFlow>
+
+        {/* 클릭한 연결의 툴팁 — 그 자리에 뜬다. 사용자 연결은 삭제, AI 연결은 숨김(되돌리기 가능) */}
+        {editable && selectedEdge && (
+          <div
+            className="ax-step-enter"
+            style={{
+              position: "absolute",
+              left: selectedEdge.x,
+              top: selectedEdge.y - 10,
+              transform: "translate(-50%, -100%)",
+              zIndex: 6,
+              maxWidth: "min(320px, 90%)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "6px 8px 6px 12px",
+              borderRadius: "var(--radius-m)",
+              border: "1px solid var(--line-default)",
+              background: "var(--bg-elevated)",
+              boxShadow: "var(--shadow-2)",
+              font: "var(--text-caption)",
+              color: "var(--fg-secondary)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {selectedEdge.label}
+            </span>
+            <Button variant="secondary" size="sm" onClick={deleteSelectedEdge}>
+              {selectedEdge.user ? "삭제" : "숨기기"}
+            </Button>
+            <span style={{ font: "var(--text-caption)", color: "var(--fg-quaternary)" }}>
+              Del · Backspace
+            </span>
+          </div>
+        )}
       </div>
 
       <Legend

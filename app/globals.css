@@ -804,6 +804,24 @@ body {
 .ax-wf-edit .react-flow__edge.selected .react-flow__edge-path {
   stroke-width: 2.6;
 }
+/* 연결 핸들 — 테두리 없는 점 하나. 편집 캔버스에서 카드에 손이 올라간 동안에만 뜬다.
+   평소에 네 방향 점이 다 떠 있으면 카드가 읽히지 않는다.
+   연결을 긋는 중에는 손이 카드를 벗어나므로 connectingfrom/to 상태도 함께 열어 준다 */
+.ax-wf-node .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border: none;
+  background: var(--line-brand);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.ax-wf-edit .react-flow__node:hover .react-flow__handle,
+.ax-wf-edit .react-flow__handle.connectingfrom,
+.ax-wf-edit .react-flow__handle.connectingto {
+  opacity: 0.9;
+  pointer-events: all;
+}
 
 /* ---- 접힌 내용 펼치기 (산출 내역 등) — 높이까지 함께 자라 딱딱하지 않게 (v7).
    grid-template-rows 0fr→1fr은 auto 높이를 애니메이션할 수 있는 유일한 방법이다.
