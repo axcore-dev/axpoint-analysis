@@ -10,9 +10,12 @@ import { TextShimmer } from "@/components/ui/text-shimmer";
  * 페이지 이동·단계 전환 로딩은 모두 이 컴포넌트를 사용한다.
  *
  * 2026-08-13 개편: 3-dot 로더를 없애고 문구가 주인공이다 — 문구가 바뀔 때마다
- * 아래→위로 올라오며(ax-step-enter) 등장한다. 경과 시간은 중앙 맨 위 큰 타이머로
+ * 아래→위로 올라오며(ax-step-enter) 등장한다. 경과 시간은 중앙 맨 위 타이머로
  * (hint가 있는 분석 로딩에만), 전체 크기는 종전의 2배다.
  */
+
+/** 경과 타이머가 나타나는 시점(초) — 그 전에는 문구만 보인다 */
+const TIMER_AFTER = 10;
 export function RouteLoading({
   title,
   messages,
@@ -59,15 +62,17 @@ export function RouteLoading({
       }}
       role="status"
     >
-      {/* 경과 타이머 — 중앙 맨 위. 분석 로딩(hint 있음)에서만 */}
-      {hint && (
+      {/* 경과 타이머 — 중앙 맨 위. 분석 로딩(hint 있음)에서만.
+          10초를 넘겨야 나타난다 — 금방 끝나는 전환에서 시계부터 보여 주면 오래 걸린다는 인상만 남는다 */}
+      {hint && elapsed >= TIMER_AFTER && (
         <div
+          className="ax-step-enter"
           aria-label="지난 시간"
           style={{
             fontFamily: "var(--font-mono)",
-            fontSize: 30,
+            fontSize: 16,
             fontWeight: 600,
-            color: "var(--fg-tertiary)",
+            color: "var(--fg-quaternary)",
             letterSpacing: "0.02em",
           }}
         >
