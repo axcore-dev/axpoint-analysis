@@ -72,6 +72,11 @@ type UserGraphBody = {
   edges: { from: string; to: string }[];
   removedEdges: string[];
 };
+/** 되돌리기 한 단계 — 편집 직전 상태 그대로. 좌표는 바뀐 키만, 그래프는 통째로 */
+type UndoStep =
+  | { graph: UserGraphBody }
+  | { positions: Record<string, { x: number; y: number }> };
+
 type Synthesized = {
   nodes: SynthNode[];
   edges: SynthEdge[];
@@ -952,19 +957,8 @@ export function WorkflowChart({
     }
     return { list, inferred };
   }, [synthMode, synthesized, companyActs, connections]);
-  /** 합성 노드의 기록 끊김 (v9 A6) — 표준 요구 기록이 비는 업무의 화면 idx */
-  const synthBottlenecks = useMemo(() => {
-    if (!synthMode || !synthesized || !gaps) return undefined;
-    const idxById = new Map(synthesized.nodes.map((n, i) => [n.id, i]));
-    return new Set(
-      gaps.docGaps
-        .map((g) => idxById.get(g.nodeId))
-        .filter((i): i is number => i !== undefined),
-    );
-  }, [synthMode, synthesized, gaps]);
-
-  /* 분석 레이어 → 화면 idx 집합. broken은 gaps보다 우선한다(같은 산수의 최종 결과라
-     결과 화면에서 기록 끊김이 빠지던 문제를 여기서 함께 잡는다). DX·AX는 읽기 모드 전용 */
+  /* 분석 레이어 → 화면 idx 집합. 기록 끊김·DX·AX는 전부 서버 산수(computeNodeLayers)가
+     단일 기준이다 — 화면이 gaps로 다시 계산하면 두 기준이 갈린다. DX·AX는 읽기 모드 전용 */
   const layerSets = useMemo(() => {
     if (!synthMode || !synthesized || !layers) return null;
     const broken = new Set<number>();
@@ -993,14 +987,14 @@ export function WorkflowChart({
         back: graph.back,
         editable,
         focus,
-        bottleneckOverride: layerSets?.broken ?? synthBottlenecks,
+        bottleneckOverride: layerSets?.broken,
         inferredKeys: companyEdges.inferred,
         /* DX·AX 배지는 결과 화면(읽기 모드)에만 — 자료 정리 단계는 아직 분석 전이다 */
         dxSet: !editable ? layerSets?.dx : undefined,
         axSet: !editable ? layerSets?.ax : undefined,
         flashKey,
       }),
-    [companyActs, companyEdges, graph, editable, focus, synthBottlenecks, layerSets, flashKey],
+    [companyActs, companyEdges, graph, editable, focus, layerSets, flashKey],
   );
 
   /* 기록 끊김 수 통지 — 문서가 한 건도 없으면 차트를 그리지 않으므로(아래 ownedDocCount 가드)
@@ -1133,6 +1127,27 @@ export function WorkflowChart({
       .finally(() => setSaving(false));
   }, [assessmentId]);
 
+  /** 좌표 저장 — 화면·대기 큐를 함께 갱신하고 손이 멈춘 뒤 한 번 보낸다 */
+  const savePositions = useCallback(
+    (batch: Record<string, { x: number; y: number }>) => {
+      setPositions((prev) => ({ ...prev, ...batch }));
+      pendingPos.current = { ...pendingPos.current, ...batch };
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = setTimeout(flushPositions, 800);
+    },
+    [flushPositions],
+  );
+
+  /* 되돌리기 — 편집 직전 상태를 그대로 쌓아 두고 그대로 다시 보낸다. 변경 종류별 역연산이
+     필요 없다(좌표 PUT은 병합, user_graph PUT은 통째 교체라 스냅샷이 곧 복원이다).
+     이번 화면에서 한 편집만 대상이다 — 지난 세션의 편집분은 스택에 없다 */
+  const undoStack = useRef<UndoStep[]>([]);
+  const [undoDepth, setUndoDepth] = useState(0);
+  const pushUndo = useCallback((step: UndoStep) => {
+    undoStack.current.push(step);
+    setUndoDepth(undoStack.current.length);
+  }, []);
+
   /* 드래그 종료 — 놓은 자리를 그대로 이 진단의 좌표로 저장한다.
      저장은 드롭 순간이 아니라 손을 멈춘 뒤 한 번 — 정리하는 동안 요청이 줄줄이 나가지 않게 */
   /* 저장 키 조회 — 화면 노드 id(act:내부번호) → 좌표 저장 키. 표준 업무는 숫자 id,
@@ -1170,10 +1185,9 @@ export function WorkflowChart({
           setSwapAnim(true);
           if (swapAnimTimer.current) clearTimeout(swapAnimTimer.current);
           swapAnimTimer.current = setTimeout(() => setSwapAnim(false), 360);
-          setPositions((prev) => ({ ...prev, [posKey]: aTo, [targetKey]: bTo }));
-          pendingPos.current = { ...pendingPos.current, [posKey]: aTo, [targetKey]: bTo };
-          if (flushTimer.current) clearTimeout(flushTimer.current);
-          flushTimer.current = setTimeout(flushPositions, 800);
+          /* 되돌리기용 직전 자리 — 교체 전에는 A가 bTo(출발 자리), B가 aTo(지금 자리)에 있었다 */
+          pushUndo({ positions: { [posKey]: bTo, [targetKey]: aTo } });
+          savePositions({ [posKey]: aTo, [targetKey]: bTo });
           return;
         }
       }
@@ -1181,12 +1195,16 @@ export function WorkflowChart({
       const at = { x: Math.round(node.position.x), y: Math.round(node.position.y) };
       const before = positions[posKey];
       if (before && before.x === at.x && before.y === at.y) return; // 제자리 — 보낼 것 없다
-      setPositions((prev) => ({ ...prev, [posKey]: at }));
-      pendingPos.current = { ...pendingPos.current, [posKey]: at };
-      if (flushTimer.current) clearTimeout(flushTimer.current);
-      flushTimer.current = setTimeout(flushPositions, 800);
+      /* 저장 좌표가 없던 카드는 출발 자리가 곧 자동 배치 자리다 — 그 값을 되돌리기에 쌓는다 */
+      const from = before ??
+        (dragStartPos.current && {
+          x: Math.round(dragStartPos.current.x),
+          y: Math.round(dragStartPos.current.y),
+        });
+      if (from) pushUndo({ positions: { [posKey]: from } });
+      savePositions({ [posKey]: at });
     },
-    [editable, positions, flushPositions, posKeyByNodeId, setSwapTarget],
+    [editable, positions, savePositions, pushUndo, posKeyByNodeId, setSwapTarget],
   );
 
   /* 화면을 떠날 때 아직 못 보낸 좌표가 있으면 그때 보낸다 */
@@ -1224,11 +1242,8 @@ export function WorkflowChart({
     };
   }, [synthesized, hiddenEdges]);
 
-  const putUserGraph = useCallback(
-    (mutate: (g: UserGraphBody) => void) => {
-      const g = currentUserGraph();
-      if (!g) return;
-      mutate(g);
+  const saveUserGraph = useCallback(
+    (g: UserGraphBody) => {
       setGraphSaving(true);
       api(`/api/assessments/${assessmentId}/workflow`, {
         method: "PUT",
@@ -1238,8 +1253,63 @@ export function WorkflowChart({
         .catch(() => {})
         .finally(() => setGraphSaving(false));
     },
-    [assessmentId, currentUserGraph, load],
+    [assessmentId, load],
   );
+
+  const putUserGraph = useCallback(
+    (mutate: (g: UserGraphBody) => void) => {
+      const g = currentUserGraph();
+      if (!g) return;
+      pushUndo({ graph: structuredClone(g) });
+      mutate(g);
+      saveUserGraph(g);
+    },
+    [currentUserGraph, saveUserGraph, pushUndo],
+  );
+
+  /** 한 단계 되돌리기 (Cmd/Ctrl+Z) */
+  const undoEdit = useCallback(() => {
+    const prev = undoStack.current.pop();
+    if (!prev) return;
+    setUndoDepth(undoStack.current.length);
+    setSelectedEdge(null);
+    if ("graph" in prev) saveUserGraph(prev.graph);
+    else savePositions(prev.positions);
+  }, [saveUserGraph, savePositions]);
+
+  /** 이 화면에서 한 편집 전부 되돌리기 — 가장 오래된 상태로 한 번에 (요청은 최대 두 번) */
+  const undoAllEdits = useCallback(() => {
+    let graph: UserGraphBody | null = null;
+    const positions: Record<string, { x: number; y: number }> = {};
+    /* 오래된 것부터 훑어 '처음 값'만 남긴다 — 그래프는 첫 스냅샷, 좌표는 키별 첫 자리 */
+    for (const step of undoStack.current) {
+      if ("graph" in step) graph ??= step.graph;
+      else
+        for (const [key, at] of Object.entries(step.positions))
+          if (!(key in positions)) positions[key] = at;
+    }
+    if (!graph && Object.keys(positions).length === 0) return;
+    undoStack.current = [];
+    setUndoDepth(0);
+    setSelectedEdge(null);
+    if (Object.keys(positions).length > 0) savePositions(positions);
+    if (graph) saveUserGraph(graph);
+  }, [saveUserGraph, savePositions]);
+
+  /* Cmd/Ctrl+Z — 캔버스 편집 되돌리기. 입력 칸에 손이 있으면 넘긴다(글자 되돌리기가 먼저다) */
+  useEffect(() => {
+    if (!editable || !synthMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "z" && e.key !== "Z") return;
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
+      e.preventDefault();
+      undoEdit();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [editable, synthMode, undoEdit]);
 
   /** 화면 노드 id(act:idx) → 합성 노드 id */
   const synthIdOf = useCallback(
@@ -1454,6 +1524,17 @@ export function WorkflowChart({
         {/* 비교하기는 자료 정리(도출·확인) 단계에만 — 결과 화면은 분석 결과를 보는 자리라
             표준 대비 비교가 목적이 아니다 (v8 이슈 3-1) */}
         <span style={{ position: "absolute", right: 0, display: "flex", gap: 6 }}>
+          {/* 되돌리기 — 이 화면에서 한 편집만. Cmd/Ctrl+Z와 같은 동작이다 */}
+          {synthMode && undoDepth > 0 && (
+            <>
+              <Button variant="ghost" size="sm" onClick={undoEdit} title="Cmd/Ctrl + Z">
+                되돌리기
+              </Button>
+              <Button variant="ghost" size="sm" onClick={undoAllEdits}>
+                모두 되돌리기
+              </Button>
+            </>
+          )}
           {synthMode && (
             <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)}>
               + 업무 추가
@@ -1529,28 +1610,31 @@ export function WorkflowChart({
               top: selectedEdge.y - 10,
               transform: "translate(-50%, -100%)",
               zIndex: 6,
-              maxWidth: "min(320px, 90%)",
+              width: "max-content",
+              maxWidth: "min(280px, 90%)",
               display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 8px 6px 12px",
+              flexDirection: "column",
+              gap: 6,
+              padding: "8px 10px",
               borderRadius: "var(--radius-m)",
               border: "1px solid var(--line-default)",
               background: "var(--bg-elevated)",
               boxShadow: "var(--shadow-2)",
               font: "var(--text-caption)",
               color: "var(--fg-secondary)",
-              whiteSpace: "nowrap",
             }}
           >
-            <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+            {/* 업무 이름이 길어 한 줄에 안 들어간다 — 줄여서 가리지 말고 접어서 다 보여 준다 */}
+            <span style={{ lineHeight: 1.45, color: "var(--fg-primary)", wordBreak: "break-word" }}>
               {selectedEdge.label}
             </span>
-            <Button variant="secondary" size="sm" onClick={deleteSelectedEdge}>
-              {selectedEdge.user ? "삭제" : "숨기기"}
-            </Button>
-            <span style={{ font: "var(--text-caption)", color: "var(--fg-quaternary)" }}>
-              Del · Backspace
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <Button variant="secondary" size="sm" onClick={deleteSelectedEdge}>
+                {selectedEdge.user ? "삭제" : "숨기기"}
+              </Button>
+              <span style={{ color: "var(--fg-quaternary)", whiteSpace: "nowrap" }}>
+                Del · Backspace
+              </span>
             </span>
           </div>
         )}
